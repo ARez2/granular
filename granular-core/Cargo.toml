@@ -1,0 +1,12 @@
+[package]
+name = "granular-core"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+geese.workspace = true
+wgpu = { git = "https://github.com/gfx-rs/wgpu", features = ["glsl", "spirv"]}
+winit.workspace = true
+log.workspace = true
