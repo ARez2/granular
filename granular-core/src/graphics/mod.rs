@@ -3,6 +3,9 @@ use geese::*;
 mod window_system;
 pub use window_system::WindowSystem;
 
+mod gpu;
+pub use gpu::GPU;
+
 mod gpu_backend;
 pub use gpu_backend::GPUBackend;
 

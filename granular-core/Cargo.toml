@@ -10,3 +10,4 @@ geese.workspace = true
 wgpu = { git = "https://github.com/gfx-rs/wgpu", features = ["glsl", "spirv"]}
 winit.workspace = true
 log.workspace = true
+pollster.workspace = true
