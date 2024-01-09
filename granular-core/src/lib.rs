@@ -30,10 +30,27 @@ pub mod events {
 
 
 pub struct GranularEngine {
-    ctx: GeeseContextHandle<Self>,
+    ctx: GeeseContext,
     close_requested: bool
 }
+
 impl GranularEngine {
+    pub fn new() -> Self {
+        let mut ctx = GeeseContext::default();
+        ctx.flush().with(geese::notify::add_system::<EventLoopSystem>());
+        ctx.flush().with(geese::notify::add_system::<GraphicsSystem>());
+        ctx.flush().with(geese::notify::add_system::<WindowSystem>());
+        
+        Self {
+            ctx,
+            close_requested: false
+        }
+    }
+
+    pub fn get_ctx(&mut self) -> &mut GeeseContext {
+        &mut self.ctx
+    }
+
     pub fn create_window(&self, title: &str, size: Option<PhysicalSize<u32>>) {
         let win_sys = self.ctx.get::<WindowSystem>();
         let window = win_sys.window_handle();
@@ -43,12 +60,15 @@ impl GranularEngine {
     }
 
 
-    pub fn run(&mut self, mut ctx: GeeseContext) {
+    pub fn run(&mut self) {
         let mut event_loop_sys = self.ctx.get_mut::<EventLoopSystem>();
         let event_loop = event_loop_sys.take();
         drop(event_loop_sys);
         event_loop.run(move |event, target| {
-            ctx.flush().with(event);
+            let handled = self.handle_winit_events(&event);
+            if !handled {
+                self.ctx.flush().with(event);
+            };
             self.use_window_target(target);
             self.update();
         }).unwrap();
@@ -56,24 +76,39 @@ impl GranularEngine {
 
 
     pub fn update(&mut self) {
-        self.ctx.raise_event(events::NewFrame {delta: 0.0});
-        
+        self.ctx.flush().with(events::NewFrame {delta: 0.0});
     }
 
 
-    pub fn handle_winit_events(&mut self, event: &winit::event::Event<()>) {
+    pub fn handle_winit_events(&mut self, event: &winit::event::Event<()>) -> bool {
         if let winit::event::Event::WindowEvent {
             window_id: _,
             event,
-        } = event
-        {
+        } = event {
             match event {
                 winit::event::WindowEvent::CloseRequested => {
                     self.close_requested = true;
+                    true
                 },
-                _ => ()
+                winit::event::WindowEvent::KeyboardInput{event, ..} => {
+                    match event {
+                        winit::event::KeyEvent {
+                            logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::Space),
+                            state: winit::event::ElementState::Pressed,
+                            ..
+                        } => {
+                            info!("Reload GraphicsSystem");
+                            self.ctx.flush().with(geese::notify::reset_system::<GraphicsSystem>());
+                            true
+                        },
+                        _ => false
+                    }
+                }
+                _ => false
             }
-        };
+        } else {
+            false
+        }
     }
 
     pub fn use_window_target(&self, target: &winit::event_loop::EventLoopWindowTarget<()>) {
@@ -83,24 +118,4 @@ impl GranularEngine {
     }
 }
 
-
-impl GeeseSystem for GranularEngine {
-    const DEPENDENCIES: Dependencies = dependencies()
-        .with::<EventLoopSystem>()
-        .with::<GraphicsSystem>()
-        // FIXME
-        .with::<WindowSystem>();
-
-    const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
-        .with(Self::handle_winit_events);
-
-    fn new(ctx: GeeseContextHandle<Self>) -> Self {
-        ctx.raise_event(events::Initialized {});
-
-        Self {
-            ctx,
-            close_requested: false
-        }
-    }
-}
 
