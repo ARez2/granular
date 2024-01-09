@@ -21,8 +21,8 @@ mod events {
             }
         }
 
-        pub fn get(&self) -> Adapters {
-            self.adapters
+        pub fn get(&self) -> &Adapters {
+            &self.adapters
         }
     }
 
@@ -121,7 +121,7 @@ impl GPUBackend {
 
     /// Responds to the LoadedAllAdapters event and sets it in GPUBackend
     fn set_all_adapters(&mut self, event: &events::LoadedAllAdapters) {
-        self.adapters = event.get();
+        self.adapters = event.get().clone();
         println!("{:?}", self.adapters);
         // let chosen_gpu = self.ctx.get::<Store<GameSettings>>().gpu;
         // self.selected_adapter = self.adapter_infos.iter().position(|x| x.id == chosen_gpu).unwrap_or(usize::MAX);
