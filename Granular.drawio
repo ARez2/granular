@@ -1,6 +1,6 @@
-<mxfile host="Electron" modified="2024-01-08T11:59:51.261Z" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/22.1.16 Chrome/120.0.6099.109 Electron/28.1.0 Safari/537.36" etag="RwWEQ_jERpoTcp4E5-hy" version="22.1.16" type="device">
+<mxfile host="Electron" modified="2024-01-09T20:49:22.412Z" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/22.1.16 Chrome/120.0.6099.109 Electron/28.1.0 Safari/537.36" etag="bMMxZhijevVO3jMh0QRd" version="22.1.16" type="device">
   <diagram name="Page-1" id="scdSR_qpInPiDmvMLT0b">
-    <mxGraphModel dx="642" dy="508" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+    <mxGraphModel dx="1185" dy="711" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" background="none" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -20,67 +20,22 @@
           <mxGeometry y="60" width="142" height="26" as="geometry" />
         </mxCell>
         <mxCell id="m9rEDR59P1G20uh2cMed-10" value="GPU" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=26;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;whiteSpace=wrap;html=1;labelBackgroundColor=none;fillColor=#F2CC8F;strokeColor=#E07A5F;fontColor=#393C56;" parent="1" vertex="1">
-          <mxGeometry x="1000" y="440" width="142" height="80" as="geometry" />
+          <mxGeometry x="1030" y="260" width="142" height="80" as="geometry" />
         </mxCell>
         <mxCell id="m9rEDR59P1G20uh2cMed-11" value="device: wgpu::Device&lt;br&gt;queue: wgpu::Queue&lt;br&gt;limits: wgpu::Limits" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;whiteSpace=wrap;html=1;labelBackgroundColor=none;fontColor=#393C56;" parent="m9rEDR59P1G20uh2cMed-10" vertex="1">
           <mxGeometry y="26" width="142" height="54" as="geometry" />
         </mxCell>
         <mxCell id="m9rEDR59P1G20uh2cMed-14" value="WindowSystem" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=26;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;whiteSpace=wrap;html=1;labelBackgroundColor=none;fillColor=#F2CC8F;strokeColor=#E07A5F;fontColor=#393C56;" parent="1" vertex="1">
-          <mxGeometry x="713.5" y="610" width="205" height="50" as="geometry" />
+          <mxGeometry x="808.5" y="410" width="205" height="50" as="geometry" />
         </mxCell>
         <mxCell id="m9rEDR59P1G20uh2cMed-15" value="Pin&amp;lt;Box&amp;lt;winit::window::Window&amp;gt;&amp;gt;" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;whiteSpace=wrap;html=1;labelBackgroundColor=none;fontColor=#393C56;" parent="m9rEDR59P1G20uh2cMed-14" vertex="1">
           <mxGeometry y="26" width="205" height="24" as="geometry" />
         </mxCell>
-        <mxCell id="m9rEDR59P1G20uh2cMed-16" value="SwapchainSystem" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=26;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;whiteSpace=wrap;html=1;labelBackgroundColor=none;fillColor=#F2CC8F;strokeColor=#E07A5F;fontColor=#393C56;" parent="1" vertex="1">
-          <mxGeometry x="745" y="500" width="142" height="70" as="geometry" />
-        </mxCell>
-        <mxCell id="m9rEDR59P1G20uh2cMed-17" value="&lt;div&gt;The swapchain is responsible for getting the texture to render. Each frame it ensures that the surface resolution matches the window and calls wgpu::Swapchain::get_next_texture. Then at the end of the frame it calls SurfaceTexture::present on it&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;whiteSpace=wrap;html=1;labelBackgroundColor=none;fontColor=#393C56;" parent="m9rEDR59P1G20uh2cMed-16" vertex="1">
-          <mxGeometry y="26" width="142" height="44" as="geometry" />
-        </mxCell>
-        <mxCell id="m9rEDR59P1G20uh2cMed-18" value="CommandEncoderSystem" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=26;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;whiteSpace=wrap;html=1;labelBackgroundColor=none;fillColor=#F2CC8F;strokeColor=#E07A5F;fontColor=#393C56;" parent="1" vertex="1">
-          <mxGeometry x="720" y="380" width="192" height="70" as="geometry" />
-        </mxCell>
-        <mxCell id="m9rEDR59P1G20uh2cMed-19" value="Mutex&amp;lt;wgpu::Encoder&amp;gt;&lt;br&gt;submit to queue every frame" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;whiteSpace=wrap;html=1;labelBackgroundColor=none;fontColor=#393C56;" parent="m9rEDR59P1G20uh2cMed-18" vertex="1">
-          <mxGeometry y="26" width="192" height="44" as="geometry" />
-        </mxCell>
-        <mxCell id="m9rEDR59P1G20uh2cMed-20" value="ForwardRenderer&lt;br&gt;" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=26;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;whiteSpace=wrap;html=1;labelBackgroundColor=none;fillColor=#F2CC8F;strokeColor=#E07A5F;fontColor=#393C56;" parent="1" vertex="1">
-          <mxGeometry x="840" y="270" width="142" height="70" as="geometry" />
-        </mxCell>
-        <mxCell id="m9rEDR59P1G20uh2cMed-21" value="pipelines&lt;br&gt;shaders" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;whiteSpace=wrap;html=1;labelBackgroundColor=none;fontColor=#393C56;" parent="m9rEDR59P1G20uh2cMed-20" vertex="1">
-          <mxGeometry y="26" width="142" height="44" as="geometry" />
-        </mxCell>
-        <mxCell id="m9rEDR59P1G20uh2cMed-24" value="" style="endArrow=classic;html=1;rounded=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;labelBackgroundColor=none;strokeColor=#E07A5F;fontColor=default;" parent="1" source="m9rEDR59P1G20uh2cMed-9" target="m9rEDR59P1G20uh2cMed-20" edge="1">
+        <mxCell id="m9rEDR59P1G20uh2cMed-24" value="" style="endArrow=classic;html=1;rounded=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;labelBackgroundColor=none;strokeColor=#E07A5F;fontColor=default;" parent="1" source="m9rEDR59P1G20uh2cMed-9" target="m9rEDR59P1G20uh2cMed-14" edge="1">
           <mxGeometry width="50" height="50" relative="1" as="geometry">
             <mxPoint x="825" y="320" as="sourcePoint" />
-            <mxPoint x="875" y="270" as="targetPoint" />
+            <mxPoint x="911" y="270" as="targetPoint" />
           </mxGeometry>
-        </mxCell>
-        <mxCell id="m9rEDR59P1G20uh2cMed-26" value="" style="endArrow=classic;html=1;rounded=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;labelBackgroundColor=none;strokeColor=#E07A5F;fontColor=default;" parent="1" source="m9rEDR59P1G20uh2cMed-21" target="m9rEDR59P1G20uh2cMed-18" edge="1">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="825" y="400" as="sourcePoint" />
-            <mxPoint x="875" y="350" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="m9rEDR59P1G20uh2cMed-27" value="" style="endArrow=classic;html=1;rounded=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;labelBackgroundColor=none;strokeColor=#E07A5F;fontColor=default;" parent="1" source="m9rEDR59P1G20uh2cMed-19" target="m9rEDR59P1G20uh2cMed-16" edge="1">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="825" y="400" as="sourcePoint" />
-            <mxPoint x="875" y="350" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="m9rEDR59P1G20uh2cMed-29" value="" style="endArrow=classic;html=1;rounded=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;labelBackgroundColor=none;strokeColor=#E07A5F;fontColor=default;" parent="1" source="m9rEDR59P1G20uh2cMed-17" target="m9rEDR59P1G20uh2cMed-14" edge="1">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="825" y="530" as="sourcePoint" />
-            <mxPoint x="875" y="480" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="m9rEDR59P1G20uh2cMed-30" style="rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.25;entryDx=0;entryDy=0;labelBackgroundColor=none;strokeColor=#E07A5F;fontColor=default;" parent="1" source="m9rEDR59P1G20uh2cMed-19" target="m9rEDR59P1G20uh2cMed-10" edge="1">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="m9rEDR59P1G20uh2cMed-31" style="rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;jumpStyle=none;labelBackgroundColor=none;strokeColor=#E07A5F;fontColor=default;" parent="1" source="m9rEDR59P1G20uh2cMed-17" target="m9rEDR59P1G20uh2cMed-11" edge="1">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="m9rEDR59P1G20uh2cMed-32" style="rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;labelBackgroundColor=none;strokeColor=#E07A5F;fontColor=default;" parent="1" source="m9rEDR59P1G20uh2cMed-21" target="m9rEDR59P1G20uh2cMed-10" edge="1">
-          <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="m9rEDR59P1G20uh2cMed-33" value="EventLoopSystem" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=26;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;whiteSpace=wrap;html=1;labelBackgroundColor=none;fillColor=#F2CC8F;strokeColor=#E07A5F;fontColor=#393C56;" parent="1" vertex="1">
           <mxGeometry x="575" y="148" width="142" height="70" as="geometry" />
@@ -91,24 +46,11 @@
         <mxCell id="m9rEDR59P1G20uh2cMed-35" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;labelBackgroundColor=none;strokeColor=#E07A5F;fontColor=default;" parent="1" source="m9rEDR59P1G20uh2cMed-1" target="m9rEDR59P1G20uh2cMed-6" edge="1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="m9rEDR59P1G20uh2cMed-36" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.387;entryY=1.091;entryDx=0;entryDy=0;entryPerimeter=0;labelBackgroundColor=none;strokeColor=#E07A5F;fontColor=default;" parent="1" source="m9rEDR59P1G20uh2cMed-14" target="m9rEDR59P1G20uh2cMed-34" edge="1">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="630" y="635" />
-            </Array>
-          </mxGeometry>
+        <mxCell id="m9rEDR59P1G20uh2cMed-36" style="rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.387;entryY=1.091;entryDx=0;entryDy=0;entryPerimeter=0;labelBackgroundColor=none;strokeColor=#E07A5F;fontColor=default;" parent="1" source="m9rEDR59P1G20uh2cMed-14" target="m9rEDR59P1G20uh2cMed-34" edge="1">
+          <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="5GrHCKvXDS18Rwxd4vWV-1" value="GPUBackend" style="swimlane;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;startSize=26;horizontalStack=0;resizeParent=1;resizeParentMax=0;resizeLast=0;collapsible=1;marginBottom=0;whiteSpace=wrap;html=1;fillColor=#F2CC8F;strokeColor=#E07A5F;labelBackgroundColor=none;fontColor=#393C56;" vertex="1" parent="1">
-          <mxGeometry x="901" y="711" width="348" height="110" as="geometry" />
-        </mxCell>
-        <mxCell id="5GrHCKvXDS18Rwxd4vWV-2" value="instance: wgpu::Instance&lt;br&gt;adapters: Vec&amp;lt;(Arc&amp;lt;Adapter&amp;gt;, GpuInfo)&amp;gt;&lt;br&gt;selected_adapter_idx: usize&lt;br&gt;loaded_device_queue: Option&amp;lt;(wgpu::Device, wgpu::Queue)&amp;gt;" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacingLeft=4;spacingRight=4;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;whiteSpace=wrap;html=1;labelBackgroundColor=none;fontColor=#393C56;" vertex="1" parent="5GrHCKvXDS18Rwxd4vWV-1">
-          <mxGeometry y="26" width="348" height="84" as="geometry" />
-        </mxCell>
-        <mxCell id="5GrHCKvXDS18Rwxd4vWV-4" value="" style="endArrow=classic;html=1;rounded=0;strokeColor=#E07A5F;fontColor=#393C56;fillColor=#F2CC8F;exitX=0.532;exitY=1.08;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="m9rEDR59P1G20uh2cMed-11" target="5GrHCKvXDS18Rwxd4vWV-1">
-          <mxGeometry width="50" height="50" relative="1" as="geometry">
-            <mxPoint x="1060" y="540" as="sourcePoint" />
-            <mxPoint x="1110" y="490" as="targetPoint" />
-          </mxGeometry>
+        <mxCell id="wxNGhqYiq1o9LOjUNz23-1" style="rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="m9rEDR59P1G20uh2cMed-7" target="m9rEDR59P1G20uh2cMed-10">
+          <mxGeometry relative="1" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>

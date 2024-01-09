@@ -1,34 +1,30 @@
 use geese::*;
 use granular_core::{GranularEngine, events, EventLoopSystem};
 use log::info;
-use winit::event_loop::EventLoop;
+use winit::platform::run_on_demand::EventLoopExtRunOnDemand;
 
 fn main() {
     env_logger::init();
-    ctx.flush().with(geese::notify::add_system::<EventLoopSystem>());
-    
+
     let mut ctx = GeeseContext::default();
+    //ctx.flush().with(geese::notify::add_system::<EventLoopSystem>());
     ctx.flush().with(geese::notify::add_system::<Game>());
 
-    let window_size = winit::dpi::LogicalSize::new(640, 480);
-    {
-        let mut engine = ctx.get_mut::<GranularEngine>();
-        pollster::block_on(
-            engine.create_window(
-                &event_loop, "Game Window", window_size
-            )
-        );
-    }
+    let window_size = Some(winit::dpi::PhysicalSize::new(640, 480));
+    let engine = ctx.get_mut::<GranularEngine>();
+    engine.create_window("My game", window_size);
+    drop(engine);
 
-
+    // let mut engine = ctx.get_mut::<GranularEngine>();
+    // engine.run(ctx.clone());
+    let mut event_loop_sys = ctx.get_mut::<EventLoopSystem>();
+    let event_loop = event_loop_sys.take();
+    drop(event_loop_sys);
     event_loop.run(move |event, target| {
         ctx.flush().with(event);
-
         let mut engine = ctx.get_mut::<GranularEngine>();
         engine.use_window_target(target);
-        // sends out an event which the game will handle
         engine.update();
-
     }).unwrap();
 }
 

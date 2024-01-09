@@ -1,10 +1,10 @@
 use std::{borrow::Cow, collections::HashMap, hash::BuildHasherDefault};
 
 use geese::*;
-use graphics::{Graphics, WindowSystem};
+use graphics::{GraphicsSystem, WindowSystem};
 use log::{debug, info};
 
-use winit::event_loop::EventLoop;
+use winit::{event_loop::EventLoop, dpi::PhysicalSize};
 
 //mod tick;
 mod graphics;
@@ -34,66 +34,24 @@ pub struct GranularEngine {
     close_requested: bool
 }
 impl GranularEngine {
-    pub async fn create_window(&mut self, event_loop: &EventLoop<()>, name: &str, size: winit::dpi::LogicalSize<u32>) {
-        // let defs: wgpu::naga::FastHashMap<String, String> = wgpu::naga::FastHashMap::default();
-        // let vert_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        //     label: None,
-        //     source: wgpu::ShaderSource::Glsl {
-        //         shader: Cow::Borrowed(include_str!("../../shaders/vert.glsl")),
-        //         stage: wgpu::naga::ShaderStage::Vertex,
-        //         defines: defs.clone()
-        //     },
-        // });
-        // let frag_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        //     label: None,
-        //     source: wgpu::ShaderSource::Glsl {
-        //         shader: Cow::Borrowed(include_str!("../../shaders/frag.glsl")),
-        //         stage: wgpu::naga::ShaderStage::Fragment,
-        //         defines: defs
-        //     },
-        // });
-
-        // let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        //     label: None,
-        //     bind_group_layouts: &[],
-        //     push_constant_ranges: &[],
-        // });
-    
-        // let swapchain_capabilities = surface.get_capabilities(&adapter);
-        // let swapchain_format = swapchain_capabilities.formats[0];
-    
-        // let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        //     label: None,
-        //     layout: Some(&pipeline_layout),
-        //     vertex: wgpu::VertexState {
-        //         module: &vert_shader,
-        //         entry_point: "main",
-        //         buffers: &[],
-        //     },
-        //     fragment: Some(wgpu::FragmentState {
-        //         module: &frag_shader,
-        //         entry_point: "main",
-        //         targets: &[Some(swapchain_format.into())],
-        //     }),
-        //     primitive: wgpu::PrimitiveState::default(),
-        //     depth_stencil: None,
-        //     multisample: wgpu::MultisampleState::default(),
-        //     multiview: None,
-        // });
-        
-        // let mut config = wgpu::SurfaceConfiguration {
-        //     usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        //     format: swapchain_format,
-        //     width: size.width.max(1),
-        //     height: size.height.max(1),
-        //     present_mode: wgpu::PresentMode::Fifo,
-        //     alpha_mode: swapchain_capabilities.alpha_modes[0],
-        //     view_formats: vec![],
-        // };
-    
-        // surface.configure(&device, &config);
+    pub fn create_window(&self, title: &str, size: Option<PhysicalSize<u32>>) {
+        let win_sys = self.ctx.get::<WindowSystem>();
+        let window = win_sys.window_handle();
+        window.set_visible(true);
+        window.set_min_inner_size(size);
+        window.set_title(title);
+    }
 
 
+    pub fn run(&mut self, mut ctx: GeeseContext) {
+        let mut event_loop_sys = self.ctx.get_mut::<EventLoopSystem>();
+        let event_loop = event_loop_sys.take();
+        drop(event_loop_sys);
+        event_loop.run(move |event, target| {
+            ctx.flush().with(event);
+            self.use_window_target(target);
+            self.update();
+        }).unwrap();
     }
 
 
@@ -128,7 +86,10 @@ impl GranularEngine {
 
 impl GeeseSystem for GranularEngine {
     const DEPENDENCIES: Dependencies = dependencies()
-        .with::<Graphics>();
+        .with::<EventLoopSystem>()
+        .with::<GraphicsSystem>()
+        // FIXME
+        .with::<WindowSystem>();
 
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::handle_winit_events);
