@@ -4,7 +4,7 @@ use geese::*;
 use graphics::{GraphicsSystem, WindowSystem};
 use log::{debug, info};
 
-use winit::{event_loop::EventLoop, dpi::PhysicalSize};
+use winit::{event_loop::EventLoop, dpi::PhysicalSize, event::WindowEvent};
 
 //mod tick;
 mod graphics;
@@ -86,11 +86,25 @@ impl GranularEngine {
             event,
         } = event {
             match event {
-                winit::event::WindowEvent::CloseRequested => {
+                WindowEvent::CloseRequested => {
                     self.close_requested = true;
                     true
                 },
-                winit::event::WindowEvent::KeyboardInput{event, ..} => {
+                WindowEvent::Resized(new_size) => {
+                    let mut graphics = self.ctx.get_mut::<GraphicsSystem>();
+                    graphics.resize_surface(new_size);
+                    #[cfg(target_os="macos")]
+                    graphics.request_redraw();
+                    true
+                },
+                WindowEvent::RedrawRequested => {
+                    let mut graphics = self.ctx.get_mut::<GraphicsSystem>();
+                    graphics.begin_frame();
+                    graphics.render_pass();
+                    graphics.present_frame();
+                    true
+                },
+                WindowEvent::KeyboardInput{event, ..} => {
                     match event {
                         winit::event::KeyEvent {
                             logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::Space),

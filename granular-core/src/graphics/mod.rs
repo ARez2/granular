@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 
 use geese::*;
-use wgpu::{Device, Queue, ShaderModuleDescriptor, SurfaceConfiguration, RenderPipeline, ShaderModule, Surface};
+use log::warn;
+use wgpu::{Device, Queue, ShaderModuleDescriptor, SurfaceConfiguration, RenderPipeline, ShaderModule, Surface, TextureViewDescriptor, CommandEncoderDescriptor, SurfaceTexture, TextureView, CommandEncoder};
 
 mod window_system;
 pub use window_system::WindowSystem;
@@ -18,12 +19,65 @@ pub struct GraphicsSystem {
     surface_config: SurfaceConfiguration,
     render_pipeline: RenderPipeline,
     vertex_shader: ShaderModule,
-    fragment_shader: ShaderModule
+    fragment_shader: ShaderModule,
+    frame_data: Option<(SurfaceTexture, TextureView, CommandEncoder)>,
 }
 impl GraphicsSystem {
-    pub fn update_config(&mut self) {
-        // self.surface_config = something;
-        //self.ctx.get::<GraphicsBackend>().surface().configure(&self.device, &self.surface_config);
+    pub fn request_redraw(&self) {
+        self.ctx.get::<WindowSystem>().window_handle().request_redraw();
+    }
+
+
+    pub fn resize_surface(&mut self, new_size: &PhysicalSize<u32>) {
+        self.surface_config.width = new_size.width.max(1);
+        self.surface_config.height = new_size.height.max(1);
+        self.surface.configure(&self.device, &self.surface_config);
+    }
+
+    pub fn begin_frame(&mut self) {
+        let frame = self.surface.get_current_texture().expect("Failed to acquire next swapchain texture");
+        let view = frame.texture.create_view(&TextureViewDescriptor{..Default::default()});
+        let mut encoder = self.device.create_command_encoder(
+            &CommandEncoderDescriptor {
+                label: Some("Command encoder")
+            });
+        self.frame_data = Some((frame, view, encoder))
+    }
+
+    pub fn render_pass(&mut self) {
+        if self.frame_data.is_none() {
+            warn!("No frame data present, begin a frame by calling begin_frame()");
+            return;
+        };
+        let (_, view, encoder) = self.frame_data.as_mut().unwrap();
+        let mut rpass =
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::GREEN),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+        rpass.set_pipeline(&self.render_pipeline);
+        rpass.draw(0..3, 0..1);
+    }
+
+
+    pub fn present_frame(&mut self) {
+        if self.frame_data.is_none() {
+            warn!("No frame data present, begin a frame by calling begin_frame()");
+            return;
+        };
+        let (frame, _, encoder) = self.frame_data.take().unwrap();
+        self.queue.submit(Some(encoder.finish()));
+        frame.present();
     }
 }
 impl GeeseSystem for GraphicsSystem {
@@ -121,7 +175,8 @@ impl GeeseSystem for GraphicsSystem {
             surface_config: config,
             render_pipeline,
             vertex_shader: vert_shader,
-            fragment_shader: frag_shader
+            fragment_shader: frag_shader,
+            frame_data: None
         }
     }
 }
