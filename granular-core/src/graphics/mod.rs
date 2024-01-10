@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use geese::*;
-use wgpu::{Device, Queue, ShaderModuleDescriptor, SurfaceConfiguration, RenderPipeline, ShaderModule};
+use wgpu::{Device, Queue, ShaderModuleDescriptor, SurfaceConfiguration, RenderPipeline, ShaderModule, Surface};
 
 mod window_system;
 pub use window_system::WindowSystem;
@@ -14,6 +14,7 @@ pub struct GraphicsSystem {
     ctx: GeeseContextHandle<Self>,
     device: Device,
     queue: Queue,
+    surface: Surface<'static>,
     surface_config: SurfaceConfiguration,
     render_pipeline: RenderPipeline,
     vertex_shader: ShaderModule,
@@ -22,7 +23,7 @@ pub struct GraphicsSystem {
 impl GraphicsSystem {
     pub fn update_config(&mut self) {
         // self.surface_config = something;
-        self.ctx.get::<GraphicsBackend>().surface().configure(&self.device, &self.surface_config);
+        //self.ctx.get::<GraphicsBackend>().surface().configure(&self.device, &self.surface_config);
     }
 }
 impl GeeseSystem for GraphicsSystem {
@@ -72,9 +73,11 @@ impl GeeseSystem for GraphicsSystem {
             push_constant_ranges: &[],
         });
 
-        
-        let surface = backend.surface();
+        let window = ctx.get::<WindowSystem>();
+        let window_size = window.window_handle().inner_size();
+        let surface = backend.instance().create_surface(window.window_handle()).unwrap();
         let swapchain_capabilities = surface.get_capabilities(&adapter);
+        drop(window);
         let swapchain_format = swapchain_capabilities.formats[0];
     
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -96,8 +99,6 @@ impl GeeseSystem for GraphicsSystem {
             multiview: None,
         });
         
-        let window = ctx.get::<WindowSystem>();
-        let window_size = window.window_handle().inner_size();
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: swapchain_format,
@@ -110,13 +111,13 @@ impl GeeseSystem for GraphicsSystem {
     
         surface.configure(&device, &config);
 
-        drop(window);
         drop(backend);
 
         Self {
             ctx,
             device,
             queue,
+            surface,
             surface_config: config,
             render_pipeline,
             vertex_shader: vert_shader,
