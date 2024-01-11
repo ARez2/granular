@@ -79,6 +79,10 @@ impl GraphicsSystem {
         self.queue.submit(Some(encoder.finish()));
         frame.present();
     }
+
+    pub fn frame_active(&self) -> bool {
+        self.frame_data.is_some()
+    }
 }
 impl GeeseSystem for GraphicsSystem {
     const DEPENDENCIES: Dependencies = dependencies()

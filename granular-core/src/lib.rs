@@ -71,6 +71,10 @@ impl GranularEngine {
             };
             self.use_window_target(target);
             self.update();
+            let graphics = self.ctx.get::<GraphicsSystem>();
+            if !graphics.frame_active() {
+                graphics.request_redraw();
+            }
         }).unwrap();
     }
 
