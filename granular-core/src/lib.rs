@@ -71,10 +71,6 @@ impl GranularEngine {
             };
             self.use_window_target(target);
             self.update();
-            let graphics = self.ctx.get::<GraphicsSystem>();
-            if !graphics.frame_active() {
-                graphics.request_redraw();
-            }
         }).unwrap();
     }
 
@@ -106,6 +102,7 @@ impl GranularEngine {
                     graphics.begin_frame();
                     graphics.render_pass();
                     graphics.present_frame();
+                    graphics.request_redraw();
                     true
                 },
                 WindowEvent::KeyboardInput{event, ..} => {

@@ -13,14 +13,14 @@ use winit::dpi::PhysicalSize;
 
 pub struct GraphicsSystem {
     ctx: GeeseContextHandle<Self>,
-    device: Device,
-    queue: Queue,
     surface: Surface<'static>,
     surface_config: SurfaceConfiguration,
     render_pipeline: RenderPipeline,
     vertex_shader: ShaderModule,
     fragment_shader: ShaderModule,
     frame_data: Option<(SurfaceTexture, TextureView, CommandEncoder)>,
+    device: Device,
+    queue: Queue
 }
 impl GraphicsSystem {
     pub fn request_redraw(&self) {
