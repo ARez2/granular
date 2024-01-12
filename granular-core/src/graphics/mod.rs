@@ -162,7 +162,9 @@ impl GeeseSystem for GraphicsSystem {
             format: swapchain_format,
             width: window_size.width,
             height: window_size.height,
-            present_mode: wgpu::PresentMode::Fifo,
+            // Note: Having PresentMode::Fifo (as in the example) caused a Swapchain acquire texture timeout
+            // See: https://github.com/bevyengine/bevy/issues/3606
+            present_mode: wgpu::PresentMode::AutoNoVsync,
             alpha_mode: swapchain_capabilities.alpha_modes[0],
             view_formats: vec![],
         };
