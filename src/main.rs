@@ -1,11 +1,28 @@
 use geese::*;
 use granular_core::{GranularEngine, events, EventLoopSystem};
 use log::{info, trace};
+use std::io::Write;
 
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
     std::env::set_var("RUST_LOG", "granular,wgpu=debug");
-    env_logger::init();
+    env_logger::builder()
+        .format(|buf, record| {
+            let mut style = buf.style();
+            let mut ts_style = buf.style().set_dimmed(true).set_color(env_logger::fmt::Color::Rgb(30, 30, 30));
+            
+            let ts = buf.timestamp_micros();
+            let ts = ts.to_string();
+            let timestamp = &ts[11..ts.len()-1];
+            let level = buf.default_styled_level(record.level());
+            let width = 27;
+            let mod_path = match record.module_path() {
+                Some(path) => format!("{:^width$}", path),
+                None => format!("{:width$}", ""),
+            };
+            writeln!(buf, "[{ts} {lvl} {mod_path}]: {msg}", ts=timestamp, lvl=level, msg=record.args())
+        })
+        .init();
 
     let window_size = Some(winit::dpi::PhysicalSize::new(640, 480));
 
