@@ -1,16 +1,19 @@
-use std::{borrow::Cow, collections::HashMap, hash::BuildHasherDefault};
-
-use geese::*;
+use geese::{GeeseContext, EventQueue};
 use graphics::{GraphicsSystem, WindowSystem};
 use log::{debug, info};
 
-use winit::{event_loop::EventLoop, dpi::PhysicalSize, event::WindowEvent};
+use notify::EventHandler;
+use ::notify::PollWatcher;
+use winit::{dpi::PhysicalSize, event::WindowEvent};
 
 //mod tick;
 mod graphics;
 
 mod eventloop_system;
 pub use eventloop_system::EventLoopSystem;
+
+mod filewatcher;
+use filewatcher::FileWatcher;
 
 
 pub mod events {
@@ -31,7 +34,7 @@ pub mod events {
 
 pub struct GranularEngine {
     ctx: GeeseContext,
-    close_requested: bool
+    close_requested: bool,
 }
 
 impl GranularEngine {
@@ -40,16 +43,24 @@ impl GranularEngine {
         ctx.flush().with(geese::notify::add_system::<EventLoopSystem>());
         ctx.flush().with(geese::notify::add_system::<GraphicsSystem>());
         ctx.flush().with(geese::notify::add_system::<WindowSystem>());
-        
+        ctx.flush().with(geese::notify::add_system::<FileWatcher>());
+
+        let mut filewatcher = ctx.get_mut::<FileWatcher>();
+        let shaders = std::env::current_dir().unwrap().join("shaders");
+        filewatcher.watch(shaders, true);
+        drop(filewatcher);
+
         Self {
             ctx,
             close_requested: false
         }
     }
 
+
     pub fn get_ctx(&mut self) -> &mut GeeseContext {
         &mut self.ctx
     }
+
 
     pub fn create_window(&self, title: &str, size: Option<PhysicalSize<u32>>) {
         let win_sys = self.ctx.get::<WindowSystem>();
@@ -71,6 +82,8 @@ impl GranularEngine {
             };
             self.use_window_target(target);
             self.update();
+            let filewatcher = self.ctx.get::<FileWatcher>();
+            filewatcher.poll();
         }).unwrap();
     }
 
@@ -126,11 +139,10 @@ impl GranularEngine {
         }
     }
 
+
     pub fn use_window_target(&self, target: &winit::event_loop::EventLoopWindowTarget<()>) {
         if self.close_requested {
             target.exit();
         }
     }
 }
-
-

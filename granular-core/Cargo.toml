@@ -11,3 +11,4 @@ wgpu = { git = "https://github.com/gfx-rs/wgpu", features = ["glsl"]}
 winit.workspace = true
 log.workspace = true
 pollster.workspace = true
+notify = "6.1.1"

@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use geese::*;
-use log::warn;
+use log::{warn, info};
 use wgpu::{Device, Queue, ShaderModuleDescriptor, SurfaceConfiguration, RenderPipeline, ShaderModule, Surface, TextureViewDescriptor, CommandEncoderDescriptor, SurfaceTexture, TextureView, CommandEncoder};
 
 mod window_system;
@@ -83,11 +83,23 @@ impl GraphicsSystem {
     pub fn frame_active(&self) -> bool {
         self.frame_data.is_some()
     }
+
+    fn on_filechange(&mut self, event: &super::filewatcher::events::FilesChanged) {
+        event.paths.iter().for_each(|p| {
+            if p.ends_with("vertex.vert") || p.ends_with("fragment.frag") {
+                info!("Shader changes! Reload GraphicsSystem");
+                self.ctx.raise_event(geese::notify::reset_system::<Self>());
+            }
+        });
+    }
 }
 impl GeeseSystem for GraphicsSystem {
     const DEPENDENCIES: Dependencies = dependencies()
         .with::<WindowSystem>()
         .with::<GraphicsBackend>();
+
+    const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
+        .with(Self::on_filechange);
 
     
     fn new(ctx: GeeseContextHandle<Self>) -> Self {
@@ -107,11 +119,12 @@ impl GeeseSystem for GraphicsSystem {
                 None,
             )).expect("Failed to create device");
 
+        let shader_dir = std::env::current_dir().unwrap().join("shaders");
         let defs = wgpu::naga::FastHashMap::default();
         let vert_shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("Vertex shader"),
             source: wgpu::ShaderSource::Glsl {
-                shader: Cow::Borrowed(include_str!("../../../shaders/vertex.vert")),
+                shader: Cow::Borrowed(&std::fs::read_to_string(shader_dir.join("vertex.vert")).unwrap()),
                 stage: wgpu::naga::ShaderStage::Vertex,
                 defines: defs.clone()
             }
@@ -119,7 +132,7 @@ impl GeeseSystem for GraphicsSystem {
         let frag_shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("Fragment shader"),
             source: wgpu::ShaderSource::Glsl {
-                shader: Cow::Borrowed(include_str!("../../../shaders/fragment.frag")),
+                shader: Cow::Borrowed(&std::fs::read_to_string(shader_dir.join("fragment.frag")).unwrap()),
                 stage: wgpu::naga::ShaderStage::Fragment,
                 defines: defs
             }

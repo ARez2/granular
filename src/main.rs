@@ -5,7 +5,7 @@ use std::io::Write;
 
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
-    std::env::set_var("RUST_LOG", "granular,wgpu=debug");
+    std::env::set_var("RUST_LOG", "granular=debug");
     env_logger::builder()
         .format(|buf, record| {
             let ts = buf.timestamp_micros();
@@ -35,7 +35,7 @@ struct Game {
 }
 impl Game {
     fn on_update(&mut self, event: &events::NewFrame) {
-        trace!("Update game");
+        //trace!("Update game");
     }
 }
 impl GeeseSystem for Game {
