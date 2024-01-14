@@ -25,6 +25,7 @@ impl GeeseSystem for WindowSystem {
             .with_title("Default Granular Window")
             .with_visible(false)
             .with_resizable(true)
+            .with_window_level(winit::window::WindowLevel::AlwaysOnTop)
             .build(event_loop.get()).unwrap();
         
         Self {
