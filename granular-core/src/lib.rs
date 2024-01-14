@@ -40,10 +40,11 @@ pub struct GranularEngine {
 impl GranularEngine {
     pub fn new() -> Self {
         let mut ctx = GeeseContext::default();
-        ctx.flush().with(geese::notify::add_system::<EventLoopSystem>());
-        ctx.flush().with(geese::notify::add_system::<GraphicsSystem>());
-        ctx.flush().with(geese::notify::add_system::<WindowSystem>());
-        ctx.flush().with(geese::notify::add_system::<FileWatcher>());
+        ctx.flush()
+            .with(geese::notify::add_system::<EventLoopSystem>())
+            .with(geese::notify::add_system::<GraphicsSystem>())
+            .with(geese::notify::add_system::<WindowSystem>())
+            .with(geese::notify::add_system::<FileWatcher>());
 
         let mut filewatcher = ctx.get_mut::<FileWatcher>();
         let shaders = std::env::current_dir().unwrap().join("shaders");
