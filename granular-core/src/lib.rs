@@ -1,5 +1,5 @@
 use geese::{GeeseContext, EventQueue};
-use graphics::{GraphicsSystem, WindowSystem};
+use graphics::{WindowSystem, Renderer2D};
 use log::{debug, info};
 
 use notify::EventHandler;
@@ -42,7 +42,7 @@ impl GranularEngine {
         let mut ctx = GeeseContext::default();
         ctx.flush()
             .with(geese::notify::add_system::<EventLoopSystem>())
-            .with(geese::notify::add_system::<GraphicsSystem>())
+            .with(geese::notify::add_system::<Renderer2D>())
             .with(geese::notify::add_system::<WindowSystem>())
             .with(geese::notify::add_system::<FileWatcher>());
 
@@ -105,18 +105,16 @@ impl GranularEngine {
                     true
                 },
                 WindowEvent::Resized(new_size) => {
-                    let mut graphics = self.ctx.get_mut::<GraphicsSystem>();
-                    graphics.resize_surface(new_size);
+                    let mut renderer = self.ctx.get_mut::<Renderer2D>();
+                    renderer.resize(new_size);
                     #[cfg(target_os="macos")]
                     graphics.request_redraw();
                     true
                 },
                 WindowEvent::RedrawRequested => {
-                    let mut graphics = self.ctx.get_mut::<GraphicsSystem>();
-                    graphics.begin_frame();
-                    graphics.render_pass();
-                    graphics.present_frame();
-                    graphics.request_redraw();
+                    let mut renderer = self.ctx.get_mut::<Renderer2D>();
+                    renderer.render();
+                    renderer.request_redraw();
                     true
                 },
                 WindowEvent::KeyboardInput{event, ..} => {
@@ -127,7 +125,7 @@ impl GranularEngine {
                             ..
                         } => {
                             info!("Reload GraphicsSystem");
-                            self.ctx.flush().with(geese::notify::reset_system::<GraphicsSystem>());
+                            //self.ctx.flush().with(geese::notify::reset_system::<GraphicsSystem>());
                             true
                         },
                         _ => false

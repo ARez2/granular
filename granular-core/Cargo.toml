@@ -12,3 +12,6 @@ winit.workspace = true
 log.workspace = true
 pollster.workspace = true
 notify = "6.1.1"
+bytemuck = "1.14.0"
+ultraviolet = "0.9.2"
+bytemuck_derive = "1.5.0"

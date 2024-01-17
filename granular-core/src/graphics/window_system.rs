@@ -1,7 +1,6 @@
-use std::{pin::Pin, sync::Arc};
+use std::sync::Arc;
 
 use geese::*;
-use wgpu::Surface;
 use winit::window::Window;
 
 use crate::EventLoopSystem;
@@ -26,6 +25,7 @@ impl GeeseSystem for WindowSystem {
             .with_visible(false)
             .with_resizable(true)
             .with_window_level(winit::window::WindowLevel::AlwaysOnTop)
+            .with_position(winit::dpi::PhysicalPosition::new(1500, 100))
             .build(event_loop.get()).unwrap();
         
         Self {

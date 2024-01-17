@@ -32,7 +32,7 @@ impl GeeseSystem for GraphicsBackend {
             if adapters.len() == 1 {
                 0
             } else {
-                0 // do more here?
+                0 // TODO: do more here?
             }
         };
 
