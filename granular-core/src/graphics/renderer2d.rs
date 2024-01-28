@@ -185,9 +185,12 @@ impl GeeseSystem for Renderer2D {
         let white_texture_view = white_texture.create_view(&wgpu::TextureViewDescriptor::default());
         
         let queue = graphics_sys.queue();
+        let p = std::env::current_dir().unwrap().join("assets/cat.jpg");
+        let cat_data = image::open(p).unwrap();
+        let cat_data = cat_data.as_flat_samples_u8().unwrap().as_slice().clone();
         queue.write_texture(
             red_texture.as_image_copy(),
-            &red_texture_data,
+            cat_data,
             wgpu::ImageDataLayout {
                 offset: 0,
                 bytes_per_row: Some(4),

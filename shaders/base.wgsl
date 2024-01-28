@@ -13,7 +13,7 @@ struct VertexOutput {
 @vertex
 fn vert_main(vertex: VertexInput) -> VertexOutput {
     var outval: VertexOutput;
-    outval.position = vec4<f32>(vertex.position.x, vertex.position.y, 0.0, 1.0);
+    outval.position = vec4<f32>(vertex.position.x * 1.5, vertex.position.y * 1.5, 0.0, 1.0);
     outval.tex_coord = vertex.tex_coord;
     outval.index = vertex.index;
     return outval;
