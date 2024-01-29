@@ -27,7 +27,7 @@ impl GeeseSystem for GraphicsBackend {
             backends: Backends::VULKAN,
             ..Default::default()
         });
-        let adapters = instance.enumerate_adapters(Backends::VULKAN).collect::<Vec<_>>();
+        let adapters = instance.enumerate_adapters(Backends::VULKAN);
         let chosen = {
             if adapters.len() == 1 {
                 0

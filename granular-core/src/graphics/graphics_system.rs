@@ -33,20 +33,20 @@ pub(crate) fn quadmesh() -> (Vec<Vertex>, Vec<u16>) {
         // left rectangle
         vertex([-1, -1], [0, 1], 0),
         vertex([-1, 1], [0, 0], 0),
-        vertex([0, 1], [1, 0], 0),
-        vertex([0, -1], [1, 1], 0),
-        // right rectangle
-        vertex([0, -1], [0, 1], 1),
-        vertex([0, 1], [0, 0], 1),
-        vertex([1, 1], [1, 0], 1),
-        vertex([1, -1], [1, 1], 1),
+        vertex([1, 1], [1, 0], 0),
+        vertex([1, -1], [1, 1], 0),
+        // // right rectangle
+        // vertex([0, -1], [0, 1], 1),
+        // vertex([0, 1], [0, 0], 1),
+        // vertex([1, 1], [1, 0], 1),
+        // vertex([1, -1], [1, 1], 1),
     ], vec![
         // Left rectangle
         0, 1, 2, // 1st
         2, 0, 3, // 2nd
         // Right rectangle
-        4, 5, 6, // 1st
-        6, 4, 7, // 2nd
+        // 4, 5, 6, // 1st
+        // 6, 4, 7, // 2nd
     ])
 }
 
@@ -149,6 +149,7 @@ impl GeeseSystem for GraphicsSystem {
             present_mode: wgpu::PresentMode::AutoNoVsync,
             alpha_mode: swapchain_capabilities.alpha_modes[0],
             view_formats: vec![],
+            desired_maximum_frame_latency: 2
         };
     
         surface.configure(&device, &config);

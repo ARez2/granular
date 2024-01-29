@@ -47,8 +47,10 @@ impl GranularEngine {
             .with(geese::notify::add_system::<FileWatcher>());
 
         let mut filewatcher = ctx.get_mut::<FileWatcher>();
-        let shaders = std::env::current_dir().unwrap().join("shaders");
-        filewatcher.watch(shaders, true);
+        let cur = std::env::current_exe().unwrap();
+        let base_directory = cur.parent().unwrap().parent().unwrap().parent().unwrap();
+        let shader_dir = base_directory.join("shaders");
+        filewatcher.watch(shader_dir, true);
         drop(filewatcher);
 
         Self {
@@ -139,7 +141,7 @@ impl GranularEngine {
     }
 
 
-    pub fn use_window_target(&self, target: &winit::event_loop::EventLoopWindowTarget<()>) {
+    pub fn use_window_target(&self, target: &winit::event_loop::EventLoopWindowTarget) {
         if self.close_requested {
             target.exit();
         }

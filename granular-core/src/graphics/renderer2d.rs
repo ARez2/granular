@@ -19,6 +19,7 @@ pub struct Renderer2D {
     index_buffer: Buffer,
     bind_group: BindGroup,
     index_format: IndexFormat,
+    num_indices: u32,
     clear_color: Color,
     extents: Extent3d,
     render_pipeline: RenderPipeline,
@@ -28,7 +29,6 @@ impl Renderer2D {
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         graphics_sys.begin_frame();
         let framedata = graphics_sys.frame_data_mut();
-
         if framedata.is_none() {
             warn!("No frame data present, call begin_frame first!");
             return;
@@ -53,15 +53,8 @@ impl Renderer2D {
         rpass.set_pipeline(&self.render_pipeline);
         rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         rpass.set_index_buffer(self.index_buffer.slice(..), self.index_format);
-        // if self.uniform_workaround {
-        //     rpass.set_bind_group(0, &self.bind_group, &[0]);
-        //     rpass.draw_indexed(0..6, 0, 0..1);
-        //     rpass.set_bind_group(0, &self.bind_group, &[256]);
-        //     rpass.draw_indexed(6..12, 0, 0..1);
-        // } else {
-        // }
-        rpass.set_bind_group(0, &self.bind_group, &[0]);
-        rpass.draw_indexed(0..12, 0, 0..1);
+        rpass.set_bind_group(0, &self.bind_group, &[]);
+        rpass.draw_indexed(0..self.num_indices, 0, 0..1);
 
         drop(rpass);
         
@@ -102,7 +95,10 @@ impl GeeseSystem for Renderer2D {
         let mut graphics_sys = ctx.get_mut::<GraphicsSystem>();
         let device = graphics_sys.device();
 
-        let shader_dir = std::env::current_dir().unwrap().join("shaders");
+        let cur = std::env::current_exe().unwrap();
+        let base_directory = cur.parent().unwrap().parent().unwrap().parent().unwrap();
+
+        let shader_dir = base_directory.join("shaders");
         let shader_file = shader_dir.join("base.wgsl");
         let shader_contents = std::fs::read_to_string(shader_file);
         let shader_src = match shader_contents {
@@ -130,27 +126,22 @@ impl GeeseSystem for Renderer2D {
             contents: bytemuck::cast_slice(&quadmesh.1),
             usage: wgpu::BufferUsages::INDEX,
         });
+        let num_indices = quadmesh.1.len() as u32;
 
         let conf = graphics_sys.surface_config();
         let extents = wgpu::Extent3d { width: conf.width, height: conf.height, depth_or_array_layers: 1 };
 
 
-        let mut texture_index_buffer_contents = vec![0u32; 128];
-        texture_index_buffer_contents[0] = 0;
-        texture_index_buffer_contents[64] = 1;
-        let texture_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(&texture_index_buffer_contents),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-
-        let red_texture_data = [255, 0, 0, 255];
-        let green_texture_data = [0, 255, 0, 255];
-        let blue_texture_data = [0, 0, 255, 255];
-        let white_texture_data = [255, 255, 255, 255];
-
-        let texture_descriptor = wgpu::TextureDescriptor {
-            size: wgpu::Extent3d::default(),
+        let p = base_directory.join("assets").join("cat.jpg");
+        let cat_img = image::open(p).unwrap().to_rgba8();
+        let mut cat_size = wgpu::Extent3d::default();
+        cat_size.width = cat_img.width();
+        cat_size.height = cat_img.height();
+        //let cat_data = cat_img.as_flat_samples_u8().unwrap();
+        //let cat_data = cat_img.as_();
+        
+        let cat_texture_descriptor = wgpu::TextureDescriptor {
+            size: cat_size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -162,75 +153,37 @@ impl GeeseSystem for Renderer2D {
         let red_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("red"),
             view_formats: &[],
-            ..texture_descriptor
-        });
-        let green_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("green"),
-            view_formats: &[],
-            ..texture_descriptor
-        });
-        let blue_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("blue"),
-            view_formats: &[],
-            ..texture_descriptor
-        });
-        let white_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("white"),
-            view_formats: &[],
-            ..texture_descriptor
+            ..cat_texture_descriptor
         });
         let red_texture_view = red_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let green_texture_view = green_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let blue_texture_view = blue_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let white_texture_view = white_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        
+
         let queue = graphics_sys.queue();
-        let p = std::env::current_dir().unwrap().join("assets/cat.jpg");
-        let cat_data = image::open(p).unwrap();
-        let cat_data = cat_data.as_flat_samples_u8().unwrap().as_slice().clone();
         queue.write_texture(
-            red_texture.as_image_copy(),
-            cat_data,
+            wgpu::ImageCopyTexture {
+                texture: &red_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &cat_img,
             wgpu::ImageDataLayout {
                 offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: None,
+                bytes_per_row: Some(4 * cat_size.width),
+                rows_per_image: Some(cat_size.height),
             },
-            wgpu::Extent3d::default(),
-        );
-        queue.write_texture(
-            green_texture.as_image_copy(),
-            &green_texture_data,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: None,
-            },
-            wgpu::Extent3d::default(),
-        );
-        queue.write_texture(
-            blue_texture.as_image_copy(),
-            &blue_texture_data,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: None,
-            },
-            wgpu::Extent3d::default(),
-        );
-        queue.write_texture(
-            white_texture.as_image_copy(),
-            &white_texture_data,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: None,
-            },
-            wgpu::Extent3d::default(),
+            cat_size,
         );
 
         let device = graphics_sys.device();
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bind group layout"),
@@ -243,34 +196,14 @@ impl GeeseSystem for Renderer2D {
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
-                    count: NonZeroU32::new(2),
+                    count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: NonZeroU32::new(2),
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: NonZeroU32::new(2),
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: Some(NonZeroU64::new(4).unwrap()),
-                    },
                     count: None,
-                },
+                }
             ],
         });
 
@@ -278,30 +211,12 @@ impl GeeseSystem for Renderer2D {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureViewArray(&[
-                        &red_texture_view,
-                        &green_texture_view,
-                    ]),
+                    resource: wgpu::BindingResource::TextureView(&red_texture_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureViewArray(&[
-                        &blue_texture_view,
-                        &white_texture_view,
-                    ]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::SamplerArray(&[&sampler, &sampler]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &texture_index_buffer,
-                        offset: 0,
-                        size: Some(NonZeroU64::new(4).unwrap()),
-                    }),
-                },
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                }
             ],
             layout: &bind_group_layout,
             label: Some("bind group"),
@@ -347,9 +262,10 @@ impl GeeseSystem for Renderer2D {
             ctx,
             vertex_buffer,
             index_buffer,
+            index_format,
+            num_indices,
             bind_group,
             render_pipeline,
-            index_format,
             clear_color: Color::BLACK,
             extents
         }
