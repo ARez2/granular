@@ -19,6 +19,8 @@ pub(crate) struct Vertex {
     _tex_coord: [f32; 2],
     _index: u32,
 }
+pub const VERTEX_SIZE: usize = std::mem::size_of::<Vertex>();
+
 
 pub(self) fn vertex(pos: [i8; 2], tc: [i8; 2], index: i8) -> Vertex {
     Vertex {
