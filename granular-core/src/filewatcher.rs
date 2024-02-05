@@ -35,7 +35,7 @@ impl FileWatcher {
     pub fn poll(&self) {
         if let Ok(event) = self.rx.try_recv() {
             match event {
-                Ok(event) => {
+                Ok(event) => if let notify::EventKind::Modify(kind) = event.kind {
                     self.ctx.raise_event(events::FilesChanged::from_event(&event));
                 },
                 Err(e) => error!("Watch error: {:?}", e),
