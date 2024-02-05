@@ -48,13 +48,6 @@ impl GranularEngine {
             .with(geese::notify::add_system::<FileWatcher>())
             .with(geese::notify::add_system::<AssetServer>());
 
-        let mut filewatcher = ctx.get_mut::<FileWatcher>();
-        let cur = std::env::current_exe().unwrap();
-        let base_directory = cur.parent().unwrap().parent().unwrap().parent().unwrap();
-        let shader_dir = base_directory.join("shaders");
-        filewatcher.watch(shader_dir, true);
-        drop(filewatcher);
-
         Self {
             ctx,
             close_requested: false

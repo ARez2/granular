@@ -11,6 +11,15 @@ use crate::{filewatcher::FileWatcher, graphics::GraphicsSystem};
 
 mod texture_asset;
 pub use texture_asset::TextureAsset;
+mod shader_asset;
+pub use shader_asset::ShaderAsset;
+
+
+pub mod events {
+    pub struct AssetReload {
+        pub asset_id: usize
+    }
+}
 
 
 pub trait Asset: 'static {
@@ -38,7 +47,7 @@ pub struct AssetServer {
     ctx: GeeseContextHandle<Self>,
     assets: HashMap<usize, Box<dyn AssetHolder>>,
     path_to_id: HashMap<PathBuf, usize>,
-    assets_path: PathBuf,
+    base_path: PathBuf,
 }
 
 impl AssetServer {
@@ -48,7 +57,7 @@ impl AssetServer {
 
     pub fn load<T: Asset>(&mut self, path: impl TryInto<PathBuf>, hot_reload: bool) -> AssetHandle<T> {
         let path: PathBuf = path.try_into().ok().unwrap();
-        let path = self.assets_path.join(path);
+        let path = self.base_path.join(path);
 
         let handle = AssetHandle {
             id: self.assets.len(),
@@ -80,6 +89,7 @@ impl AssetServer {
                     }
                     asset.update_from_path(&self.ctx, path);
                     info!("Reloading asset at {}", path.display());
+                    self.ctx.raise_event(events::AssetReload{asset_id: *id})
                 }
             };
             
@@ -95,12 +105,11 @@ impl GeeseSystem for AssetServer {
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
         let cur = std::env::current_exe().unwrap();
-        let base_directory = cur.parent().unwrap().parent().unwrap().parent().unwrap();
-        let assets_path = base_directory.join("assets");
+        let base_path = cur.parent().unwrap().parent().unwrap().parent().unwrap().to_path_buf();
         
         Self {
             ctx,
-            assets_path,
+            base_path,
             assets: HashMap::default(),
             path_to_id: HashMap::default()
         }

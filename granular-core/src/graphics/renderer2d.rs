@@ -2,13 +2,13 @@ use std::borrow::Cow;
 
 use geese::{GeeseSystem, dependencies, GeeseContextHandle, Mut, EventHandlers, event_handlers};
 use log::{warn, info, error};
-use wgpu::{BindGroup, BindGroupLayout, Buffer, Color, Extent3d, IndexFormat, RenderPipeline, ShaderModuleDescriptor};
+use wgpu::{BindGroup, BindGroupLayout, Buffer, Color, ColorTargetState, Device, Extent3d, IndexFormat, RenderPipeline, RenderPipelineDescriptor, ShaderModule, ShaderModuleDescriptor};
 use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalSize;
 
-use crate::assets::{AssetServer, TextureAsset};
+use crate::assets::{AssetHandle, AssetServer, ShaderAsset, TextureAsset};
 
-use super::graphics_system::Vertex;
+use super::graphics_system::{Vertex, VERTEX_SIZE};
 use super::{GraphicsSystem, graphics_system::quadmesh};
 
 
@@ -23,7 +23,10 @@ pub struct Renderer2D {
     num_indices: u32,
     clear_color: Color,
     extents: Extent3d,
+    shader_handle: AssetHandle<ShaderAsset>,
     render_pipeline: RenderPipeline,
+
+    background_image: AssetHandle<TextureAsset>,
 }
 impl Renderer2D {
     pub fn render(&mut self) {
@@ -74,14 +77,76 @@ impl Renderer2D {
         graphics_sys.resize_surface(new_size);
     }
 
-    fn on_filechange(&mut self, event: &crate::filewatcher::events::FilesChanged) {
-        event.paths.iter().for_each(|p| {
-            if p.ends_with("base.wgsl") {
-                info!("Shader changes! Reload GraphicsSystem");
-                self.ctx.raise_event(geese::notify::reset_system::<Self>());
-                //self.ctx.raise_event(geese::notify::reset_system::<GraphicsSystem>());
-            }
+    fn on_assetchange(&mut self, event: &crate::assets::events::AssetReload) {
+        if event.asset_id == self.shader_handle.id() {
+            let graphics_sys = self.ctx.get::<GraphicsSystem>();
+            let asset_sys = self.ctx.get::<AssetServer>();
+            let shader = asset_sys.get(&self.shader_handle);
+            self.render_pipeline = Self::create_render_pipeline(
+                graphics_sys.device(),
+                &self.bind_group_layout,
+                shader.module(),
+                Some(graphics_sys.surface_config().format.into()))
+        } else if event.asset_id == self.background_image.id() {
+            let graphics_sys = self.ctx.get::<GraphicsSystem>();
+            let device = graphics_sys.device();
+            let asset_sys = self.ctx.get::<AssetServer>();
+            let background_tex = asset_sys.get(&self.background_image);
+            self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(background_tex.view()),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(background_tex.sampler()),
+                    }
+                ],
+                layout: &self.bind_group_layout,
+                label: Some("bind group"),
+            });
+        }
+    }
+
+
+    fn create_render_pipeline(
+        device: &Device,
+        bind_group_layout: &BindGroupLayout,
+        shader: &ShaderModule,
+        color_state: Option<ColorTargetState>
+    ) -> RenderPipeline {
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("main"),
+            bind_group_layouts: &[bind_group_layout],
+            push_constant_ranges: &[],
         });
+
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: None,
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: "vert_main",
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: VERTEX_SIZE as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Sint32],
+                }],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: "uniform_main",
+                targets: &[color_state],
+            }),
+            primitive: wgpu::PrimitiveState {
+                front_face: wgpu::FrontFace::Ccw,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        })
     }
 }
 
@@ -91,36 +156,17 @@ impl GeeseSystem for Renderer2D {
         .with::<Mut<AssetServer>>();
 
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
-        .with(Self::on_filechange);
+        .with(Self::on_assetchange);
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
         let mut asset_sys = ctx.get_mut::<AssetServer>();
-        let cat_handle = asset_sys.load::<TextureAsset>("cat.jpg", true);
+        let cat_handle = asset_sys.load::<TextureAsset>("assets/cat.jpg", true);
+        let base_shader_handle = asset_sys.load::<ShaderAsset>("shaders/base.wgsl", true);
         drop(asset_sys);
 
         let graphics_sys = ctx.get::<GraphicsSystem>();
         let device = graphics_sys.device();
 
-        let cur = std::env::current_exe().unwrap();
-        let base_directory = cur.parent().unwrap().parent().unwrap().parent().unwrap();
-
-        let shader_dir = base_directory.join("shaders");
-        let shader_file = shader_dir.join("base.wgsl");
-        let shader_contents = std::fs::read_to_string(shader_file);
-        let shader_src = match shader_contents {
-            Ok(data) => {data},
-            Err(e) => {
-                error!("Error while reading shader: {:?}", e);
-                String::new()
-            }
-        };
-        let base_shader_module = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("Main WGSL shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(&shader_src)),
-        });
-
-
-        let vertex_size = std::mem::size_of::<Vertex>();
         let quadmesh = quadmesh();
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
@@ -177,39 +223,13 @@ impl GeeseSystem for Renderer2D {
             label: Some("bind group"),
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("main"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
-        let index_format = wgpu::IndexFormat::Uint16;
-
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &base_shader_module,
-                entry_point: "vert_main",
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: vertex_size as wgpu::BufferAddress,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Sint32],
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &base_shader_module,
-                entry_point: "uniform_main",
-                targets: &[Some(graphics_sys.surface_config().format.into())],
-            }),
-            primitive: wgpu::PrimitiveState {
-                front_face: wgpu::FrontFace::Ccw,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+        let base_shader_module = asset_sys.get(&base_shader_handle);
+        let render_pipeline = Self::create_render_pipeline(
+            &device,
+            &bind_group_layout,
+            &base_shader_module.module(),
+            Some(graphics_sys.surface_config().format.into())
+        );
 
         drop(graphics_sys);
         drop(asset_sys);
@@ -218,13 +238,16 @@ impl GeeseSystem for Renderer2D {
             ctx,
             vertex_buffer,
             index_buffer,
-            index_format,
+            index_format: wgpu::IndexFormat::Uint16,
             num_indices,
             bind_group,
             bind_group_layout,
+            shader_handle: base_shader_handle,
             render_pipeline,
             clear_color: Color::BLACK,
             extents,
+
+            background_image: cat_handle
         }
     }
 }
