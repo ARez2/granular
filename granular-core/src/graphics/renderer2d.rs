@@ -95,7 +95,7 @@ impl GeeseSystem for Renderer2D {
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
         let mut asset_sys = ctx.get_mut::<AssetServer>();
-        let cat_handle = asset_sys.load::<TextureAsset>("cat.jpg");
+        let cat_handle = asset_sys.load::<TextureAsset>("cat.jpg", true);
         drop(asset_sys);
 
         let graphics_sys = ctx.get::<GraphicsSystem>();

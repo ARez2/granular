@@ -1,5 +1,5 @@
 use std::{marker::PhantomData, path::{Path, PathBuf}};
-use log::warn;
+use log::{info, warn};
 use rustc_hash::FxHashMap as HashMap;
 use geese::*;
 
@@ -46,7 +46,7 @@ impl AssetServer {
         &self.assets.get(&handle.id()).unwrap().as_any().downcast_ref().expect("Invalid type given as generic")
     }
 
-    pub fn load<T: Asset>(&mut self, path: impl TryInto<PathBuf>) -> AssetHandle<T> {
+    pub fn load<T: Asset>(&mut self, path: impl TryInto<PathBuf>, hot_reload: bool) -> AssetHandle<T> {
         let path: PathBuf = path.try_into().ok().unwrap();
         let path = self.assets_path.join(path);
 
@@ -57,7 +57,12 @@ impl AssetServer {
 
         if !self.assets.contains_key(&handle.id()) {
             self.assets.insert(handle.id(), Box::new(TypedAssetHolder::new(T::from_path(&self.ctx, &path))));
-            self.path_to_id.insert(path, handle.id());
+            self.path_to_id.insert(path.clone(), handle.id());
+        };
+
+        if hot_reload {
+            let mut filewatcher = self.ctx.get_mut::<FileWatcher>();
+            filewatcher.watch(path, true);
         };
         
         handle
@@ -74,6 +79,7 @@ impl AssetServer {
                         continue;
                     }
                     asset.update_from_path(&self.ctx, path);
+                    info!("Reloading asset at {}", path.display());
                 }
             };
             
@@ -91,9 +97,6 @@ impl GeeseSystem for AssetServer {
         let cur = std::env::current_exe().unwrap();
         let base_directory = cur.parent().unwrap().parent().unwrap().parent().unwrap();
         let assets_path = base_directory.join("assets");
-        let mut filewatcher = ctx.get_mut::<FileWatcher>();
-        filewatcher.watch(assets_path.clone(), true);
-        drop(filewatcher);
         
         Self {
             ctx,
