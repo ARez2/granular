@@ -2,7 +2,7 @@ mod graphics_backend;
 pub(self) use graphics_backend::GraphicsBackend;
 
 mod graphics_system;
-pub(self) use graphics_system::GraphicsSystem;
+pub use graphics_system::GraphicsSystem;
 
 
 mod window_system;

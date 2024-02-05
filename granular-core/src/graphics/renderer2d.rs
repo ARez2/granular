@@ -1,12 +1,12 @@
 use std::borrow::Cow;
-use std::num::{NonZeroU64, NonZeroU32};
 
 use geese::{GeeseSystem, dependencies, GeeseContextHandle, Mut, EventHandlers, event_handlers};
 use log::{warn, info, error};
-use wgpu::{RenderPipeline, Buffer, BindGroup, Color, ShaderModuleDescriptor, Device, Texture, TextureView, Extent3d, IndexFormat};
+use wgpu::{BindGroup, BindGroupLayout, Buffer, Color, Extent3d, IndexFormat, RenderPipeline, ShaderModuleDescriptor};
 use wgpu::util::DeviceExt;
-use ultraviolet::Mat4;
 use winit::dpi::PhysicalSize;
+
+use crate::assets::{AssetServer, TextureAsset};
 
 use super::graphics_system::Vertex;
 use super::{GraphicsSystem, graphics_system::quadmesh};
@@ -18,6 +18,7 @@ pub struct Renderer2D {
     vertex_buffer: Buffer,
     index_buffer: Buffer,
     bind_group: BindGroup,
+    bind_group_layout: BindGroupLayout,
     index_format: IndexFormat,
     num_indices: u32,
     clear_color: Color,
@@ -86,13 +87,18 @@ impl Renderer2D {
 
 impl GeeseSystem for Renderer2D {
     const DEPENDENCIES: geese::Dependencies = dependencies()
-        .with::<Mut<GraphicsSystem>>();
+        .with::<Mut<GraphicsSystem>>()
+        .with::<Mut<AssetServer>>();
 
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::on_filechange);
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
-        let mut graphics_sys = ctx.get_mut::<GraphicsSystem>();
+        let mut asset_sys = ctx.get_mut::<AssetServer>();
+        let cat_handle = asset_sys.load::<TextureAsset>("cat.jpg");
+        drop(asset_sys);
+
+        let graphics_sys = ctx.get::<GraphicsSystem>();
         let device = graphics_sys.device();
 
         let cur = std::env::current_exe().unwrap();
@@ -131,60 +137,7 @@ impl GeeseSystem for Renderer2D {
         let conf = graphics_sys.surface_config();
         let extents = wgpu::Extent3d { width: conf.width, height: conf.height, depth_or_array_layers: 1 };
 
-
-        let p = base_directory.join("assets").join("cat.jpg");
-        let cat_img = image::open(p).unwrap().to_rgba8();
-        let mut cat_size = wgpu::Extent3d::default();
-        cat_size.width = cat_img.width();
-        cat_size.height = cat_img.height();
-        //let cat_data = cat_img.as_flat_samples_u8().unwrap();
-        //let cat_data = cat_img.as_();
-        
-        let cat_texture_descriptor = wgpu::TextureDescriptor {
-            size: cat_size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            label: None,
-            view_formats: &[],
-        };
-        let red_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("red"),
-            view_formats: &[],
-            ..cat_texture_descriptor
-        });
-        let red_texture_view = red_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let queue = graphics_sys.queue();
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &red_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &cat_img,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * cat_size.width),
-                rows_per_image: Some(cat_size.height),
-            },
-            cat_size,
-        );
-
         let device = graphics_sys.device();
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bind group layout"),
             entries: &[
@@ -207,15 +160,17 @@ impl GeeseSystem for Renderer2D {
             ],
         });
 
+        let asset_sys = ctx.get::<AssetServer>();
+        let cat_texture = asset_sys.get(&cat_handle);
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&red_texture_view),
+                    resource: wgpu::BindingResource::TextureView(cat_texture.view()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
+                    resource: wgpu::BindingResource::Sampler(cat_texture.sampler()),
                 }
             ],
             layout: &bind_group_layout,
@@ -257,6 +212,7 @@ impl GeeseSystem for Renderer2D {
         });
 
         drop(graphics_sys);
+        drop(asset_sys);
 
         Self {
             ctx,
@@ -265,9 +221,10 @@ impl GeeseSystem for Renderer2D {
             index_format,
             num_indices,
             bind_group,
+            bind_group_layout,
             render_pipeline,
             clear_color: Color::BLACK,
-            extents
+            extents,
         }
     }
 }

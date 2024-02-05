@@ -90,7 +90,11 @@ impl GraphicsSystem {
         &self.surface_config
     }
 
-    pub fn queue(&mut self) -> &mut Queue {
+    pub fn queue(&self) -> &Queue {
+        &self.queue
+    }
+
+    pub fn queue_mut(&mut self) -> &mut Queue {
         &mut self.queue
     }
 

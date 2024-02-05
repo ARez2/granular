@@ -2,9 +2,10 @@ use geese::{GeeseContext, EventQueue};
 use graphics::{WindowSystem, Renderer2D};
 use log::{debug, info};
 
-use notify::EventHandler;
-use ::notify::PollWatcher;
 use winit::{dpi::PhysicalSize, event::WindowEvent};
+
+mod assets;
+use assets::AssetServer;
 
 //mod tick;
 mod graphics;
@@ -44,7 +45,8 @@ impl GranularEngine {
             .with(geese::notify::add_system::<EventLoopSystem>())
             .with(geese::notify::add_system::<Renderer2D>())
             .with(geese::notify::add_system::<WindowSystem>())
-            .with(geese::notify::add_system::<FileWatcher>());
+            .with(geese::notify::add_system::<FileWatcher>())
+            .with(geese::notify::add_system::<AssetServer>());
 
         let mut filewatcher = ctx.get_mut::<FileWatcher>();
         let cur = std::env::current_exe().unwrap();

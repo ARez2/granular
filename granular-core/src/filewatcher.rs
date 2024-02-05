@@ -1,7 +1,7 @@
 use std::sync::mpsc::Receiver;
 
 use geese::{GeeseSystem, GeeseContextHandle};
-use log::{info, error};
+use log::{debug, error, info};
 use notify::{Watcher, RecommendedWatcher};
 
 pub mod events {
@@ -29,6 +29,7 @@ impl FileWatcher {
             false => notify::RecursiveMode::NonRecursive
         };
         self.filewatcher.watch(path.as_ref(), rec).expect(format!("Cannot watch: {:?}", path.as_ref().display()).as_str());
+        info!("Watching {}", path.as_ref().display());
     }
 
     pub fn poll(&self) {

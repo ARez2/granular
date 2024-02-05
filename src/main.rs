@@ -1,11 +1,11 @@
 use geese::*;
-use granular_core::{GranularEngine, events, EventLoopSystem};
+use granular_core::{GranularEngine, events};
 use log::{info, trace};
 use std::io::Write;
 
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
-    std::env::set_var("RUST_LOG", "granular=debug");
+    std::env::set_var("RUST_LOG", "granular=trace");
     env_logger::builder()
         .format(|buf, record| {
             let ts = buf.timestamp_micros();
