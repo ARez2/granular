@@ -78,7 +78,7 @@ impl Renderer2D {
     }
 
     fn on_assetchange(&mut self, event: &crate::assets::events::AssetReload) {
-        if event.asset_id == self.shader_handle.id() {
+        if event.asset_id == **self.shader_handle.id() {
             let graphics_sys = self.ctx.get::<GraphicsSystem>();
             let asset_sys = self.ctx.get::<AssetServer>();
             let shader = asset_sys.get(&self.shader_handle);
@@ -87,7 +87,7 @@ impl Renderer2D {
                 &self.bind_group_layout,
                 shader.module(),
                 Some(graphics_sys.surface_config().format.into()))
-        } else if event.asset_id == self.background_image.id() {
+        } else if event.asset_id == **self.background_image.id() {
             let graphics_sys = self.ctx.get::<GraphicsSystem>();
             let device = graphics_sys.device();
             let asset_sys = self.ctx.get::<AssetServer>();
