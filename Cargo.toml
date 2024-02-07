@@ -10,6 +10,7 @@ winit.workspace = true
 env_logger.workspace = true
 log.workspace = true
 pollster.workspace = true
+regex = "1.10.3"
 
 [workspace]
 members = ["granular-core"]

@@ -1,13 +1,17 @@
 use geese::*;
 use granular_core::{GranularEngine, events};
-use log::{info, trace};
+use log::{debug, info, trace};
 use std::io::Write;
+use regex::Regex;
 
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
     std::env::set_var("RUST_LOG", "granular=trace");
+
+    // Matches a full path until (excluding) "granular"
+    let path_regex = Regex::new(r" \b(.*)\bgranular\b").unwrap();
     env_logger::builder()
-        .format(|buf, record| {
+        .format(move |buf, record| {
             let ts = buf.timestamp_micros();
             let ts = ts.to_string();
             let timestamp = &ts[11..ts.len()-1];
@@ -17,7 +21,15 @@ fn main() {
                 Some(path) => format!("{:<width$}", path),
                 None => format!("{:width$}", ""),
             };
-            writeln!(buf, "[{ts} {lvl} {path}]: {msg}", ts=timestamp, lvl=level, path=buf.style().set_dimmed(true).value(mod_path), msg=record.args())
+            
+            // Remove personal stuff from full path
+            let mut msg_clean = record.args().to_string();
+            if let Some(re_match) = path_regex.captures(&msg_clean) {
+                if let Some(pre_path) = re_match.get(1) {
+                    msg_clean.replace_range(pre_path.start()..pre_path.end(), "");
+                }
+            };
+            writeln!(buf, "[{ts} {lvl} {path}]: {msg}", ts=timestamp, lvl=level, path=buf.style().set_dimmed(true).value(mod_path), msg=msg_clean)
         })
         .init();
 
