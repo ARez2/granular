@@ -1,7 +1,9 @@
+use std::time::{Duration, Instant};
+
 use geese::{GeeseContext, EventQueue};
 use graphics::{WindowSystem, Renderer2D};
 use log::{debug, info};
-
+use rustc_hash::FxHashMap as HashMap;
 use winit::{dpi::PhysicalSize, event::WindowEvent};
 
 mod assets;
@@ -11,7 +13,7 @@ use assets::AssetServer;
 mod graphics;
 
 mod eventloop_system;
-pub use eventloop_system::EventLoopSystem;
+use eventloop_system::EventLoopSystem;
 
 mod filewatcher;
 use filewatcher::FileWatcher;
@@ -22,12 +24,23 @@ pub mod events {
         
     }
 
-    pub struct NewFrame {
-        pub delta: f32,
-    }
+    pub mod timing {
+        /// Gets sent out every frame
+        pub struct Tick;
 
-    pub struct Tick {
+        /// Gets sent out every 30 frames
+        pub struct Tick30;
 
+        /// Gets sent out every 60 frames
+        pub struct Tick60;
+
+
+        /// Gets sent out every second
+        pub struct FixedTick;
+        /// Gets sent out every 2.5 seconds
+        pub struct FixedTick2500ms;
+        /// Gets sent out every 5 seconds
+        pub struct FixedTick5000ms;
     }
 }
 
@@ -36,6 +49,10 @@ pub mod events {
 pub struct GranularEngine {
     ctx: GeeseContext,
     close_requested: bool,
+    /// Current frame
+    frame: u64,
+    /// When each tick (in ms) last occured
+    last_ticks: HashMap<Duration, Instant>
 }
 
 impl GranularEngine {
@@ -48,9 +65,17 @@ impl GranularEngine {
             .with(geese::notify::add_system::<FileWatcher>())
             .with(geese::notify::add_system::<AssetServer>());
 
+        let now = Instant::now();
+        let mut last_ticks = HashMap::default();
+        last_ticks.insert(Duration::from_secs_f32(1.0), now);
+        last_ticks.insert(Duration::from_secs_f32(2.5), now);
+        last_ticks.insert(Duration::from_secs_f32(5.0), now);
+
         Self {
             ctx,
-            close_requested: false
+            close_requested: false,
+            frame: 0,
+            last_ticks,
         }
     }
 
@@ -80,14 +105,45 @@ impl GranularEngine {
             };
             self.use_window_target(target);
             self.update();
-            let filewatcher = self.ctx.get::<FileWatcher>();
-            filewatcher.poll();
+            self.handle_scheduling();
+            self.frame += 1;
         }).unwrap();
     }
 
 
     pub fn update(&mut self) {
-        self.ctx.flush().with(events::NewFrame {delta: 0.0});
+        
+    }
+
+
+    pub fn handle_scheduling(&mut self) {
+        let mut buffer = geese::EventBuffer::default()
+            .with(events::timing::Tick);
+        
+        let now = Instant::now();
+        self.last_ticks.iter_mut().for_each(|(tickrate, last)| {
+            if *last + *tickrate < now {
+                *last = now;
+                let tickrate_secs = tickrate.as_secs_f32();
+                if tickrate_secs == 1.0 {
+                    self.ctx.flush().with(events::timing::FixedTick);
+                } else if tickrate_secs == 2.5 {
+                    self.ctx.flush().with(events::timing::FixedTick2500ms);
+                } else if tickrate_secs == 5.0 {
+                    self.ctx.flush().with(events::timing::FixedTick5000ms);
+                };
+            }
+        });
+
+        
+        
+        if self.frame % 60 == 0 {
+            buffer = buffer.with(events::timing::Tick60);
+        } else if self.frame % 30 == 0 {
+            buffer = buffer.with(events::timing::Tick30);
+        };
+        
+        self.ctx.flush().with_buffer(buffer);
     }
 
 

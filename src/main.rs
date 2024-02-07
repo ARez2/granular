@@ -12,7 +12,7 @@ fn main() {
     let path_regex = Regex::new(r" \b(.*)\bgranular\b").unwrap();
     env_logger::builder()
         .format(move |buf, record| {
-            let ts = buf.timestamp_micros();
+            let ts = buf.timestamp_millis();
             let ts = ts.to_string();
             let timestamp = &ts[11..ts.len()-1];
             let level = buf.default_styled_level(record.level());
@@ -46,14 +46,13 @@ struct Game {
     ctx: GeeseContextHandle<Self>
 }
 impl Game {
-    fn on_update(&mut self, event: &events::NewFrame) {
-        //trace!("Update game");
+    fn on_update(&mut self, _: &events::timing::FixedTick) {
+        info!("Fixed game update");
     }
 }
 impl GeeseSystem for Game {
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::on_update);
-
     
     fn new(ctx: GeeseContextHandle<Self>) -> Self {
         info!("Game created");

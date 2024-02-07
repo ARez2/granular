@@ -128,7 +128,7 @@ impl AssetServer {
         self.base_path.join(path)
     }
 
-    pub fn drop_unused_assets(&mut self) {
+    pub fn drop_unused_assets(&mut self, _: &crate::events::timing::FixedTick5000ms) {
         let mut removed_usizes = vec![];
         self.assets.retain(|arc, asset| {
             if Arc::strong_count(arc) <= 1 {
@@ -152,7 +152,8 @@ impl GeeseSystem for AssetServer {
         .with::<Mut<FileWatcher>>()
         .with::<GraphicsSystem>();
     const EVENT_HANDLERS: geese::EventHandlers<Self> = event_handlers()
-        .with(Self::reload);
+        .with(Self::reload)
+        .with(Self::drop_unused_assets);
 
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {

@@ -1,6 +1,6 @@
 use std::sync::mpsc::Receiver;
 
-use geese::{GeeseSystem, GeeseContextHandle};
+use geese::{event_handlers, GeeseContextHandle, GeeseSystem};
 use log::{debug, error, info};
 use notify::{Watcher, RecommendedWatcher};
 
@@ -32,7 +32,7 @@ impl FileWatcher {
         info!("Watching {}", path.as_ref().display());
     }
 
-    pub fn poll(&self) {
+    pub fn poll(&mut self, event: &crate::events::timing::Tick) {
         if let Ok(event) = self.rx.try_recv() {
             match event {
                 Ok(event) => if let notify::EventKind::Modify(kind) = event.kind {
@@ -44,6 +44,9 @@ impl FileWatcher {
     }
 }
 impl GeeseSystem for FileWatcher {
+    const EVENT_HANDLERS: geese::EventHandlers<Self> = event_handlers()
+        .with(Self::poll);
+
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         let filewatcher = notify::recommended_watcher(tx).unwrap();
