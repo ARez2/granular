@@ -1,6 +1,6 @@
 use geese::*;
 use granular_core::{GranularEngine, events};
-use log::{debug, info, trace};
+use log::*;
 use std::io::Write;
 use regex::Regex;
 
@@ -43,7 +43,7 @@ fn main() {
 
 
 struct Game {
-    ctx: GeeseContextHandle<Self>
+    _ctx: GeeseContextHandle<Self>
 }
 impl Game {
     fn on_update(&mut self, _: &events::timing::FixedTick) {
@@ -57,7 +57,7 @@ impl GeeseSystem for Game {
     fn new(ctx: GeeseContextHandle<Self>) -> Self {
         info!("Game created");
         Self {
-            ctx
+            _ctx: ctx
         }
     }
 }

@@ -1,7 +1,7 @@
 use std::sync::mpsc::Receiver;
 
 use geese::{event_handlers, GeeseContextHandle, GeeseSystem};
-use log::{debug, error, info};
+use log::*;
 use notify::{Watcher, RecommendedWatcher};
 
 pub mod events {
@@ -28,14 +28,14 @@ impl FileWatcher {
             true => notify::RecursiveMode::Recursive,
             false => notify::RecursiveMode::NonRecursive
         };
-        self.filewatcher.watch(path.as_ref(), rec).expect(format!("Cannot watch: {:?}", path.as_ref().display()).as_str());
+        self.filewatcher.watch(path.as_ref(), rec).unwrap_or_else(|_| panic!("Cannot watch: {:?}", path.as_ref().display()));
         info!("Watching {}", path.as_ref().display());
     }
 
-    pub fn poll(&mut self, event: &crate::events::timing::Tick) {
+    pub fn poll(&mut self, _event: &crate::events::timing::Tick) {
         if let Ok(event) = self.rx.try_recv() {
             match event {
-                Ok(event) => if let notify::EventKind::Modify(kind) = event.kind {
+                Ok(event) => if let notify::EventKind::Modify(_kind) = event.kind {
                     self.ctx.raise_event(events::FilesChanged::from_event(&event));
                 },
                 Err(e) => error!("Watch error: {:?}", e),

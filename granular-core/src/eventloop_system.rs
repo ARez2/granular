@@ -1,4 +1,4 @@
-use std::sync::Arc;
+#![allow(unused)]
 
 use geese::*;
 use winit::event_loop::EventLoop;
@@ -30,7 +30,7 @@ impl EventLoopSystem {
     }
 }
 impl GeeseSystem for EventLoopSystem {
-    fn new(ctx: GeeseContextHandle<Self>) -> Self {
+    fn new(_ctx: GeeseContextHandle<Self>) -> Self {
         Self {
             event_loop: Some(EventLoop::new().unwrap()),
         }

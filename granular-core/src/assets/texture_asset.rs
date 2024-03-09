@@ -1,10 +1,11 @@
-use std::path::PathBuf;
+#![allow(unused)]
+
+use std::path::Path;
 use wgpu::{Extent3d, Sampler, Texture, TextureView};
 use geese::GeeseContextHandle;
 
 use crate::graphics::GraphicsSystem;
-use super::{Asset, AssetServer};
-
+use super::{Asset, AssetSystem};
 
 
 #[derive(Debug)]
@@ -34,7 +35,7 @@ impl TextureAsset {
     }
 }
 impl Asset for TextureAsset {
-    fn from_path(ctx: &GeeseContextHandle<AssetServer>, path: &PathBuf) -> Self {
+    fn from_path(ctx: &GeeseContextHandle<AssetSystem>, path: &Path) -> Self {
         let sys = ctx.get::<GraphicsSystem>();
         let device = sys.device();
         let queue = sys.queue();
@@ -57,6 +58,7 @@ impl Asset for TextureAsset {
             ..texture_descriptor
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        // TODO: Make this be customizable
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,

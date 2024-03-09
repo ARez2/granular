@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, path::Path};
 
 use log::error;
 use wgpu::{ShaderModule, ShaderModuleDescriptor};
@@ -19,7 +19,7 @@ impl ShaderAsset {
     }
 }
 impl Asset for ShaderAsset {
-    fn from_path(ctx: &geese::GeeseContextHandle<super::AssetServer>, path: &std::path::PathBuf) -> Self {
+    fn from_path(ctx: &geese::GeeseContextHandle<super::AssetSystem>, path: &Path) -> Self {
         let graphics_sys = ctx.get::<GraphicsSystem>();
         let device = graphics_sys.device();
 

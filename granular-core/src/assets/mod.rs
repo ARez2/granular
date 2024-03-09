@@ -17,22 +17,22 @@ pub use shader_asset::ShaderAsset;
 
 pub mod events {
     pub struct AssetReload {
-        pub asset_id: usize
+        pub asset_id: u64
     }
 }
 
 
 pub trait Asset: 'static {
-    fn from_path(ctx: &GeeseContextHandle<AssetServer>, path: &PathBuf) -> Self;
+    fn from_path(ctx: &GeeseContextHandle<AssetSystem>, path: &Path) -> Self;
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct AssetHandle<T: Asset> {
-    id: Arc<usize>,
+    id: Arc<u64>,
     marker: std::marker::PhantomData<T>
 }
 impl<T: Asset> AssetHandle<T> {
-    pub fn new(id: Arc<usize>) -> Self {
+    pub fn new(id: Arc<u64>) -> Self {
         Self {
             id,
             marker: PhantomData
@@ -41,11 +41,11 @@ impl<T: Asset> AssetHandle<T> {
 }
 impl<T: Asset> std::hash::Hash for AssetHandle<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_usize(*self.id)
+        state.write_u64(*self.id)
     }
 }
 impl<T: Asset> AssetHandle<T> {
-    pub fn id(&self) -> &Arc<usize> {
+    pub fn id(&self) -> &Arc<u64> {
         &self.id
     }
 }
@@ -60,15 +60,15 @@ impl<T: Asset> Clone for AssetHandle<T> {
 
 
 
-pub struct AssetServer {
+pub struct AssetSystem {
     ctx: GeeseContextHandle<Self>,
-    assets: HashMap<Arc<usize>, Box<dyn AssetHolder>>,
-    path_to_id: HashMap<PathBuf, usize>,
+    assets: HashMap<Arc<u64>, Box<dyn AssetHolder>>,
+    path_to_id: HashMap<PathBuf, u64>,
     base_path: PathBuf,
 }
-impl AssetServer {
+impl AssetSystem {
     pub fn get<T: Asset>(&self, handle: &AssetHandle<T>) -> &T {
-        &self.assets.get(&*handle.id()).unwrap().as_any().downcast_ref().expect("Invalid type given as generic")
+        self.assets.get(handle.id()).unwrap().as_any().downcast_ref().expect("Invalid type given as generic")
     }
 
 
@@ -84,11 +84,11 @@ impl AssetServer {
     pub fn load<T: Asset>(&mut self, path: impl TryInto<PathBuf>, hot_reload: bool) -> AssetHandle<T> {
         let path = self.add_basepath(path);
 
-        let id = self.assets.len();
+        let id = self.assets.len() as u64;
         // If this is a new asset, create it and return a new handle,
         if !self.assets.contains_key(&id) {
             self.assets.insert(Arc::new(id), Box::new(TypedAssetHolder::new(T::from_path(&self.ctx, &path))));
-            let arc = self.assets.get_key_value(&(self.assets.len() - 1)).unwrap().0;
+            let arc = self.assets.get_key_value(&(self.assets.len() as u64 - 1)).unwrap().0;
             self.path_to_id.insert(path.clone(), id);
             
             if hot_reload {
@@ -130,7 +130,7 @@ impl AssetServer {
 
     pub fn drop_unused_assets(&mut self, _: &crate::events::timing::FixedTick5000ms) {
         let mut removed_usizes = vec![];
-        self.assets.retain(|arc, asset| {
+        self.assets.retain(|arc, _| {
             if Arc::strong_count(arc) <= 1 {
                 removed_usizes.push(**arc);
                 false
@@ -147,7 +147,7 @@ impl AssetServer {
         });
     }
 }
-impl GeeseSystem for AssetServer {
+impl GeeseSystem for AssetSystem {
     const DEPENDENCIES: geese::Dependencies = dependencies()
         .with::<Mut<FileWatcher>>()
         .with::<GraphicsSystem>();
@@ -156,7 +156,7 @@ impl GeeseSystem for AssetServer {
         .with(Self::drop_unused_assets);
 
 
-    fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
+    fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
         let cur = std::env::current_exe().unwrap();
         let base_path = cur.parent().unwrap().parent().unwrap().parent().unwrap().to_path_buf();
         

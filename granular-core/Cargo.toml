@@ -18,3 +18,4 @@ bytemuck_derive = "1.5.0"
 image = "0.24.8"
 rustc-hash = "1.1.0"
 anyhow = "1.0.79"
+glam = { version = "0.25.0", features = ["approx", "bytemuck"] }

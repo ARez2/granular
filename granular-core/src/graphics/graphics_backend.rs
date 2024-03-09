@@ -22,7 +22,7 @@ impl GeeseSystem for GraphicsBackend {
     const DEPENDENCIES: Dependencies = dependencies()
         .with::<WindowSystem>();
 
-    fn new(ctx: GeeseContextHandle<Self>) -> Self {
+    fn new(_ctx: GeeseContextHandle<Self>) -> Self {
         let instance = wgpu::Instance::new(InstanceDescriptor {
             backends: Backends::VULKAN,
             ..Default::default()

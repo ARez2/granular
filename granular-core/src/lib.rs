@@ -1,13 +1,14 @@
 use std::time::{Duration, Instant};
 
 use geese::{GeeseContext, EventQueue};
-use graphics::{WindowSystem, Renderer2D};
-use log::{debug, info};
+use glam::Vec2;
+use graphics::{QuadColoring, Renderer, WindowSystem};
+use log::*;
 use rustc_hash::FxHashMap as HashMap;
 use winit::{dpi::PhysicalSize, event::WindowEvent};
 
 mod assets;
-use assets::AssetServer;
+use assets::AssetSystem;
 
 //mod tick;
 mod graphics;
@@ -52,7 +53,10 @@ pub struct GranularEngine {
     /// Current frame
     frame: u64,
     /// When each tick (in ms) last occured
-    last_ticks: HashMap<Duration, Instant>
+    last_ticks: HashMap<Duration, Instant>,
+
+    tex: assets::AssetHandle<assets::TextureAsset>,
+    tex2: assets::AssetHandle<assets::TextureAsset>,
 }
 
 impl GranularEngine {
@@ -60,10 +64,10 @@ impl GranularEngine {
         let mut ctx = GeeseContext::default();
         ctx.flush()
             .with(geese::notify::add_system::<EventLoopSystem>())
-            .with(geese::notify::add_system::<Renderer2D>())
+            .with(geese::notify::add_system::<Renderer>())
             .with(geese::notify::add_system::<WindowSystem>())
             .with(geese::notify::add_system::<FileWatcher>())
-            .with(geese::notify::add_system::<AssetServer>());
+            .with(geese::notify::add_system::<AssetSystem>());
 
         let now = Instant::now();
         let mut last_ticks = HashMap::default();
@@ -71,11 +75,18 @@ impl GranularEngine {
         last_ticks.insert(Duration::from_secs_f32(2.5), now);
         last_ticks.insert(Duration::from_secs_f32(5.0), now);
 
+        let mut asset_sys = ctx.get_mut::<AssetSystem>();
+        let tex = asset_sys.load::<assets::TextureAsset>("assets/cat.jpg", true);
+        let tex2 = asset_sys.load::<assets::TextureAsset>("assets/cat2.jpg", true);
+        drop(asset_sys);
+
         Self {
             ctx,
             close_requested: false,
             frame: 0,
             last_ticks,
+            tex,
+            tex2
         }
     }
 
@@ -109,7 +120,6 @@ impl GranularEngine {
             self.frame += 1;
         }).unwrap();
     }
-
 
     pub fn update(&mut self) {
         
@@ -158,15 +168,34 @@ impl GranularEngine {
                     true
                 },
                 WindowEvent::Resized(new_size) => {
-                    let mut renderer = self.ctx.get_mut::<Renderer2D>();
+                    let mut renderer = self.ctx.get_mut::<Renderer>();
                     renderer.resize(new_size);
                     #[cfg(target_os="macos")]
                     graphics.request_redraw();
                     true
                 },
                 WindowEvent::RedrawRequested => {
-                    let mut renderer = self.ctx.get_mut::<Renderer2D>();
-                    renderer.render();
+                    let mut renderer = self.ctx.get_mut::<Renderer>();
+                    renderer.start_frame();
+
+                    // TODO: Remove this test drawing
+                    let mut s = 0;
+                    for y in -10..=10 {
+                        for x in (-10..=10).rev() {
+                            let col = {
+                                if s % 2 == 0 {
+                                    self.tex.clone()
+                                } else {
+                                    self.tex2.clone()
+                                }
+                            };
+                            renderer.draw_quad(Vec2::new(x as f32 / 10.0, y as f32 / 10.0), Vec2::new(0.05, 0.05), QuadColoring::Texture(col));
+                            s += 1;
+                        };
+                    }
+                    renderer.end_batch();
+                    renderer.flush();
+                    renderer.end_frame();
                     renderer.request_redraw();
                     true
                 },
