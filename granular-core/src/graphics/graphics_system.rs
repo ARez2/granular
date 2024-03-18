@@ -13,7 +13,7 @@ pub type FrameDataMut<'a> = Option<&'a mut (wgpu::SurfaceTexture, wgpu::TextureV
 
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub(crate) struct Vertex {
     _pos: [f32; 2],
     _col: [f32; 4],

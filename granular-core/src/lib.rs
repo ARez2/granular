@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use geese::{GeeseContext, EventQueue};
 use glam::Vec2;
-use graphics::{QuadColoring, Renderer, WindowSystem};
+use graphics::{Quad, Renderer, WindowSystem};
 use log::*;
 use rustc_hash::FxHashMap as HashMap;
 use winit::{dpi::PhysicalSize, event::WindowEvent};
@@ -57,6 +57,7 @@ pub struct GranularEngine {
 
     tex: assets::AssetHandle<assets::TextureAsset>,
     tex2: assets::AssetHandle<assets::TextureAsset>,
+    tex3: assets::AssetHandle<assets::TextureAsset>,
 }
 
 impl GranularEngine {
@@ -78,6 +79,7 @@ impl GranularEngine {
         let mut asset_sys = ctx.get_mut::<AssetSystem>();
         let tex = asset_sys.load::<assets::TextureAsset>("assets/cat.jpg", true);
         let tex2 = asset_sys.load::<assets::TextureAsset>("assets/cat2.jpg", true);
+        let tex3 = asset_sys.load::<assets::TextureAsset>("assets/cat3.jpg", true);
         drop(asset_sys);
 
         Self {
@@ -86,7 +88,8 @@ impl GranularEngine {
             frame: 0,
             last_ticks,
             tex,
-            tex2
+            tex2,
+            tex3
         }
     }
 
@@ -177,22 +180,50 @@ impl GranularEngine {
                 WindowEvent::RedrawRequested => {
                     let mut renderer = self.ctx.get_mut::<Renderer>();
                     renderer.start_frame();
+                    //renderer.start_batch();
+                    // // TODO: Remove this test drawing
+                    // let mut s = 0;
+                    // for y in -10..=10 {
+                    //     for x in (-10..=10).rev() {
+                    //         let col = {
+                    //             if s % 3 == 0 {
+                    //                 self.tex.clone()
+                    //             } else if s % 3 == 1 {
+                    //                 self.tex2.clone()
+                    //             } else {
+                    //                 self.tex3.clone()
+                    //             }
+                    //         };
+                    //         renderer.draw_quad(Vec2::new(x as f32 / 10.0, y as f32 / 10.0), Vec2::new(0.05, 0.05), QuadColoring::Texture(col));
+                    //         s += 1;
+                    //     };
+                    // };
 
-                    // TODO: Remove this test drawing
-                    let mut s = 0;
-                    for y in -10..=10 {
-                        for x in (-10..=10).rev() {
-                            let col = {
-                                if s % 2 == 0 {
-                                    self.tex.clone()
-                                } else {
-                                    self.tex2.clone()
-                                }
-                            };
-                            renderer.draw_quad(Vec2::new(x as f32 / 10.0, y as f32 / 10.0), Vec2::new(0.05, 0.05), QuadColoring::Texture(col));
-                            s += 1;
-                        };
-                    }
+                    renderer.draw_quad(&Quad {
+                        center: Vec2::new(-0.5, 0.0),
+                        size: Vec2::new(0.2, 0.2),
+                        color: wgpu::Color::WHITE,
+                        texture: Some(self.tex.clone())
+                    });
+                    // renderer.draw_quad(&Quad {
+                    //     center: Vec2::new(-0.5, 0.5),
+                    //     size: Vec2::new(0.2, 0.2),
+                    //     color: wgpu::Color::WHITE,
+                    //     texture: Some(self.tex.clone())
+                    // });
+                    renderer.draw_quad(&Quad {
+                        center: Vec2::new(0.0, 0.0),
+                        size: Vec2::new(0.2, 0.2),
+                        color: wgpu::Color::WHITE,
+                        texture: Some(self.tex2.clone())
+                    });
+                    renderer.draw_quad(&Quad {
+                        center: Vec2::new(0.5, 0.0),
+                        size: Vec2::new(0.2, 0.2),
+                        color: wgpu::Color::WHITE,
+                        texture: Some(self.tex3.clone())
+                    });
+
                     renderer.end_batch();
                     renderer.flush();
                     renderer.end_frame();

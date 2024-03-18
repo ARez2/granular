@@ -9,4 +9,4 @@ mod window_system;
 pub use window_system::WindowSystem;
 
 mod renderer;
-pub use renderer::{Renderer, QuadColoring};
+pub use renderer::{Renderer, Quad};
