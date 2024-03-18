@@ -26,7 +26,7 @@ struct Batch {
     bind_group_layout_idx: usize,
     num_textures_used: usize,
     vertices_range: Range<u64>,
-    indices_range: Range<u32>
+    indices_end: u32
 }
 
 
@@ -53,8 +53,6 @@ impl Quad {
 pub struct Renderer {
     ctx: GeeseContextHandle<Self>,
     
-    current_batch: Vec<Vertex>,
-    num_quads_drawn: u32,
     vertex_buffer: Buffer,
     index_buffer: Buffer,
     index_format: IndexFormat,
@@ -99,7 +97,7 @@ impl Renderer {
           render_pipelines: &mut Vec<RenderPipeline>,
           bind_group_layouts: &mut Vec<BindGroupLayout>,
           vertices_range: Range<u64>,
-          indices_range: Range<u32> | {
+          indices_end: u32 | {
             
             let asset_sys = self.ctx.get::<AssetSystem>();
             let mut views = vec![];
@@ -153,7 +151,7 @@ impl Renderer {
 
             info!("Creating batch with");
             info!("    - Vert. range: {:?}", vertices_range);
-            info!("    - Ind. range: {:?}", indices_range);
+            info!("    - Ind. end: {:?}", indices_end);
             info!("    - Num textures: {}", num_textures_used);
             info!("    - Bind group layout idx {}", bind_group_layout_idx);
             self.batches.push(Batch {
@@ -162,7 +160,7 @@ impl Renderer {
                 bind_group_layout_idx: bind_group_layout_idx as usize,
                 num_textures_used,
                 vertices_range,
-                indices_range
+                indices_end
             })
         };
 
@@ -183,18 +181,6 @@ impl Renderer {
             let w = quad.size.x; let h = quad.size.y;
             let color = [quad.color.r as f32, quad.color.g as f32, quad.color.b as f32, quad.color.a as f32];
             
-
-            if textures_in_batch.len() >= Self::MAX_TEXTURE_COUNT {
-                let num_quads_in_batch = quad_idx as u64;
-                let vertices_range = (last_batch_end_quad_idx * 4)..(num_quads_in_batch * 4);
-                let indices_range = (last_batch_end_quad_idx as u32 * 6)..(num_quads_in_batch as u32 * 6);
-                info!("Max texture bindings reached, creating new batch");
-                create_new_batch(&textures_in_batch, &mut render_pipelines, &mut bind_group_layouts, vertices_range, indices_range);
-                textures_in_batch.clear();
-                last_batch_end_quad_idx = num_quads_in_batch;
-            };
-
-
             let mut texture_in_batch = false;
             for tex in textures_in_batch.iter() {
                 match &quad.texture {
@@ -212,6 +198,20 @@ impl Renderer {
                     }
                 }
             };
+
+            if textures_in_batch.len() >= Self::MAX_TEXTURE_COUNT && !texture_in_batch {
+                let num_quads_in_batch = quad_idx as u64;
+                let vertices_range = (last_batch_end_quad_idx * 4)..(num_quads_in_batch * 4);
+                let indices_range = (last_batch_end_quad_idx as u32 * 6)..(num_quads_in_batch as u32 * 6);
+                let indices_end = num_quads_in_batch as u32 * 6;
+                info!("Max texture bindings reached, creating new batch");
+                create_new_batch(&textures_in_batch, &mut render_pipelines, &mut bind_group_layouts, vertices_range, indices_end);
+                textures_in_batch.clear();
+                last_batch_end_quad_idx = num_quads_in_batch;
+            };
+
+
+            
             if !texture_in_batch {
                 textures_in_batch.push(quad.texture.clone());
             };
@@ -226,8 +226,8 @@ impl Renderer {
         // Create the last batch of this frame
         let vertices_range = ((last_batch_end_quad_idx) * 4)..(vertices.len() as u64);
         let indices_range = ((last_batch_end_quad_idx) as u32 * 6)..(self.quads_to_draw.len() as u32 * 6);
-        //let indices_range = 0..6;
-        create_new_batch(&textures_in_batch, &mut render_pipelines, &mut bind_group_layouts, vertices_range, indices_range);
+        let indices_end = (self.quads_to_draw.len() as u32 - last_batch_end_quad_idx as u32) * 6;
+        create_new_batch(&textures_in_batch, &mut render_pipelines, &mut bind_group_layouts, vertices_range, indices_end);
         println!();
 
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
@@ -265,33 +265,16 @@ impl Renderer {
             rpass.set_pipeline(&render_pipelines[batch.render_pipeline_idx]);
             // The index buffer stays the same over all batches
             rpass.set_index_buffer(self.index_buffer.slice(..), self.index_format);
-            rpass.set_vertex_buffer(0, self.vertex_buffer.slice(batch.vertices_range.clone()));
+            //rpass.set_vertex_buffer(0, self.vertex_buffer.slice(batch.vertices_range.clone()));
+            rpass.set_vertex_buffer(0, self.vertex_buffer.slice((batch.vertices_range.start * VERTEX_SIZE as u64)..(batch.vertices_range.end * VERTEX_SIZE as u64)));
             rpass.set_bind_group(0, &batch.bind_group, &[]);
-            rpass.draw_indexed(batch.indices_range.clone(), 0, 0..1);
+            rpass.draw_indexed(0..batch.indices_end, 0, 0..1);
         }
     }
 
 
-    pub fn start_batch(&mut self) {
-        self.num_quads_drawn = 0;
-    }
-
-
-    /// Writes the current batch into the vertex buffer and clears the current batch
-    pub fn end_batch(&mut self) {
-
-        //self.rebuild_from_texture_slots();
-        let graphics_sys = self.ctx.get::<GraphicsSystem>();
-        graphics_sys.queue().write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(self.current_batch.as_slice()));
-        self.current_batch.clear();
-        self.texture_slots.clear();
-    }
-
-
-
     pub fn draw_quad(&mut self, quad: &Quad) {
         self.quads_to_draw.push(quad.clone());
-        self.num_quads_drawn += 1;
     }
 
 
@@ -464,7 +447,6 @@ impl Renderer {
     }
 
 
-
     /// Creates an array of indices, following the typical quad indexing method (0-1-2, 2-3-0)
     fn create_indices() -> [u16; Renderer::MAX_INDEX_COUNT] {
         let mut indices: [u16; Renderer::MAX_INDEX_COUNT] = [0; Renderer::MAX_INDEX_COUNT];
@@ -582,8 +564,6 @@ impl GeeseSystem for Renderer {
         Self {
             ctx,
 
-            current_batch: vec![],
-            num_quads_drawn: 0,
             vertex_buffer,
             index_buffer,
             index_format: wgpu::IndexFormat::Uint16,

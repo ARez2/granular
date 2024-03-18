@@ -23,9 +23,9 @@ pub(crate) struct Vertex {
 impl Vertex {
     pub fn new(pos: [f32; 2], color: [f32; 4], tex_coord: [f32; 2], tex_index: u64) -> Self {
         Self {
-            _pos: [pos[0], pos[1]],
+            _pos: pos,
             _col: color,
-            _tex_coord: [tex_coord[0], tex_coord[1]],
+            _tex_coord: tex_coord,
             _tex_idx: tex_index,
         }
     }

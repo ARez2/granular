@@ -205,12 +205,12 @@ impl GranularEngine {
                         color: wgpu::Color::WHITE,
                         texture: Some(self.tex.clone())
                     });
-                    // renderer.draw_quad(&Quad {
-                    //     center: Vec2::new(-0.5, 0.5),
-                    //     size: Vec2::new(0.2, 0.2),
-                    //     color: wgpu::Color::WHITE,
-                    //     texture: Some(self.tex.clone())
-                    // });
+                    renderer.draw_quad(&Quad {
+                        center: Vec2::new(-0.5, 0.5),
+                        size: Vec2::new(0.2, 0.2),
+                        color: wgpu::Color::RED,
+                        texture: Some(self.tex.clone())
+                    });
                     renderer.draw_quad(&Quad {
                         center: Vec2::new(0.0, 0.0),
                         size: Vec2::new(0.2, 0.2),
@@ -223,8 +223,13 @@ impl GranularEngine {
                         color: wgpu::Color::WHITE,
                         texture: Some(self.tex3.clone())
                     });
+                    renderer.draw_quad(&Quad {
+                        center: Vec2::new(0.5, 0.5),
+                        size: Vec2::new(0.2, 0.2),
+                        color: wgpu::Color::WHITE,
+                        texture: None
+                    });
 
-                    renderer.end_batch();
                     renderer.flush();
                     renderer.end_frame();
                     renderer.request_redraw();
