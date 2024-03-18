@@ -180,24 +180,6 @@ impl GranularEngine {
                 WindowEvent::RedrawRequested => {
                     let mut renderer = self.ctx.get_mut::<Renderer>();
                     renderer.start_frame();
-                    //renderer.start_batch();
-                    // // TODO: Remove this test drawing
-                    // let mut s = 0;
-                    // for y in -10..=10 {
-                    //     for x in (-10..=10).rev() {
-                    //         let col = {
-                    //             if s % 3 == 0 {
-                    //                 self.tex.clone()
-                    //             } else if s % 3 == 1 {
-                    //                 self.tex2.clone()
-                    //             } else {
-                    //                 self.tex3.clone()
-                    //             }
-                    //         };
-                    //         renderer.draw_quad(Vec2::new(x as f32 / 10.0, y as f32 / 10.0), Vec2::new(0.05, 0.05), QuadColoring::Texture(col));
-                    //         s += 1;
-                    //     };
-                    // };
 
                     renderer.draw_quad(&Quad {
                         center: Vec2::new(-0.5, 0.0),

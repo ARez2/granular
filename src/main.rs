@@ -6,7 +6,7 @@ use regex::Regex;
 
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
-    std::env::set_var("RUST_LOG", "granular=trace");
+    std::env::set_var("RUST_LOG", "granular=debug");
 
     // Matches a full path until (excluding) "granular"
     let path_regex = Regex::new(r" \b(.*)\bgranular\b").unwrap();
