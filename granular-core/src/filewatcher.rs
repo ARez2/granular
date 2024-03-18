@@ -32,7 +32,7 @@ impl FileWatcher {
         info!("Watching {}", path.as_ref().display());
     }
 
-    pub fn poll(&mut self, _event: &crate::events::timing::Tick) {
+    pub fn poll(&mut self, _event: &crate::events::timing::Tick::<30>) {
         if let Ok(event) = self.rx.try_recv() {
             match event {
                 Ok(event) => if let notify::EventKind::Modify(_kind) = event.kind {

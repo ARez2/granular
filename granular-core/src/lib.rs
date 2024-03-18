@@ -26,24 +26,15 @@ pub mod events {
     }
 
     pub mod timing {
-        /// Gets sent out every frame
-        pub struct Tick;
+        /// Gets sent out every N frames
+        pub struct Tick<const N: u32>;
 
-        /// Gets sent out every 30 frames
-        pub struct Tick30;
-
-        /// Gets sent out every 60 frames
-        pub struct Tick60;
-
-
-        /// Gets sent out every second
-        pub struct FixedTick;
-        /// Gets sent out every 2.5 seconds
-        pub struct FixedTick2500ms;
-        /// Gets sent out every 5 seconds
-        pub struct FixedTick5000ms;
+        /// Gets sent out every T milliseconds
+        pub struct FixedTick<const N: u64>;
+        pub const FIXED_TICKS: [u64; 3] = [5000, 2500, 1000];
     }
 }
+
 
 
 
@@ -72,9 +63,9 @@ impl GranularEngine {
 
         let now = Instant::now();
         let mut last_ticks = HashMap::default();
-        last_ticks.insert(Duration::from_secs_f32(1.0), now);
-        last_ticks.insert(Duration::from_secs_f32(2.5), now);
-        last_ticks.insert(Duration::from_secs_f32(5.0), now);
+        for fixed_tick in events::timing::FIXED_TICKS {
+            last_ticks.insert(Duration::from_millis(fixed_tick), now);
+        };
 
         let mut asset_sys = ctx.get_mut::<AssetSystem>();
         let tex = asset_sys.load::<assets::TextureAsset>("assets/cat.jpg", true);
@@ -131,30 +122,32 @@ impl GranularEngine {
 
     pub fn handle_scheduling(&mut self) {
         let mut buffer = geese::EventBuffer::default()
-            .with(events::timing::Tick);
+            .with(events::timing::Tick::<1>);
         
         let now = Instant::now();
         self.last_ticks.iter_mut().for_each(|(tickrate, last)| {
             if *last + *tickrate < now {
                 *last = now;
-                let tickrate_secs = tickrate.as_secs_f32();
-                if tickrate_secs == 1.0 {
-                    self.ctx.flush().with(events::timing::FixedTick);
-                } else if tickrate_secs == 2.5 {
-                    self.ctx.flush().with(events::timing::FixedTick2500ms);
-                } else if tickrate_secs == 5.0 {
-                    self.ctx.flush().with(events::timing::FixedTick5000ms);
+                let tickrate_millis = tickrate.as_millis() as u64;
+                match tickrate_millis {
+                    1000 => {self.ctx.flush().with(events::timing::FixedTick::<1000>);},
+                    2500 => {self.ctx.flush().with(events::timing::FixedTick::<2500>);},
+                    5000 => {self.ctx.flush().with(events::timing::FixedTick::<5000>);},
+                    _ => ()
                 };
             }
         });
 
-        
-        
         if self.frame % 60 == 0 {
-            buffer = buffer.with(events::timing::Tick60);
-        } else if self.frame % 30 == 0 {
-            buffer = buffer.with(events::timing::Tick30);
+            buffer = buffer.with(events::timing::Tick::<60>);
         };
+        if self.frame % 30 == 0 {
+            buffer = buffer.with(events::timing::Tick::<30>);
+        };
+        if self.frame % 2 == 0 {
+            buffer = buffer.with(events::timing::Tick::<2>);
+        };
+        // 1 Frame tick is already handled at the very top
         
         self.ctx.flush().with_buffer(buffer);
     }

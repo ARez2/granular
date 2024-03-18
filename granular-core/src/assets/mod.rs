@@ -128,7 +128,7 @@ impl AssetSystem {
         self.base_path.join(path)
     }
 
-    pub fn drop_unused_assets(&mut self, _: &crate::events::timing::FixedTick5000ms) {
+    pub fn drop_unused_assets(&mut self, _: &crate::events::timing::FixedTick::<2500>) {
         let mut removed_usizes = vec![];
         self.assets.retain(|arc, _| {
             if Arc::strong_count(arc) <= 1 {

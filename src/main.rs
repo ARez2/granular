@@ -46,7 +46,7 @@ struct Game {
     _ctx: GeeseContextHandle<Self>
 }
 impl Game {
-    fn on_update(&mut self, _: &events::timing::FixedTick) {
+    fn on_update(&mut self, _: &events::timing::FixedTick::<1000>) {
         info!("Fixed game update");
     }
 }
