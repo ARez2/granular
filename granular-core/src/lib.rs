@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use geese::{GeeseContext, EventQueue};
-use glam::Vec2;
+use glam::{IVec2, Vec2};
 use graphics::{Quad, Renderer, WindowSystem};
 use log::*;
 use rustc_hash::FxHashMap as HashMap;
@@ -175,35 +175,35 @@ impl GranularEngine {
                     renderer.start_frame();
 
                     renderer.draw_quad(&Quad {
-                        center: Vec2::new(-0.5, 0.0),
-                        size: Vec2::new(0.2, 0.2),
+                        center: IVec2::new(0, 0),
+                        size: IVec2::new(200, 200),
                         color: wgpu::Color::WHITE,
                         texture: Some(self.tex.clone())
                     });
-                    renderer.draw_quad(&Quad {
-                        center: Vec2::new(-0.5, 0.5),
-                        size: Vec2::new(0.2, 0.2),
-                        color: wgpu::Color::RED,
-                        texture: Some(self.tex.clone())
-                    });
-                    renderer.draw_quad(&Quad {
-                        center: Vec2::new(0.0, 0.0),
-                        size: Vec2::new(0.2, 0.2),
-                        color: wgpu::Color::WHITE,
-                        texture: Some(self.tex2.clone())
-                    });
-                    renderer.draw_quad(&Quad {
-                        center: Vec2::new(0.5, 0.0),
-                        size: Vec2::new(0.2, 0.2),
-                        color: wgpu::Color::WHITE,
-                        texture: Some(self.tex3.clone())
-                    });
-                    renderer.draw_quad(&Quad {
-                        center: Vec2::new(0.5, 0.5),
-                        size: Vec2::new(0.2, 0.2),
-                        color: wgpu::Color::WHITE,
-                        texture: None
-                    });
+                    // renderer.draw_quad(&Quad {
+                    //     center: Vec2::new(-0.5, 0.5),
+                    //     size: Vec2::new(0.2, 0.2),
+                    //     color: wgpu::Color::RED,
+                    //     texture: Some(self.tex.clone())
+                    // });
+                    // renderer.draw_quad(&Quad {
+                    //     center: Vec2::new(0.0, 0.0),
+                    //     size: Vec2::new(0.2, 0.2),
+                    //     color: wgpu::Color::WHITE,
+                    //     texture: Some(self.tex2.clone())
+                    // });
+                    // renderer.draw_quad(&Quad {
+                    //     center: Vec2::new(0.5, 0.0),
+                    //     size: Vec2::new(0.2, 0.2),
+                    //     color: wgpu::Color::WHITE,
+                    //     texture: Some(self.tex3.clone())
+                    // });
+                    // renderer.draw_quad(&Quad {
+                    //     center: IVec2::new(100, 100),
+                    //     size: IVec2::new(30, 30),
+                    //     color: wgpu::Color::WHITE,
+                    //     texture: None
+                    // });
 
                     renderer.flush();
                     renderer.end_frame();
@@ -211,6 +211,7 @@ impl GranularEngine {
                     true
                 },
                 WindowEvent::KeyboardInput{event, ..} => {
+                    let speed = 10;
                     match event {
                         winit::event::KeyEvent {
                             logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowUp),
@@ -218,7 +219,7 @@ impl GranularEngine {
                             ..
                         } => {
                             let mut renderer = self.ctx.get_mut::<Renderer>();
-                            let new_pos = renderer.camera.position() + Vec2::new(0.0, 0.1);
+                            let new_pos = renderer.camera.position() + IVec2::new(0, 1) * speed;
                             renderer.camera.set_position(new_pos);
                             true
                         },
@@ -228,7 +229,7 @@ impl GranularEngine {
                             ..
                         } => {
                             let mut renderer = self.ctx.get_mut::<Renderer>();
-                            let new_pos = renderer.camera.position() - Vec2::new(0.0, 0.1);
+                            let new_pos = renderer.camera.position() - IVec2::new(0, 1) * speed;
                             renderer.camera.set_position(new_pos);
                             true
                         },
@@ -238,7 +239,7 @@ impl GranularEngine {
                             ..
                         } => {
                             let mut renderer = self.ctx.get_mut::<Renderer>();
-                            let new_pos = renderer.camera.position() + Vec2::new(0.1, 0.0);
+                            let new_pos = renderer.camera.position() + IVec2::new(1, 0) * speed;
                             renderer.camera.set_position(new_pos);
                             true
                         },
@@ -248,10 +249,30 @@ impl GranularEngine {
                             ..
                         } => {
                             let mut renderer = self.ctx.get_mut::<Renderer>();
-                            let new_pos = renderer.camera.position() - Vec2::new(0.1, 0.0);
+                            let new_pos = renderer.camera.position() - IVec2::new(1, 0) * speed;
                             renderer.camera.set_position(new_pos);
                             true
                         },
+                        winit::event::KeyEvent {
+                            logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::F1),
+                            state: winit::event::ElementState::Pressed,
+                            ..
+                        } => {
+                            let mut renderer = self.ctx.get_mut::<Renderer>();
+                            let new_zoom = renderer.camera.zoom() * 2.0;
+                            renderer.camera.set_zoom(new_zoom);
+                            true
+                        },
+                        winit::event::KeyEvent {
+                            logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::F2),
+                            state: winit::event::ElementState::Pressed,
+                            ..
+                        } => {
+                            let mut renderer = self.ctx.get_mut::<Renderer>();
+                            let new_zoom = renderer.camera.zoom() / 2.0;
+                            renderer.camera.set_zoom(new_zoom);
+                            true
+                        }
                         _ => false
                     }
                 }

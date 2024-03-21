@@ -6,7 +6,7 @@ use std::ops::Range;
 
 use bytemuck_derive::{Zeroable, Pod};
 use geese::{GeeseSystem, dependencies, GeeseContextHandle, Mut, EventHandlers, event_handlers};
-use glam::Vec2;
+use glam::{IVec2, Vec2};
 use log::*;
 use wgpu::{BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, Color, ColorTargetState, Device, Extent3d, IndexFormat, RenderPipeline, Sampler, ShaderModule, Texture, TextureView};
 use wgpu::util::DeviceExt;
@@ -35,8 +35,8 @@ struct Batch {
 
 #[derive(Debug, Clone)]
 pub struct Quad {
-    pub center: Vec2,
-    pub size: Vec2,
+    pub center: IVec2,
+    pub size: IVec2,
     /// If there is a texture set, this tints the texture
     pub color: wgpu::Color,
     pub texture: Option<AssetHandle<TextureAsset>>
@@ -201,7 +201,9 @@ impl Renderer {
         let mut render_pipelines = vec![];
         let mut bind_group_layouts = vec![];
         self.quads_to_draw.iter().enumerate().for_each(|(quad_idx, quad)| {
-            let x = quad.center.x; let y = quad.center.y;
+            let quad_pos = quad.center;
+            //info!("Old quad pos: {}   New pos: {}", quad.center, quad_pos);
+            let x = quad_pos.x; let y = quad_pos.y;
             let w = quad.size.x; let h = quad.size.y;
             let color = [quad.color.r as f32, quad.color.g as f32, quad.color.b as f32, quad.color.a as f32];
             
@@ -242,12 +244,13 @@ impl Renderer {
             };
             let tex_index = textures_in_batch.len() as u64 - 1;
 
+            let c = &self.camera;
             // Add the vertices of the quad to vertices, respecting size and attributes
             vertices.reserve(4);
-            vertices.push(Vertex::new([x - w, y - h], color, [0.0, 1.0], tex_index));
-            vertices.push(Vertex::new([x - w, y + h], color, [0.0, 0.0], tex_index));
-            vertices.push(Vertex::new([x + w, y + h], color, [1.0, 0.0], tex_index));
-            vertices.push(Vertex::new([x + w, y - h], color, [1.0, 1.0], tex_index));
+            vertices.push(Vertex::new(IVec2::new(x - w, y - h), color, Vec2::new(0.0, 1.0), tex_index));
+            vertices.push(Vertex::new(IVec2::new(x - w, y + h), color, Vec2::new(0.0, 0.0), tex_index));
+            vertices.push(Vertex::new(IVec2::new(x + w, y + h), color, Vec2::new(1.0, 0.0), tex_index));
+            vertices.push(Vertex::new(IVec2::new(x + w, y - h), color, Vec2::new(1.0, 1.0), tex_index));
         });
         // Create the last batch of this frame (with the remaining quads)
         let vertices_range = ((last_batch_end_quad_idx) * 4)..(vertices.len() as u64);
@@ -316,6 +319,7 @@ impl Renderer {
     pub(crate) fn resize(&mut self, new_size: &PhysicalSize<u32>) {
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         graphics_sys.resize_surface(new_size);
+        self.camera.set_screen_size((new_size.width, new_size.height));
     }
 
 
@@ -384,7 +388,7 @@ impl Renderer {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: VERTEX_SIZE as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex, // position        color       tex_coords     tex_index
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4, 2 => Float32x2, 3 => Sint32],
+                    attributes: &wgpu::vertex_attr_array![0 => Sint32x2, 1 => Float32x4, 2 => Float32x2, 3 => Sint32],
                 }],
             },
             fragment: Some(wgpu::FragmentState {
@@ -448,7 +452,7 @@ impl Renderer {
 
         let globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Shader globals buffer"),
-            contents: bytemuck::cast_slice(&[camera.get_view_proj(screen_size)]),
+            contents: bytemuck::cast_slice(&[camera.canvas_transform()]),
             usage: BufferUsages::UNIFORM
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -570,7 +574,6 @@ impl GeeseSystem for Renderer {
         );
 
         let camera = Camera::default();
-
 
         let asset_sys = ctx.get::<AssetSystem>();
         let bind_group_layout = Self::create_bind_group_layout(device, 1, 1);

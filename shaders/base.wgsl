@@ -1,5 +1,5 @@
 struct VertexInput {
-    @location(0) position: vec3<f32>,
+    @location(0) position: vec2<i32>,
     @location(1) color: vec4<f32>,
     @location(2) tex_coords: vec2<f32>,
     @location(3) tex_index: i32,
@@ -13,7 +13,7 @@ struct VertexOutput {
 }
 
 struct Globals {
-    transform: mat4x4f,
+    canvas_transform: mat4x4f,
 }
 
 @group(0) @binding(0)
@@ -24,7 +24,7 @@ var<uniform> globals: Globals;
 fn vert_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     // out.clip_position = globals.view_proj * globals.transform * vec4<f32>(in.position, 1.0);
-    out.clip_position = globals.transform * vec4<f32>(in.position, 1.0);
+    out.clip_position = globals.canvas_transform * vec4<f32>(vec2<f32>(in.position), 0.0, 1.0);
     out.color = in.color;
     out.tex_coords = in.tex_coords;
     out.tex_index = in.tex_index;

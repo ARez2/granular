@@ -2,6 +2,7 @@
 
 use bytemuck_derive::{Pod, Zeroable};
 use geese::*;
+use glam::{Vec2, IVec2};
 use log::*;
 use wgpu::{Device, Queue, SurfaceConfiguration, Surface, TextureViewDescriptor, CommandEncoderDescriptor, SurfaceTexture, TextureView, CommandEncoder};
 use winit::dpi::PhysicalSize;
@@ -15,13 +16,13 @@ pub type FrameDataMut<'a> = Option<&'a mut (wgpu::SurfaceTexture, wgpu::TextureV
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub(crate) struct Vertex {
-    _pos: [f32; 2],
+    _pos: IVec2,
     _col: [f32; 4],
-    _tex_coord: [f32; 2],
+    _tex_coord: Vec2,
     _tex_idx: u64,
 }
 impl Vertex {
-    pub fn new(pos: [f32; 2], color: [f32; 4], tex_coord: [f32; 2], tex_index: u64) -> Self {
+    pub fn new(pos: IVec2, color: [f32; 4], tex_coord: Vec2, tex_index: u64) -> Self {
         Self {
             _pos: pos,
             _col: color,
