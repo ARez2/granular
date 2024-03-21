@@ -12,3 +12,6 @@ pub use window_system::WindowSystem;
 
 mod renderer;
 pub use renderer::{Renderer, Quad};
+
+mod camera;
+pub use camera::Camera;

@@ -17,7 +17,7 @@ use rustc_hash::FxHashMap as HashMap;
 use crate::assets::{AssetHandle, AssetSystem, ShaderAsset, TextureAsset};
 
 use super::graphics_system::{GraphicsSystem, Vertex, VERTEX_SIZE};
-use super::DynamicBuffer;
+use super::{Camera, DynamicBuffer};
 
 
 
@@ -51,6 +51,17 @@ impl Quad {
 }
 
 
+// We need this for Rust to store our data correctly for the shaders
+#[repr(C)]
+// This is so we can store this in a buffer
+#[derive(Debug, Copy, Clone, Pod, Zeroable)]
+struct ShaderGlobals {
+    transform: Mat4
+}
+
+
+
+
 pub struct Renderer {
     ctx: GeeseContextHandle<Self>,
     
@@ -70,13 +81,15 @@ pub struct Renderer {
     shader_handle: AssetHandle<ShaderAsset>,
     render_pipeline: RenderPipeline,
 
-    white_pixel: (Texture, TextureView, Sampler)
+    white_pixel: (Texture, TextureView, Sampler),
+
+    pub camera: Camera
 }
 impl Renderer {
     const MAX_QUAD_COUNT: usize = 1000;
     const MAX_VERTEX_COUNT: usize = Renderer::MAX_QUAD_COUNT * 4;
     const MAX_INDEX_COUNT: usize = Renderer::MAX_QUAD_COUNT * 6;
-    const MAX_TEXTURE_COUNT: usize = 2;
+    const MAX_TEXTURE_COUNT: usize = 16;
 
 
     pub fn start_frame(&mut self) {
@@ -136,11 +149,15 @@ impl Renderer {
             };
             let graphics_sys = self.ctx.get::<GraphicsSystem>();
             let device = graphics_sys.device();
+            let screen_size = {
+                let sc = graphics_sys.surface_config();
+                Vec2::new(sc.width as f32, sc.height as f32)
+            };
             let (bind_group, render_pipeline_idx) = {
                 // We want to create a completely new layout and render pipeline for this batch
                 if bind_group_layout_idx == -1 {
                     let layout = Self::create_bind_group_layout(device, views.len() as u32, samplers.len() as u32);
-                    let bg = Self::create_bind_group(device, &layout, &views, &samplers);
+                    let bg = Self::create_bind_group(device, &layout, &self.camera, screen_size, &views, &samplers);
                     let shader = asset_sys.get(&self.shader_handle);
                     let color_state = Some(graphics_sys.surface_config().format.into());
                     let rp = Self::create_render_pipeline(device, &layout, shader.module(), color_state);
@@ -152,7 +169,7 @@ impl Renderer {
                 } else {
                     // Use the layout of the other batch
                     let layout = &bind_group_layouts[bind_group_layout_idx as usize];
-                    (Self::create_bind_group(device, layout, &views, &samplers), bind_group_layout_idx as usize)
+                    (Self::create_bind_group(device, layout, &self.camera, screen_size, &views, &samplers), bind_group_layout_idx as usize)
                 }
             };
 
@@ -425,16 +442,13 @@ impl Renderer {
 
 
     /// Creates the bind group based on a list of textures
-    fn create_bind_group(device: &wgpu::Device, layout: &BindGroupLayout, views: &Vec<&TextureView>, samplers: &Vec<&Sampler>) -> BindGroup {
+    fn create_bind_group(device: &wgpu::Device, layout: &BindGroupLayout, camera: &Camera, screen_size: Vec2, views: &Vec<&TextureView>, samplers: &Vec<&Sampler>) -> BindGroup {
         let tex_views = views.as_slice();
         let tex_samplers = samplers.as_slice();
 
-        // TODO: Use a cameras matrices
         let globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Shader globals buffer"),
-            contents: bytemuck::cast_slice(&[
-                glam::Mat4::default()
-            ]),
+            contents: bytemuck::cast_slice(&[camera.get_view_proj(screen_size)]),
             usage: BufferUsages::UNIFORM
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -477,7 +491,6 @@ impl Renderer {
         });
         indices
     }
-
 }
 
 impl GeeseSystem for Renderer {
@@ -556,10 +569,19 @@ impl GeeseSystem for Renderer {
             wgpu::Extent3d::default()
         );
 
+        let camera = Camera::default();
+
 
         let asset_sys = ctx.get::<AssetSystem>();
         let bind_group_layout = Self::create_bind_group_layout(device, 1, 1);
-        let bind_group = Renderer::create_bind_group(device, &bind_group_layout, &vec![&white_pixel_view], &vec![&white_pixel_sampler]);
+        let bind_group = Renderer::create_bind_group(
+            device,
+            &bind_group_layout,
+            &camera,
+            Vec2::new(conf.width as f32, conf.height as f32),
+            &vec![&white_pixel_view],
+            &vec![&white_pixel_sampler]
+        );
 
         let base_shader_module = asset_sys.get(&base_shader_handle);
         let render_pipeline = Self::create_render_pipeline(
@@ -589,7 +611,9 @@ impl GeeseSystem for Renderer {
             clear_color: Color::BLACK,
             extents,
 
-            white_pixel: (white_pixel, white_pixel_view, white_pixel_sampler)
+            white_pixel: (white_pixel, white_pixel_view, white_pixel_sampler),
+
+            camera
         }
     }
 }

@@ -213,12 +213,43 @@ impl GranularEngine {
                 WindowEvent::KeyboardInput{event, ..} => {
                     match event {
                         winit::event::KeyEvent {
-                            logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::Space),
+                            logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowUp),
                             state: winit::event::ElementState::Pressed,
                             ..
                         } => {
-                            info!("Reload GraphicsSystem");
-                            //self.ctx.flush().with(geese::notify::reset_system::<GraphicsSystem>());
+                            let mut renderer = self.ctx.get_mut::<Renderer>();
+                            let new_pos = renderer.camera.position() + Vec2::new(0.0, 0.1);
+                            renderer.camera.set_position(new_pos);
+                            true
+                        },
+                        winit::event::KeyEvent {
+                            logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowDown),
+                            state: winit::event::ElementState::Pressed,
+                            ..
+                        } => {
+                            let mut renderer = self.ctx.get_mut::<Renderer>();
+                            let new_pos = renderer.camera.position() - Vec2::new(0.0, 0.1);
+                            renderer.camera.set_position(new_pos);
+                            true
+                        },
+                        winit::event::KeyEvent {
+                            logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowLeft),
+                            state: winit::event::ElementState::Pressed,
+                            ..
+                        } => {
+                            let mut renderer = self.ctx.get_mut::<Renderer>();
+                            let new_pos = renderer.camera.position() + Vec2::new(0.1, 0.0);
+                            renderer.camera.set_position(new_pos);
+                            true
+                        },
+                        winit::event::KeyEvent {
+                            logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowRight),
+                            state: winit::event::ElementState::Pressed,
+                            ..
+                        } => {
+                            let mut renderer = self.ctx.get_mut::<Renderer>();
+                            let new_pos = renderer.camera.position() - Vec2::new(0.1, 0.0);
+                            renderer.camera.set_position(new_pos);
                             true
                         },
                         _ => false
