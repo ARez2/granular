@@ -20,8 +20,7 @@ impl GeeseSystem for WindowSystem {
     
     fn new(ctx: GeeseContextHandle<Self>) -> Self {
         let event_loop = ctx.get::<EventLoopSystem>();
-        // TODO: Replace deprecated function
-        let window_handle = winit::window::WindowBuilder::new()
+        let window_handle = winit::window::Window::builder()
             .with_title("Default Granular Window")
             .with_visible(false)
             .with_resizable(true)
