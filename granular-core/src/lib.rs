@@ -219,8 +219,7 @@ impl GranularEngine {
                             ..
                         } => {
                             let mut renderer = self.ctx.get_mut::<Renderer>();
-                            let new_pos = renderer.camera.position() + IVec2::new(0, 1) * speed;
-                            renderer.camera.set_position(new_pos);
+                            renderer.camera.translate(IVec2::new(0, 1) * speed);
                             true
                         },
                         winit::event::KeyEvent {
@@ -229,8 +228,7 @@ impl GranularEngine {
                             ..
                         } => {
                             let mut renderer = self.ctx.get_mut::<Renderer>();
-                            let new_pos = renderer.camera.position() - IVec2::new(0, 1) * speed;
-                            renderer.camera.set_position(new_pos);
+                            renderer.camera.translate(IVec2::new(0, -1) * speed);
                             true
                         },
                         winit::event::KeyEvent {
@@ -239,8 +237,7 @@ impl GranularEngine {
                             ..
                         } => {
                             let mut renderer = self.ctx.get_mut::<Renderer>();
-                            let new_pos = renderer.camera.position() + IVec2::new(1, 0) * speed;
-                            renderer.camera.set_position(new_pos);
+                            renderer.camera.translate(IVec2::new(-1, 0) * speed);
                             true
                         },
                         winit::event::KeyEvent {
@@ -249,8 +246,7 @@ impl GranularEngine {
                             ..
                         } => {
                             let mut renderer = self.ctx.get_mut::<Renderer>();
-                            let new_pos = renderer.camera.position() - IVec2::new(1, 0) * speed;
-                            renderer.camera.set_position(new_pos);
+                            renderer.camera.translate(IVec2::new(1, 0) * speed);
                             true
                         },
                         winit::event::KeyEvent {
