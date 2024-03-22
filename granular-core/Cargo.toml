@@ -10,6 +10,7 @@ geese.workspace = true
 wgpu = { git = "https://github.com/gfx-rs/wgpu", features = ["glsl"]}
 winit.workspace = true
 log.workspace = true
+palette.workspace = true
 notify = "6.1.1"
 bytemuck = "1.14.0"
 bytemuck_derive = "1.5.0"

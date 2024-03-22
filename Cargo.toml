@@ -19,9 +19,11 @@ path = "examples/testbed"
 
 [dependencies]
 granular-core = {path = "granular-core"}
+palette.workspace = true
 
 
 [workspace.dependencies]
 geese = "0.3.7"
 log = "0.4.20"
 winit = { version = "*"}
+palette = "0.7.5"

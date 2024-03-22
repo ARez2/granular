@@ -1,7 +1,9 @@
 use std::io::Write;
 
+use glam::IVec2;
 use granular::prelude::*;
 use geese::{dependencies, event_handlers, Dependencies, EventHandlers, EventQueue, GeeseContextHandle, GeeseSystem, Mut};
+use palette::{Srgba, WithAlpha};
 use regex::Regex;
 use log::*;
 use winit::keyboard::{KeyCode, ModifiersState};
@@ -46,7 +48,9 @@ fn main() {
 
 
 struct Game {
-    ctx: GeeseContextHandle<Self>
+    ctx: GeeseContextHandle<Self>,
+
+    texture: AssetHandle<TextureAsset>
 }
 impl Game {
     fn on_update(&mut self, _: &events::timing::Tick::<1>) {
@@ -56,14 +60,52 @@ impl Game {
         let mut camera = self.ctx.get_mut::<Camera>();
         camera.translate(vector * 2)
     }
+
+
+    fn on_draw(&mut self, _: &events::Draw) {
+        let mut renderer = self.ctx.get_mut::<Renderer>();
+        renderer.draw_quad(&graphics::Quad {
+            center: IVec2::new(0, 0),
+            size: IVec2::new(200, 200),
+            color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
+            texture: Some(self.texture.clone())
+        });
+        // renderer.draw_quad(&Quad {
+        //     center: Vec2::new(-0.5, 0.5),
+        //     size: Vec2::new(0.2, 0.2),
+        //     color: wgpu::Color::RED,
+        //     texture: Some(self.tex.clone())
+        // });
+        // renderer.draw_quad(&Quad {
+        //     center: Vec2::new(0.0, 0.0),
+        //     size: Vec2::new(0.2, 0.2),
+        //     color: wgpu::Color::WHITE,
+        //     texture: Some(self.tex2.clone())
+        // });
+        // renderer.draw_quad(&Quad {
+        //     center: Vec2::new(0.5, 0.0),
+        //     size: Vec2::new(0.2, 0.2),
+        //     color: wgpu::Color::WHITE,
+        //     texture: Some(self.tex3.clone())
+        // });
+        // renderer.draw_quad(&Quad {
+        //     center: IVec2::new(100, 100),
+        //     size: IVec2::new(30, 30),
+        //     color: wgpu::Color::WHITE,
+        //     texture: None
+        // });
+    }
 }
 impl GeeseSystem for Game {
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
-        .with(Self::on_update);
+        .with(Self::on_update)
+        .with(Self::on_draw);
 
     const DEPENDENCIES: Dependencies = dependencies()
         .with::<Mut<InputSystem>>()
-        .with::<Mut<Camera>>();
+        .with::<Mut<Camera>>()
+        .with::<Mut<AssetSystem>>()
+        .with::<Mut<Renderer>>();
     
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         info!("Game created");
@@ -73,11 +115,15 @@ impl GeeseSystem for Game {
         input.add_action("cam_right", InputActionTrigger::new_key(KeyCode::ArrowRight, ModifiersState::empty()));
         input.add_action("cam_up", InputActionTrigger::new_key(KeyCode::ArrowUp, ModifiersState::empty()));
         input.add_action("cam_down", InputActionTrigger::new_key(KeyCode::ArrowDown, ModifiersState::empty()));
-        
         drop(input);
 
+        let mut asset_sys = ctx.get_mut::<AssetSystem>();
+        let texture = asset_sys.load::<TextureAsset>("assets/cat2.jpg", true);
+        drop(asset_sys);
+
         Self {
-            ctx
+            ctx,
+            texture
         }
     }
 }

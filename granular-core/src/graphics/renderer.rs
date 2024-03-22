@@ -12,6 +12,7 @@ use wgpu::{BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, C
 use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalSize;
 use glam::f32::Mat4;
+use palette::Srgba;
 use rustc_hash::FxHashMap as HashMap;
 
 use crate::assets::{AssetHandle, AssetSystem, ShaderAsset, TextureAsset};
@@ -38,7 +39,7 @@ pub struct Quad {
     pub center: IVec2,
     pub size: IVec2,
     /// If there is a texture set, this tints the texture
-    pub color: wgpu::Color,
+    pub color: Srgba,
     pub texture: Option<AssetHandle<TextureAsset>>
 }
 impl Quad {
@@ -204,7 +205,7 @@ impl Renderer {
             //info!("Old quad pos: {}   New pos: {}", quad.center, quad_pos);
             let x = quad_pos.x; let y = quad_pos.y;
             let w = quad.size.x; let h = quad.size.y;
-            let color = [quad.color.r as f32, quad.color.g as f32, quad.color.b as f32, quad.color.a as f32];
+            let color = [quad.color.red, quad.color.green, quad.color.blue, quad.color.alpha];
             
             let mut texture_in_batch = false;
             // Custom comparison to see if this quads texture was already in this batches textures

@@ -1,8 +1,6 @@
 use std::time::{Duration, Instant};
 
 use geese::{GeeseContext, EventQueue};
-use glam::IVec2;
-use log::*;
 use rustc_hash::FxHashMap as HashMap;
 use winit::{dpi::PhysicalSize, event::WindowEvent};
 
@@ -10,7 +8,7 @@ pub mod assets;
 pub use assets::AssetSystem;
 
 //mod tick;
-mod graphics;
+pub mod graphics;
 pub use graphics::{Renderer, Camera};
 use graphics::WindowSystem;
 
@@ -38,7 +36,7 @@ pub mod events {
         pub const FIXED_TICKS: [u64; 3] = [5000, 2500, 1000];
     }
 
-    pub struct Input<'a>(pub geese::SystemRef<'a, crate::input_system::InputSystem>);
+    pub struct Draw;
 }
 
 
@@ -190,38 +188,11 @@ impl GranularEngine {
                 WindowEvent::RedrawRequested => {
                     let mut renderer = self.ctx.get_mut::<Renderer>();
                     renderer.start_frame();
+                    drop(renderer);
 
-                    renderer.draw_quad(&graphics::Quad {
-                        center: IVec2::new(0, 0),
-                        size: IVec2::new(200, 200),
-                        color: wgpu::Color::WHITE,
-                        texture: Some(self.tex.clone())
-                    });
-                    // renderer.draw_quad(&Quad {
-                    //     center: Vec2::new(-0.5, 0.5),
-                    //     size: Vec2::new(0.2, 0.2),
-                    //     color: wgpu::Color::RED,
-                    //     texture: Some(self.tex.clone())
-                    // });
-                    // renderer.draw_quad(&Quad {
-                    //     center: Vec2::new(0.0, 0.0),
-                    //     size: Vec2::new(0.2, 0.2),
-                    //     color: wgpu::Color::WHITE,
-                    //     texture: Some(self.tex2.clone())
-                    // });
-                    // renderer.draw_quad(&Quad {
-                    //     center: Vec2::new(0.5, 0.0),
-                    //     size: Vec2::new(0.2, 0.2),
-                    //     color: wgpu::Color::WHITE,
-                    //     texture: Some(self.tex3.clone())
-                    // });
-                    // renderer.draw_quad(&Quad {
-                    //     center: IVec2::new(100, 100),
-                    //     size: IVec2::new(30, 30),
-                    //     color: wgpu::Color::WHITE,
-                    //     texture: None
-                    // });
+                    self.ctx.flush().with(events::Draw);
 
+                    let mut renderer = self.ctx.get_mut::<Renderer>();
                     renderer.flush();
                     renderer.end_frame();
                     renderer.request_redraw();
