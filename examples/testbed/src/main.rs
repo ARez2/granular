@@ -1,8 +1,11 @@
-use geese::*;
-use granular_core::{GranularEngine, events};
-use log::*;
 use std::io::Write;
+
+use granular::prelude::*;
+use geese::{dependencies, event_handlers, Dependencies, EventHandlers, EventQueue, GeeseContextHandle, GeeseSystem, Mut};
 use regex::Regex;
+use log::*;
+use winit::keyboard::{KeyCode, ModifiersState};
+
 
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
@@ -33,8 +36,8 @@ fn main() {
         })
         .init();
 
-    let window_size = Some(winit::dpi::PhysicalSize::new(640, 480));
 
+    let window_size = Some(winit::dpi::PhysicalSize::new(640, 480));
     let mut engine = GranularEngine::new();
     engine.get_ctx().flush().with(geese::notify::add_system::<Game>());
     engine.create_window("Granular", window_size);
@@ -42,22 +45,40 @@ fn main() {
 }
 
 
+
 struct Game {
-    _ctx: GeeseContextHandle<Self>
+    ctx: GeeseContextHandle<Self>
 }
 impl Game {
-    fn on_update(&mut self, _: &events::timing::FixedTick::<1000>) {
-        info!("Fixed game update");
+    fn on_update(&mut self, _: &events::timing::Tick::<1>) {
+        let input = self.ctx.get::<InputSystem>();
+        let vector = input.get_input_vector("cam_left", "cam_right", "cam_up", "cam_down");
+        drop(input);
+        let mut camera = self.ctx.get_mut::<Camera>();
+        camera.translate(vector * 2)
     }
 }
 impl GeeseSystem for Game {
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::on_update);
+
+    const DEPENDENCIES: Dependencies = dependencies()
+        .with::<Mut<InputSystem>>()
+        .with::<Mut<Camera>>();
     
-    fn new(ctx: GeeseContextHandle<Self>) -> Self {
+    fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         info!("Game created");
+        
+        let mut input = ctx.get_mut::<InputSystem>();
+        input.add_action("cam_left", InputActionTrigger::new_key(KeyCode::ArrowLeft, ModifiersState::empty()));
+        input.add_action("cam_right", InputActionTrigger::new_key(KeyCode::ArrowRight, ModifiersState::empty()));
+        input.add_action("cam_up", InputActionTrigger::new_key(KeyCode::ArrowUp, ModifiersState::empty()));
+        input.add_action("cam_down", InputActionTrigger::new_key(KeyCode::ArrowDown, ModifiersState::empty()));
+        
+        drop(input);
+
         Self {
-            _ctx: ctx
+            ctx
         }
     }
 }

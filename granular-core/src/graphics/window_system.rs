@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use geese::*;
-use winit::window::Window;
+use winit::window::{Window, WindowBuilder};
 
 use crate::EventLoopSystem;
 
@@ -20,7 +20,7 @@ impl GeeseSystem for WindowSystem {
     
     fn new(ctx: GeeseContextHandle<Self>) -> Self {
         let event_loop = ctx.get::<EventLoopSystem>();
-        let window_handle = winit::window::Window::builder()
+        let window_handle = winit::window::WindowBuilder::new()
             .with_title("Default Granular Window")
             .with_visible(false)
             .with_resizable(true)

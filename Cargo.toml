@@ -3,21 +3,28 @@ name = "granular"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = [
+    "granular-core",
+    #"examples/testbed"
+]
+exclude = [
+    "examples/testbed"
+]
+
+[[example]]
+name = "testbed"
+path = "examples/testbed"
+
+
 [dependencies]
 granular-core = {path = "granular-core"}
 geese.workspace = true
 winit.workspace = true
-env_logger.workspace = true
 log.workspace = true
-pollster.workspace = true
-regex = "1.10.3"
 
-[workspace]
-members = ["granular-core"]
 
 [workspace.dependencies]
 geese = "0.3.7"
-env_logger = "0.10.1"
 log = "0.4.20"
-winit = { git = "https://github.com/rust-windowing/winit/", features = [ "android-native-activity" ] }
-pollster = "0.3.0"
+winit = { version = "0.29.10" , features = ["android-native-activity"] }

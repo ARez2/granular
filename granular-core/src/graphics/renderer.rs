@@ -81,9 +81,7 @@ pub struct Renderer {
     shader_handle: AssetHandle<ShaderAsset>,
     render_pipeline: RenderPipeline,
 
-    white_pixel: (Texture, TextureView, Sampler),
-
-    pub camera: Camera
+    white_pixel: (Texture, TextureView, Sampler)
 }
 impl Renderer {
     const MAX_QUAD_COUNT: usize = 1000;
@@ -154,10 +152,11 @@ impl Renderer {
                 Vec2::new(sc.width as f32, sc.height as f32)
             };
             let (bind_group, render_pipeline_idx) = {
+                let camera = self.ctx.get::<Camera>();
                 // We want to create a completely new layout and render pipeline for this batch
                 if bind_group_layout_idx == -1 {
                     let layout = Self::create_bind_group_layout(device, views.len() as u32, samplers.len() as u32);
-                    let bg = Self::create_bind_group(device, &layout, &self.camera, screen_size, &views, &samplers);
+                    let bg = Self::create_bind_group(device, &layout, &camera, screen_size, &views, &samplers);
                     let shader = asset_sys.get(&self.shader_handle);
                     let color_state = Some(graphics_sys.surface_config().format.into());
                     let rp = Self::create_render_pipeline(device, &layout, shader.module(), color_state);
@@ -169,7 +168,7 @@ impl Renderer {
                 } else {
                     // Use the layout of the other batch
                     let layout = &bind_group_layouts[bind_group_layout_idx as usize];
-                    (Self::create_bind_group(device, layout, &self.camera, screen_size, &views, &samplers), bind_group_layout_idx as usize)
+                    (Self::create_bind_group(device, layout, &camera, screen_size, &views, &samplers), bind_group_layout_idx as usize)
                 }
             };
 
@@ -244,7 +243,6 @@ impl Renderer {
             };
             let tex_index = textures_in_batch.len() as u64 - 1;
 
-            let c = &self.camera;
             // Add the vertices of the quad to vertices, respecting size and attributes
             vertices.reserve(4);
             vertices.push(Vertex::new(IVec2::new(x - w, y - h), color, Vec2::new(0.0, 1.0), tex_index));
@@ -319,7 +317,9 @@ impl Renderer {
     pub(crate) fn resize(&mut self, new_size: &PhysicalSize<u32>) {
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         graphics_sys.resize_surface(new_size);
-        self.camera.set_screen_size((new_size.width, new_size.height));
+        drop(graphics_sys);
+        let mut camera = self.ctx.get_mut::<Camera>();
+        camera.set_screen_size((new_size.width, new_size.height));
     }
 
 
@@ -500,7 +500,8 @@ impl Renderer {
 impl GeeseSystem for Renderer {
     const DEPENDENCIES: geese::Dependencies = dependencies()
         .with::<Mut<GraphicsSystem>>()
-        .with::<Mut<AssetSystem>>();
+        .with::<Mut<AssetSystem>>()
+        .with::<Mut<Camera>>();
 
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::on_assetchange);
@@ -573,7 +574,7 @@ impl GeeseSystem for Renderer {
             wgpu::Extent3d::default()
         );
 
-        let camera = Camera::default();
+        let camera = ctx.get::<Camera>();
 
         let asset_sys = ctx.get::<AssetSystem>();
         let bind_group_layout = Self::create_bind_group_layout(device, 1, 1);
@@ -596,6 +597,7 @@ impl GeeseSystem for Renderer {
 
         drop(graphics_sys);
         drop(asset_sys);
+        drop(camera);
 
         Self {
             ctx,
@@ -615,8 +617,6 @@ impl GeeseSystem for Renderer {
             extents,
 
             white_pixel: (white_pixel, white_pixel_view, white_pixel_sampler),
-
-            camera
         }
     }
 }

@@ -168,6 +168,26 @@ impl InputSystem {
     }
 
 
+    pub fn get_input_vector(&self, action_left: &str, action_right: &str, action_up: &str, action_down: &str) -> IVec2 {
+        let actions = [
+            (action_left, self.actions.get(action_left)),
+            (action_right, self.actions.get(action_right)),
+            (action_up, self.actions.get(action_up)),
+            (action_down, self.actions.get(action_down))
+        ];
+        for (name, action) in actions {
+            if action.is_none() {
+                warn!("get_input_vector: Action '{}' does not exist, create it using add_action.", name);
+                return IVec2::ZERO;
+            };
+        };
+        IVec2::new(
+            actions[1].1.unwrap().pressed as i32 - actions[0].1.unwrap().pressed as i32,
+            actions[2].1.unwrap().pressed as i32 - actions[3].1.unwrap().pressed as i32
+        )
+    }
+
+
     /// Updates keyboard input for all InputAction's
     pub(crate) fn handle_keyevent(&mut self, event: &KeyEvent) {
         self.actions.iter_mut().for_each(|(key, action)| {

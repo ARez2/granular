@@ -1,4 +1,5 @@
 #![allow(unused)]
+use geese::GeeseSystem;
 use glam::{Affine2, IVec2, Mat2, Mat4, Quat, Vec2, Vec3};
 use log::info;
 
@@ -65,7 +66,7 @@ impl Camera {
     }
 
 
-    pub fn set_screen_size(&mut self, screen_size: (u32, u32)) {
+    pub(crate) fn set_screen_size(&mut self, screen_size: (u32, u32)) {
         self.screen_size = Vec2::new(screen_size.0 as f32, screen_size.1 as f32);
         info!("Camera screen size: {}", self.screen_size);
         
@@ -106,8 +107,8 @@ impl Camera {
         self.canvas_transform = self.ortho_proj * self.view;
     }
 }
-impl Default for Camera {
-    fn default() -> Self {
+impl GeeseSystem for Camera {
+    fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
         let scale = Vec2::ONE;
         let (left, right, top, bottom, near, far) = (-1.0, 1.0, 1.0, -1.0, -1.0, 1.0);
         let ortho_proj = Mat4::orthographic_rh_gl(left, right, bottom, top, near, far);
