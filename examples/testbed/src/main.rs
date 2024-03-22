@@ -36,7 +36,6 @@ fn main() {
         })
         .init();
 
-
     let window_size = Some(winit::dpi::PhysicalSize::new(640, 480));
     let mut engine = GranularEngine::new();
     engine.get_ctx().flush().with(geese::notify::add_system::<Game>());
