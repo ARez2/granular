@@ -6,7 +6,7 @@ use std::ops::Range;
 
 use bytemuck_derive::{Zeroable, Pod};
 use geese::{GeeseSystem, dependencies, GeeseContextHandle, Mut, EventHandlers, event_handlers};
-use glam::{IVec2, Vec2};
+use glam::{IVec2, IVec3, Vec2};
 use log::*;
 use wgpu::{BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, Color, ColorTargetState, Device, Extent3d, IndexFormat, RenderPipeline, Sampler, ShaderModule, Texture, TextureView};
 use wgpu::util::DeviceExt;
@@ -73,7 +73,7 @@ pub struct Renderer {
     // texture array (2nd u64) (and its handle, for easier access)
     texture_slots: HashMap<u64, (u64, AssetHandle<TextureAsset>)>,
 
-    quads_to_draw: Vec<Quad>,
+    quads_to_draw: Vec<(Quad, i32)>,
     batches: Vec<Batch>,
     
     bind_group: (BindGroup, BindGroupLayout),
@@ -81,6 +81,7 @@ pub struct Renderer {
     extents: Extent3d,
     shader_handle: AssetHandle<ShaderAsset>,
     render_pipeline: RenderPipeline,
+    depth_view: TextureView,
 
     white_pixel: (Texture, TextureView, Sampler)
 }
@@ -89,6 +90,7 @@ impl Renderer {
     const MAX_VERTEX_COUNT: usize = Renderer::MAX_QUAD_COUNT * 4;
     const MAX_INDEX_COUNT: usize = Renderer::MAX_QUAD_COUNT * 6;
     const MAX_TEXTURE_COUNT: usize = 16;
+    const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 
     pub fn start_frame(&mut self) {
@@ -191,7 +193,7 @@ impl Renderer {
 
         // Sort all quads based on texture index (so that quads with the same index will be in one batch
         // and it is safe to assume that we won't have to rebind the same texture in multiple batches)
-        self.quads_to_draw.sort_by_key(|quad| quad.get_texture_index());
+        self.quads_to_draw.sort_by_key(|(quad, _)| quad.get_texture_index());
 
 
         let mut last_batch_end_quad_idx: u64 = 0;
@@ -200,7 +202,7 @@ impl Renderer {
         // Will get filled by create_new_batch
         let mut render_pipelines = vec![];
         let mut bind_group_layouts = vec![];
-        self.quads_to_draw.iter().enumerate().for_each(|(quad_idx, quad)| {
+        self.quads_to_draw.iter().enumerate().for_each(|(quad_idx, (quad, layer))| {
             let quad_pos = quad.center;
             //info!("Old quad pos: {}   New pos: {}", quad.center, quad_pos);
             let x = quad_pos.x; let y = quad_pos.y;
@@ -242,14 +244,14 @@ impl Renderer {
             if !texture_in_batch {
                 textures_in_batch.push(quad.texture.clone());
             };
-            let tex_index = textures_in_batch.len() as u64 - 1;
+            let tex_index = textures_in_batch.len() as u32 - 1;
 
             // Add the vertices of the quad to vertices, respecting size and attributes
             vertices.reserve(4);
-            vertices.push(Vertex::new(IVec2::new(x - w, y - h), color, Vec2::new(0.0, 1.0), tex_index));
-            vertices.push(Vertex::new(IVec2::new(x - w, y + h), color, Vec2::new(0.0, 0.0), tex_index));
-            vertices.push(Vertex::new(IVec2::new(x + w, y + h), color, Vec2::new(1.0, 0.0), tex_index));
-            vertices.push(Vertex::new(IVec2::new(x + w, y - h), color, Vec2::new(1.0, 1.0), tex_index));
+            vertices.push(Vertex::new(IVec3::new(x - w, y - h, *layer), color, Vec2::new(0.0, 1.0), tex_index));
+            vertices.push(Vertex::new(IVec3::new(x - w, y + h, *layer), color, Vec2::new(0.0, 0.0), tex_index));
+            vertices.push(Vertex::new(IVec3::new(x + w, y + h, *layer), color, Vec2::new(1.0, 0.0), tex_index));
+            vertices.push(Vertex::new(IVec3::new(x + w, y - h, *layer), color, Vec2::new(1.0, 1.0), tex_index));
         });
         // Create the last batch of this frame (with the remaining quads)
         let vertices_range = ((last_batch_end_quad_idx) * 4)..(vertices.len() as u64);
@@ -279,7 +281,14 @@ impl Renderer {
                     store: wgpu::StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
             timestamp_writes: None,
             occlusion_query_set: None,
         });
@@ -302,8 +311,8 @@ impl Renderer {
 
 
     /// Records a new quad that needs to be drawn this frame (low performance cost)
-    pub fn draw_quad(&mut self, quad: &Quad) {
-        self.quads_to_draw.push(quad.clone());
+    pub fn draw_quad(&mut self, quad: &Quad, layer: i32) {
+        self.quads_to_draw.push((quad.clone(), layer));
     }
 
 
@@ -318,6 +327,7 @@ impl Renderer {
     pub(crate) fn resize(&mut self, new_size: &PhysicalSize<u32>) {
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         graphics_sys.resize_surface(new_size);
+        self.depth_view = Self::create_depth_texture(graphics_sys.surface_config(), graphics_sys.device());
         drop(graphics_sys);
         let mut camera = self.ctx.get_mut::<Camera>();
         camera.set_screen_size((new_size.width, new_size.height));
@@ -389,7 +399,7 @@ impl Renderer {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: VERTEX_SIZE as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex, // position        color       tex_coords     tex_index
-                    attributes: &wgpu::vertex_attr_array![0 => Sint32x2, 1 => Float32x4, 2 => Float32x2, 3 => Sint32],
+                    attributes: &wgpu::vertex_attr_array![0 => Sint32x3, 1 => Float32x4, 2 => Float32x2, 3 => Uint32],
                 }],
             },
             fragment: Some(wgpu::FragmentState {
@@ -401,7 +411,13 @@ impl Renderer {
                 front_face: wgpu::FrontFace::Ccw,
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: Self::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Greater,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
         })
@@ -476,6 +492,30 @@ impl Renderer {
         });
 
         bind_group
+    }
+
+
+    fn create_depth_texture(
+        config: &wgpu::SurfaceConfiguration,
+        device: &wgpu::Device,
+    ) -> TextureView {
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            label: Some("Depth texture"),
+            view_formats: &[],
+        });
+        let view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        view
     }
 
 
@@ -588,6 +628,8 @@ impl GeeseSystem for Renderer {
             &vec![&white_pixel_sampler]
         );
 
+        let depth_view = Self::create_depth_texture(conf, device);
+
         let base_shader_module = asset_sys.get(&base_shader_handle);
         let render_pipeline = Self::create_render_pipeline(
             device,
@@ -616,6 +658,7 @@ impl GeeseSystem for Renderer {
             render_pipeline,
             clear_color: Color::BLACK,
             extents,
+            depth_view,
 
             white_pixel: (white_pixel, white_pixel_view, white_pixel_sampler),
         }

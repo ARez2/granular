@@ -12,6 +12,7 @@ pub enum ScalingMode {
 pub struct Camera {
     // === General ===
     position: IVec2,
+    z: f32,
     angle: f32,
     screen_size: Vec2,
     scaling_mode: ScalingMode,
@@ -66,6 +67,23 @@ impl Camera {
     }
 
 
+    pub fn change_near(&mut self, val: f32) {
+        self.near += val;
+        info!("Camera near: {}", self.near);
+        self.recalc_ortho();
+    }
+    pub fn change_far(&mut self, val: f32) {
+        self.far += val;
+        info!("Camera far: {}", self.far);
+        self.recalc_ortho();
+    }
+    pub fn change_z(&mut self, val: f32) {
+        self.z += val;
+        info!("Camera z pos: {}", self.z);
+        self.recalc_view();
+    }
+
+
     pub(crate) fn set_screen_size(&mut self, screen_size: (u32, u32)) {
         self.screen_size = Vec2::new(screen_size.0 as f32, screen_size.1 as f32);
         info!("Camera screen size: {}", self.screen_size);
@@ -103,19 +121,20 @@ impl Camera {
         self.view = Mat4::from_scale_rotation_translation(
             Vec3::new(self.scale.x * self.zoom, self.scale.y * self.zoom, 1.0),
             Quat::from_rotation_z(self.angle),
-            Vec3::new(self.position.x as f32 * self.scale.x, self.position.y as f32 * self.scale.y, 0.0));
+            Vec3::new(self.position.x as f32 * self.scale.x, self.position.y as f32 * self.scale.y, self.z));
         self.canvas_transform = self.ortho_proj * self.view;
     }
 }
 impl GeeseSystem for Camera {
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
         let scale = Vec2::ONE;
-        let (left, right, top, bottom, near, far) = (-1.0, 1.0, 1.0, -1.0, -1.0, 1.0);
+        let (left, right, top, bottom, near, far) = (-1.0, 1.0, 1.0, -1.0, -15.0, 10.0);
         let ortho_proj = Mat4::orthographic_rh_gl(left, right, bottom, top, near, far);
         let view = Mat4::IDENTITY;
 
         Self {
             position: IVec2::ZERO,
+            z: 0.0,
             angle: 0.0,
             screen_size: Vec2::ONE,
             scaling_mode: ScalingMode::Keep,

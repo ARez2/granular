@@ -1,4 +1,5 @@
 use geese::*;
+use log::info;
 use wgpu::{Instance, Adapter, InstanceDescriptor, Backends};
 
 use super::WindowSystem;
@@ -25,6 +26,7 @@ impl GeeseSystem for GraphicsBackend {
     fn new(_ctx: GeeseContextHandle<Self>) -> Self {
         let instance = wgpu::Instance::new(InstanceDescriptor {
             backends: Backends::VULKAN,
+            flags: wgpu::InstanceFlags::DEBUG,
             ..Default::default()
         });
         let adapters = instance.enumerate_adapters(Backends::VULKAN);

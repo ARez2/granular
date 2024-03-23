@@ -56,9 +56,39 @@ impl Game {
     fn on_update(&mut self, _: &events::timing::Tick::<1>) {
         let input = self.ctx.get::<InputSystem>();
         let vector = input.get_input_vector("cam_left", "cam_right", "cam_up", "cam_down");
+        let increase_near = if input.is_action_pressed("increase_near") {
+            1
+        } else if input.is_action_pressed("decrease_near") {
+            -1
+        } else {
+            0
+        };
+        let increase_far = if input.is_action_pressed("increase_far") {
+            1
+        } else if input.is_action_pressed("decrease_far") {
+            -1
+        } else {
+            0
+        };
+        let increase_z = if input.is_action_pressed("increase_z") {
+            1
+        } else if input.is_action_pressed("decrease_z") {
+            -1
+        } else {
+            0
+        };
         drop(input);
         let mut camera = self.ctx.get_mut::<Camera>();
-        camera.translate(vector * 2)
+        camera.translate(vector * 2);
+        if increase_near != 0 {
+            camera.change_near(increase_near as f32 * 0.01);
+        };
+        if increase_far != 0 {
+            camera.change_far(increase_far as f32 * 0.01);
+        };
+        if increase_z != 0 {
+            camera.change_z(increase_z as f32 * 0.01);
+        };
     }
 
 
@@ -66,34 +96,16 @@ impl Game {
         let mut renderer = self.ctx.get_mut::<Renderer>();
         renderer.draw_quad(&graphics::Quad {
             center: IVec2::new(0, 0),
-            size: IVec2::new(200, 200),
+            size: IVec2::new(100, 100),
             color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
             texture: Some(self.texture.clone())
-        });
-        // renderer.draw_quad(&Quad {
-        //     center: Vec2::new(-0.5, 0.5),
-        //     size: Vec2::new(0.2, 0.2),
-        //     color: wgpu::Color::RED,
-        //     texture: Some(self.tex.clone())
-        // });
-        // renderer.draw_quad(&Quad {
-        //     center: Vec2::new(0.0, 0.0),
-        //     size: Vec2::new(0.2, 0.2),
-        //     color: wgpu::Color::WHITE,
-        //     texture: Some(self.tex2.clone())
-        // });
-        // renderer.draw_quad(&Quad {
-        //     center: Vec2::new(0.5, 0.0),
-        //     size: Vec2::new(0.2, 0.2),
-        //     color: wgpu::Color::WHITE,
-        //     texture: Some(self.tex3.clone())
-        // });
-        // renderer.draw_quad(&Quad {
-        //     center: IVec2::new(100, 100),
-        //     size: IVec2::new(30, 30),
-        //     color: wgpu::Color::WHITE,
-        //     texture: None
-        // });
+        }, 0);
+        renderer.draw_quad(&graphics::Quad {
+            center: IVec2::new(0, 0),
+            size: IVec2::new(200, 200),
+            color: Srgba::from_format(palette::named::WHITE.with_alpha(0.3)),
+            texture: None
+        }, 1);
     }
 }
 impl GeeseSystem for Game {
@@ -115,6 +127,12 @@ impl GeeseSystem for Game {
         input.add_action("cam_right", InputActionTrigger::new_key(KeyCode::ArrowRight, ModifiersState::empty()));
         input.add_action("cam_up", InputActionTrigger::new_key(KeyCode::ArrowUp, ModifiersState::empty()));
         input.add_action("cam_down", InputActionTrigger::new_key(KeyCode::ArrowDown, ModifiersState::empty()));
+        input.add_action("increase_near", InputActionTrigger::new_key(KeyCode::F1, ModifiersState::empty()));
+        input.add_action("decrease_near", InputActionTrigger::new_key(KeyCode::F2, ModifiersState::empty()));
+        input.add_action("increase_far", InputActionTrigger::new_key(KeyCode::F3, ModifiersState::empty()));
+        input.add_action("decrease_far", InputActionTrigger::new_key(KeyCode::F4, ModifiersState::empty()));
+        input.add_action("increase_z", InputActionTrigger::new_key(KeyCode::F5, ModifiersState::empty()));
+        input.add_action("decrease_z", InputActionTrigger::new_key(KeyCode::F6, ModifiersState::empty()));
         drop(input);
 
         let mut asset_sys = ctx.get_mut::<AssetSystem>();

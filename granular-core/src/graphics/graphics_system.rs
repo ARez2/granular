@@ -2,7 +2,7 @@
 
 use bytemuck_derive::{Pod, Zeroable};
 use geese::*;
-use glam::{Vec2, IVec2};
+use glam::{IVec2, IVec3, Vec2};
 use log::*;
 use wgpu::{Device, Queue, SurfaceConfiguration, Surface, TextureViewDescriptor, CommandEncoderDescriptor, SurfaceTexture, TextureView, CommandEncoder};
 use winit::dpi::PhysicalSize;
@@ -16,13 +16,13 @@ pub type FrameDataMut<'a> = Option<&'a mut (wgpu::SurfaceTexture, wgpu::TextureV
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub(crate) struct Vertex {
-    _pos: IVec2,
+    _pos: IVec3,
     _col: [f32; 4],
     _tex_coord: Vec2,
-    _tex_idx: u64,
+    _tex_idx: u32,
 }
 impl Vertex {
-    pub fn new(pos: IVec2, color: [f32; 4], tex_coord: Vec2, tex_index: u64) -> Self {
+    pub fn new(pos: IVec3, color: [f32; 4], tex_coord: Vec2, tex_index: u32) -> Self {
         Self {
             _pos: pos,
             _col: color,
@@ -111,13 +111,10 @@ impl GeeseSystem for GraphicsSystem {
                     label: None,
                     required_features: wgpu::Features::TEXTURE_BINDING_ARRAY | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
                     // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-                    required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                        .using_resolution(adapter.limits()),
+                    required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
                 },
                 None,
             )).expect("Failed to create device");
-
-        
 
         let window = ctx.get::<WindowSystem>();
         let window_size = window.window_handle().inner_size();
@@ -138,6 +135,7 @@ impl GeeseSystem for GraphicsSystem {
             view_formats: vec![],
             desired_maximum_frame_latency: 2
         };
+        info!("Graphics system::new() (~ Line 138): {:?}", swapchain_capabilities.alpha_modes);
     
         surface.configure(&device, &config);
 
