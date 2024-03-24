@@ -91,3 +91,11 @@ impl Asset for TextureAsset {
         }
     }
 }
+impl PartialEq for TextureAsset {
+    fn eq(&self, other: &Self) -> bool {
+        self.extent == other.extent &&
+        self.texture.global_id() == other.texture.global_id() &&
+        self.view.global_id() == other.view.global_id() &&
+        self.sampler.global_id() == other.sampler.global_id()
+    }
+}

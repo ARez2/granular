@@ -69,31 +69,19 @@ impl Game {
             size: IVec2::new(200, 200),
             color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
             texture: Some(self.texture.clone())
-        });
-        // renderer.draw_quad(&Quad {
-        //     center: Vec2::new(-0.5, 0.5),
-        //     size: Vec2::new(0.2, 0.2),
-        //     color: wgpu::Color::RED,
-        //     texture: Some(self.tex.clone())
-        // });
-        // renderer.draw_quad(&Quad {
-        //     center: Vec2::new(0.0, 0.0),
-        //     size: Vec2::new(0.2, 0.2),
-        //     color: wgpu::Color::WHITE,
-        //     texture: Some(self.tex2.clone())
-        // });
-        // renderer.draw_quad(&Quad {
-        //     center: Vec2::new(0.5, 0.0),
-        //     size: Vec2::new(0.2, 0.2),
-        //     color: wgpu::Color::WHITE,
-        //     texture: Some(self.tex3.clone())
-        // });
-        // renderer.draw_quad(&Quad {
-        //     center: IVec2::new(100, 100),
-        //     size: IVec2::new(30, 30),
-        //     color: wgpu::Color::WHITE,
-        //     texture: None
-        // });
+        }, 0);
+        renderer.draw_quad(&graphics::Quad {
+            center: IVec2::new(500, 0),
+            size: IVec2::new(200, 200),
+            color: Srgba::from_format(palette::named::RED.with_alpha(1.0)),
+            texture: None
+        }, 0);
+        renderer.draw_quad(&graphics::Quad {
+            center: IVec2::new(0, 0),
+            size: IVec2::new(100, 100),
+            color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
+            texture: None
+        }, 1);
     }
 }
 impl GeeseSystem for Game {

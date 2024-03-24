@@ -1,6 +1,7 @@
 #![allow(unused)]
 #![allow(clippy::identity_op)]
 
+use std::collections::BinaryHeap;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::ops::Range;
 
@@ -8,6 +9,7 @@ use bytemuck_derive::{Zeroable, Pod};
 use geese::{GeeseSystem, dependencies, GeeseContextHandle, Mut, EventHandlers, event_handlers};
 use glam::{IVec2, Vec2};
 use log::*;
+use palette::cast::ComponentsInto;
 use wgpu::{BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, Color, ColorTargetState, Device, Extent3d, IndexFormat, RenderPipeline, Sampler, ShaderModule, Texture, TextureView};
 use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalSize;
@@ -50,6 +52,33 @@ impl Quad {
         }
     }
 }
+impl PartialEq for Quad {
+    fn eq(&self, other: &Self) -> bool {
+        false
+    }
+}
+impl Eq for Quad {}
+
+
+
+/// A simple wrapper that stores a quad and a corresponding layer
+/// for use in the binary heap
+#[derive(Debug, PartialEq, Eq)]
+struct BatchQuadEntry {
+    layer: i32,
+    quad: Quad
+}
+impl PartialOrd for BatchQuadEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.layer.cmp(&other.layer))
+    }
+}
+impl Ord for BatchQuadEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.layer.cmp(&other.layer)
+    }
+}
+
 
 
 // We need this for Rust to store our data correctly for the shaders
@@ -73,7 +102,7 @@ pub struct Renderer {
     // texture array (2nd u64) (and its handle, for easier access)
     texture_slots: HashMap<u64, (u64, AssetHandle<TextureAsset>)>,
 
-    quads_to_draw: Vec<Quad>,
+    quads_to_draw: BinaryHeap<std::cmp::Reverse<BatchQuadEntry>>,
     batches: Vec<Batch>,
     
     bind_group: (BindGroup, BindGroupLayout),
@@ -88,7 +117,7 @@ impl Renderer {
     const MAX_QUAD_COUNT: usize = 1000;
     const MAX_VERTEX_COUNT: usize = Renderer::MAX_QUAD_COUNT * 4;
     const MAX_INDEX_COUNT: usize = Renderer::MAX_QUAD_COUNT * 6;
-    const MAX_TEXTURE_COUNT: usize = 16;
+    const MAX_TEXTURE_COUNT: usize = 2;
 
 
     pub fn start_frame(&mut self) {
@@ -188,11 +217,7 @@ impl Renderer {
             })
         };
 
-
-        // Sort all quads based on texture index (so that quads with the same index will be in one batch
-        // and it is safe to assume that we won't have to rebind the same texture in multiple batches)
-        self.quads_to_draw.sort_by_key(|quad| quad.get_texture_index());
-
+        let total_quads_to_draw = self.quads_to_draw.len();
 
         let mut last_batch_end_quad_idx: u64 = 0;
         let mut textures_in_batch: Vec<Option<AssetHandle<TextureAsset>>> = vec![];
@@ -200,12 +225,36 @@ impl Renderer {
         // Will get filled by create_new_batch
         let mut render_pipelines = vec![];
         let mut bind_group_layouts = vec![];
-        self.quads_to_draw.iter().enumerate().for_each(|(quad_idx, quad)| {
+        
+        let mut previous_layer = 0;
+        let mut first_iteration = true;
+        let mut num_quads_in_batch = 0;
+        let mut total_quads_processed = 0;
+        loop {
+            let current_quad = self.quads_to_draw.pop();
+            // We have reached the end of the heap
+            if current_quad.is_none() {
+                break;
+            };
+            let entry = current_quad.unwrap().0;
+            let quad = entry.quad; let current_layer = entry.layer;
+            // Since the quads are ordered by layer, this means that we have now iterated through
+            // all quads in this layer and we need to create a batch with the last ones
+            if !first_iteration && current_layer != previous_layer {
+                let vertices_range = (last_batch_end_quad_idx * 4)..(total_quads_processed * 4);
+                let indices_end = num_quads_in_batch as u32 * 6;
+                create_new_batch(&textures_in_batch, &mut render_pipelines, &mut bind_group_layouts, vertices_range, indices_end);
+                textures_in_batch.clear();
+                last_batch_end_quad_idx = total_quads_processed;
+                num_quads_in_batch = 0;
+            }
+
+
             let quad_pos = quad.center;
             //info!("Old quad pos: {}   New pos: {}", quad.center, quad_pos);
             let x = quad_pos.x; let y = quad_pos.y;
             let w = quad.size.x; let h = quad.size.y;
-            let color = [quad.color.red, quad.color.green, quad.color.blue, quad.color.alpha];
+            let color: [f32; 4] = quad.color.into();
             
             let mut texture_in_batch = false;
             // Custom comparison to see if this quads texture was already in this batches textures
@@ -228,17 +277,14 @@ impl Renderer {
 
             // In case we run out of bind slots, we create a new batch (and therefore new bind group)
             if textures_in_batch.len() >= Self::MAX_TEXTURE_COUNT && !texture_in_batch {
-                let num_quads_in_batch = quad_idx as u64;
-                let vertices_range = (last_batch_end_quad_idx * 4)..(num_quads_in_batch * 4);
+                let vertices_range = (last_batch_end_quad_idx * 4)..(total_quads_processed * 4);
                 let indices_end = num_quads_in_batch as u32 * 6;
-                trace!("Max texture bindings reached, creating new batch");
                 create_new_batch(&textures_in_batch, &mut render_pipelines, &mut bind_group_layouts, vertices_range, indices_end);
                 textures_in_batch.clear();
-                last_batch_end_quad_idx = num_quads_in_batch;
+                last_batch_end_quad_idx = total_quads_processed;
+                num_quads_in_batch = 0;
             };
 
-
-            
             if !texture_in_batch {
                 textures_in_batch.push(quad.texture.clone());
             };
@@ -250,10 +296,16 @@ impl Renderer {
             vertices.push(Vertex::new(IVec2::new(x - w, y + h), color, Vec2::new(0.0, 0.0), tex_index));
             vertices.push(Vertex::new(IVec2::new(x + w, y + h), color, Vec2::new(1.0, 0.0), tex_index));
             vertices.push(Vertex::new(IVec2::new(x + w, y - h), color, Vec2::new(1.0, 1.0), tex_index));
-        });
+
+            first_iteration = false;
+            previous_layer = current_layer;
+            num_quads_in_batch += 1;
+            total_quads_processed += 1;
+        };
+
         // Create the last batch of this frame (with the remaining quads)
         let vertices_range = ((last_batch_end_quad_idx) * 4)..(vertices.len() as u64);
-        let indices_end = (self.quads_to_draw.len() as u32 - last_batch_end_quad_idx as u32) * 6;
+        let indices_end = num_quads_in_batch as u32 * 6;
         create_new_batch(&textures_in_batch, &mut render_pipelines, &mut bind_group_layouts, vertices_range, indices_end);
 
         // Write the data from vertices to the vertex buffer
@@ -301,9 +353,12 @@ impl Renderer {
     }
 
 
-    /// Records a new quad that needs to be drawn this frame (low performance cost)
-    pub fn draw_quad(&mut self, quad: &Quad) {
-        self.quads_to_draw.push(quad.clone());
+    /// Records a new quad that needs to be drawn this frame (low performance cost, even though quad gets cloned)
+    pub fn draw_quad(&mut self, quad: &Quad, layer: i32) {
+        self.quads_to_draw.push(std::cmp::Reverse(BatchQuadEntry {
+            layer,
+            quad: quad.clone()
+        }));
     }
 
 
@@ -608,7 +663,7 @@ impl GeeseSystem for Renderer {
             index_format: wgpu::IndexFormat::Uint16,
             texture_slots: HashMap::default(),
 
-            quads_to_draw: vec![],
+            quads_to_draw: BinaryHeap::new(),
             batches: vec![],
             
             bind_group: (bind_group, bind_group_layout),
