@@ -94,7 +94,7 @@ struct ShaderGlobals {
 
 pub struct Renderer {
     ctx: GeeseContextHandle<Self>,
-    
+
     vertex_buffer: DynamicBuffer<Vertex>,
     index_buffer: Buffer,
     index_format: IndexFormat,
@@ -106,10 +106,11 @@ pub struct Renderer {
     batches: Vec<Batch>,
     
     bind_group: (BindGroup, BindGroupLayout),
-    clear_color: Color,
-    extents: Extent3d,
-    shader_handle: AssetHandle<ShaderAsset>,
+    shaderglobals_buffer: Buffer,
+
     render_pipeline: RenderPipeline,
+    shader_handle: AssetHandle<ShaderAsset>,
+    clear_color: Color,
 
     white_pixel: (Texture, TextureView, Sampler)
 }
@@ -135,6 +136,17 @@ impl Renderer {
 
     /// Handles batching and issuing draw calls accordingly
     pub fn flush(&mut self) {
+        let graphics_sys = self.ctx.get::<GraphicsSystem>();
+        let camera = self.ctx.get::<Camera>();
+        self.shaderglobals_buffer = graphics_sys.device().create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Shader globals buffer"),
+            contents: bytemuck::cast_slice(&[camera.canvas_transform()]),
+            usage: BufferUsages::UNIFORM
+        });
+        drop(graphics_sys);
+        drop(camera);
+
+
         /// Creates a new Batch object from the given parameters, uses the 1x1 white pixel when a texture is None
         /// automatically creates a new bind group for each batch and only a new bindgroup layout/ render pipeline,
         /// when the amount of textures inside the bind group has changed (reuses existing ones if not)
@@ -186,7 +198,7 @@ impl Renderer {
                 // We want to create a completely new layout and render pipeline for this batch
                 if bind_group_layout_idx == -1 {
                     let layout = Self::create_bind_group_layout(device, views.len() as u32, samplers.len() as u32);
-                    let bg = Self::create_bind_group(device, &layout, &camera, screen_size, &views, &samplers);
+                    let bg = Self::create_bind_group(device, &layout, &camera, &self.shaderglobals_buffer, screen_size, &views, &samplers);
                     let shader = asset_sys.get(&self.shader_handle);
                     let color_state = Some(graphics_sys.surface_config().format.into());
                     let rp = Self::create_render_pipeline(device, &layout, shader.module(), color_state);
@@ -198,7 +210,7 @@ impl Renderer {
                 } else {
                     // Use the layout of the other batch
                     let layout = &bind_group_layouts[bind_group_layout_idx as usize];
-                    (Self::create_bind_group(device, layout, &camera, screen_size, &views, &samplers), bind_group_layout_idx as usize)
+                    (Self::create_bind_group(device, layout, &camera, &self.shaderglobals_buffer, screen_size, &views, &samplers), bind_group_layout_idx as usize)
                 }
             };
 
@@ -502,20 +514,15 @@ impl Renderer {
 
 
     /// Creates the bind group based on a list of textures
-    fn create_bind_group(device: &wgpu::Device, layout: &BindGroupLayout, camera: &Camera, screen_size: Vec2, views: &Vec<&TextureView>, samplers: &Vec<&Sampler>) -> BindGroup {
+    fn create_bind_group(device: &wgpu::Device, layout: &BindGroupLayout, camera: &Camera, shaderglobals: &Buffer, screen_size: Vec2, views: &Vec<&TextureView>, samplers: &Vec<&Sampler>) -> BindGroup {
         let tex_views = views.as_slice();
         let tex_samplers = samplers.as_slice();
 
-        let globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Shader globals buffer"),
-            contents: bytemuck::cast_slice(&[camera.canvas_transform()]),
-            usage: BufferUsages::UNIFORM
-        });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: globals_buffer.as_entire_binding(),
+                    resource: shaderglobals.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -573,6 +580,7 @@ impl GeeseSystem for Renderer {
         let device = graphics_sys.device();
 
         let vertex_buffer = DynamicBuffer::with_capacity(
+            "Dynamic vertex buffer",
             &graphics_sys,
             BufferUsages::VERTEX | BufferUsages::COPY_DST,
             Renderer::MAX_VERTEX_COUNT);
@@ -584,8 +592,6 @@ impl GeeseSystem for Renderer {
         });
 
         let conf = graphics_sys.surface_config();
-        let extents = wgpu::Extent3d { width: conf.width, height: conf.height, depth_or_array_layers: 1 };
-
         let device = graphics_sys.device();
         
 
@@ -630,7 +636,13 @@ impl GeeseSystem for Renderer {
             wgpu::Extent3d::default()
         );
 
+        
         let camera = ctx.get::<Camera>();
+        let shaderglobals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Shader globals buffer"),
+            contents: bytemuck::cast_slice(&[camera.canvas_transform()]),
+            usage: BufferUsages::UNIFORM
+        });
 
         let asset_sys = ctx.get::<AssetSystem>();
         let bind_group_layout = Self::create_bind_group_layout(device, 1, 1);
@@ -638,6 +650,7 @@ impl GeeseSystem for Renderer {
             device,
             &bind_group_layout,
             &camera,
+            &shaderglobals_buffer,
             Vec2::new(conf.width as f32, conf.height as f32),
             &vec![&white_pixel_view],
             &vec![&white_pixel_sampler]
@@ -667,10 +680,11 @@ impl GeeseSystem for Renderer {
             batches: vec![],
             
             bind_group: (bind_group, bind_group_layout),
-            shader_handle: base_shader_handle,
+            shaderglobals_buffer,
+
             render_pipeline,
             clear_color: Color::BLACK,
-            extents,
+            shader_handle: base_shader_handle,
 
             white_pixel: (white_pixel, white_pixel_view, white_pixel_sampler),
         }

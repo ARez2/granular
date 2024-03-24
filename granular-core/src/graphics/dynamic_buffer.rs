@@ -23,18 +23,18 @@ pub struct DynamicBuffer<T: Pod + Zeroable> {
 
 impl<T: Pod + Zeroable> DynamicBuffer<T> {
     /// Creates a new dynamic buffer on the GPU with the given usages.
-    pub fn new(gpu: &GraphicsSystem, usage: BufferUsages) -> Self {
-        Self::with_capacity(gpu, usage, 0)
+    pub fn new(name: &str, gpu: &GraphicsSystem, usage: BufferUsages) -> Self {
+        Self::with_capacity(name, gpu, usage, 0)
     }
 
     /// Creates a new dynamic buffer on the GPU with the given usages, ensuring that it
     /// can hold at least `len` instances of `T` before reallocating.
-    pub fn with_capacity(gpu: &GraphicsSystem, mut usage: BufferUsages, len: usize) -> Self {
+    pub fn with_capacity(name: &str, gpu: &GraphicsSystem, mut usage: BufferUsages, len: usize) -> Self {
         usage |= BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
         
         let elements = (len * size_of::<T>()).next_power_of_two() as u64;
         let buffer = gpu.device().create_buffer(&BufferDescriptor {
-            label: Some("Dynamic buffer"),
+            label: Some(name),
             size: 4.max(elements),
             usage,
             mapped_at_creation: false
