@@ -48,11 +48,7 @@ pub struct GranularEngine {
     /// Current frame
     frame: u64,
     /// When each tick (in ms) last occured
-    last_ticks: HashMap<Duration, Instant>,
-
-    tex: assets::AssetHandle<assets::TextureAsset>,
-    tex2: assets::AssetHandle<assets::TextureAsset>,
-    tex3: assets::AssetHandle<assets::TextureAsset>,
+    last_ticks: HashMap<Duration, Instant>
 }
 
 impl GranularEngine {
@@ -72,20 +68,11 @@ impl GranularEngine {
             last_ticks.insert(Duration::from_millis(fixed_tick), now);
         };
 
-        let mut asset_sys = ctx.get_mut::<AssetSystem>();
-        let tex = asset_sys.load::<assets::TextureAsset>("assets/cat.jpg", true);
-        let tex2 = asset_sys.load::<assets::TextureAsset>("assets/cat2.jpg", true);
-        let tex3 = asset_sys.load::<assets::TextureAsset>("assets/cat3.jpg", true);
-        drop(asset_sys);
-
         Self {
             ctx,
             close_requested: false,
             frame: 0,
-            last_ticks,
-            tex,
-            tex2,
-            tex3
+            last_ticks
         }
     }
 
@@ -200,66 +187,6 @@ impl GranularEngine {
                 WindowEvent::KeyboardInput{event, is_synthetic: false, ..} => {
                     let mut input = self.ctx.get_mut::<InputSystem>();
                     input.handle_keyevent(event);
-                    let speed = 10;
-                    // match event {
-                    //     winit::event::KeyEvent {
-                    //         logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowUp),
-                    //         state: winit::event::ElementState::Pressed,
-                    //         ..
-                    //     } => {
-                    //         let mut renderer = self.ctx.get_mut::<Renderer>();
-                    //         renderer.camera.translate(IVec2::new(0, 1) * speed);
-                    //         true
-                    //     },
-                    //     winit::event::KeyEvent {
-                    //         logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowDown),
-                    //         state: winit::event::ElementState::Pressed,
-                    //         ..
-                    //     } => {
-                    //         let mut renderer = self.ctx.get_mut::<Renderer>();
-                    //         renderer.camera.translate(IVec2::new(0, -1) * speed);
-                    //         true
-                    //     },
-                    //     winit::event::KeyEvent {
-                    //         logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowLeft),
-                    //         state: winit::event::ElementState::Pressed,
-                    //         ..
-                    //     } => {
-                    //         let mut renderer = self.ctx.get_mut::<Renderer>();
-                    //         renderer.camera.translate(IVec2::new(-1, 0) * speed);
-                    //         true
-                    //     },
-                    //     winit::event::KeyEvent {
-                    //         logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowRight),
-                    //         state: winit::event::ElementState::Pressed,
-                    //         ..
-                    //     } => {
-                    //         let mut renderer = self.ctx.get_mut::<Renderer>();
-                    //         renderer.camera.translate(IVec2::new(1, 0) * speed);
-                    //         true
-                    //     },
-                    //     winit::event::KeyEvent {
-                    //         logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::F1),
-                    //         state: winit::event::ElementState::Pressed,
-                    //         ..
-                    //     } => {
-                    //         let mut renderer = self.ctx.get_mut::<Renderer>();
-                    //         let new_zoom = renderer.camera.zoom() * 2.0;
-                    //         renderer.camera.set_zoom(new_zoom);
-                    //         true
-                    //     },
-                    //     winit::event::KeyEvent {
-                    //         logical_key: winit::keyboard::Key::Named(winit::keyboard::NamedKey::F2),
-                    //         state: winit::event::ElementState::Pressed,
-                    //         ..
-                    //     } => {
-                    //         let mut renderer = self.ctx.get_mut::<Renderer>();
-                    //         let new_zoom = renderer.camera.zoom() / 2.0;
-                    //         renderer.camera.set_zoom(new_zoom);
-                    //         true
-                    //     }
-                    //     _ => false
-                    // }
                 },
                 WindowEvent::CursorMoved {position, .. } => {
                     let mut input = self.ctx.get_mut::<InputSystem>();
