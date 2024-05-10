@@ -58,12 +58,12 @@ impl Game {
         let vector = input.get_input_vector("cam_left", "cam_right", "cam_up", "cam_down");
         drop(input);
         let mut camera = self.ctx.get_mut::<Camera>();
-        camera.translate(vector * 2)
+        camera.translate(vector * -2)
     }
 
 
     fn on_draw(&mut self, _: &events::Draw) {
-        let mut renderer = self.ctx.get_mut::<Renderer>();
+        let mut renderer = self.ctx.get_mut::<BatchRenderer>();
         renderer.draw_quad(&graphics::Quad {
             center: IVec2::new(0, 0),
             size: IVec2::new(200, 200),
@@ -93,7 +93,7 @@ impl GeeseSystem for Game {
         .with::<Mut<InputSystem>>()
         .with::<Mut<Camera>>()
         .with::<Mut<AssetSystem>>()
-        .with::<Mut<Renderer>>();
+        .with::<Mut<BatchRenderer>>();
     
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         info!("Game created");

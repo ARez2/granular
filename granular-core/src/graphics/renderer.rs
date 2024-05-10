@@ -20,7 +20,7 @@ use rustc_hash::FxHashMap as HashMap;
 use crate::assets::{AssetHandle, AssetSystem, ShaderAsset, TextureAsset};
 
 use super::graphics_system::{GraphicsSystem, Vertex, VERTEX_SIZE};
-use super::{Camera, DynamicBuffer};
+use super::{Camera, DynamicBuffer, TextureBundle};
 
 
 
@@ -91,8 +91,8 @@ struct ShaderGlobals {
 
 
 
-
-pub struct Renderer {
+/// A simple batch renderer that supports layering of quads
+pub struct BatchRenderer {
     ctx: GeeseContextHandle<Self>,
 
     vertex_buffer: DynamicBuffer<Vertex>,
@@ -112,13 +112,13 @@ pub struct Renderer {
     shader_handle: AssetHandle<ShaderAsset>,
     clear_color: Color,
 
-    white_pixel: (Texture, TextureView, Sampler)
+    white_pixel: TextureBundle
 }
-impl Renderer {
+impl BatchRenderer {
     const MAX_QUAD_COUNT: usize = 1000;
-    const MAX_VERTEX_COUNT: usize = Renderer::MAX_QUAD_COUNT * 4;
-    const MAX_INDEX_COUNT: usize = Renderer::MAX_QUAD_COUNT * 6;
-    const MAX_TEXTURE_COUNT: usize = 2;
+    const MAX_VERTEX_COUNT: usize = BatchRenderer::MAX_QUAD_COUNT * 4;
+    const MAX_INDEX_COUNT: usize = BatchRenderer::MAX_QUAD_COUNT * 6;
+    const MAX_TEXTURE_COUNT: usize = 15;
 
 
     pub fn start_frame(&mut self) {
@@ -138,11 +138,7 @@ impl Renderer {
     pub fn flush(&mut self) {
         let graphics_sys = self.ctx.get::<GraphicsSystem>();
         let camera = self.ctx.get::<Camera>();
-        self.shaderglobals_buffer = graphics_sys.device().create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Shader globals buffer"),
-            contents: bytemuck::cast_slice(&[camera.canvas_transform()]),
-            usage: BufferUsages::UNIFORM
-        });
+        graphics_sys.queue().write_buffer(&self.shaderglobals_buffer, 0, bytemuck::cast_slice(&[camera.canvas_transform()]));
         drop(graphics_sys);
         drop(camera);
 
@@ -166,13 +162,13 @@ impl Renderer {
                 match tex {
                     // Use the 1x1 white pixel texture instead
                     None => {
-                        views.push(&self.white_pixel.1);
-                        samplers.push(&self.white_pixel.2);
+                        views.push(self.white_pixel.view());
+                        samplers.push(self.white_pixel.sampler());
                     },
                     Some(tex_handle) => {
-                        let texture = asset_sys.get(tex_handle);
-                        views.push(texture.view());
-                        samplers.push(texture.sampler());
+                        let asset = asset_sys.get(tex_handle);
+                        views.push(asset.texture().view());
+                        samplers.push(asset.texture().sampler());
                     }
                 };
             });
@@ -542,10 +538,10 @@ impl Renderer {
 
 
     /// Creates an array of indices, following the typical quad indexing method (0-1-2, 2-3-0)
-    fn create_indices() -> [u16; Renderer::MAX_INDEX_COUNT] {
-        let mut indices: [u16; Renderer::MAX_INDEX_COUNT] = [0; Renderer::MAX_INDEX_COUNT];
+    fn create_indices() -> [u16; BatchRenderer::MAX_INDEX_COUNT] {
+        let mut indices: [u16; BatchRenderer::MAX_INDEX_COUNT] = [0; BatchRenderer::MAX_INDEX_COUNT];
         let mut offset = 0;
-        (0..Renderer::MAX_INDEX_COUNT).step_by(6).for_each(|i| {
+        (0..BatchRenderer::MAX_INDEX_COUNT).step_by(6).for_each(|i| {
             indices[i + 0] = 0 + offset;
             indices[i + 1] = 1 + offset;
             indices[i + 2] = 2 + offset;
@@ -560,7 +556,7 @@ impl Renderer {
     }
 }
 
-impl GeeseSystem for Renderer {
+impl GeeseSystem for BatchRenderer {
     const DEPENDENCIES: geese::Dependencies = dependencies()
         .with::<Mut<GraphicsSystem>>()
         .with::<Mut<AssetSystem>>()
@@ -577,83 +573,72 @@ impl GeeseSystem for Renderer {
         drop(asset_sys);
 
         let graphics_sys = ctx.get::<GraphicsSystem>();
-        let device = graphics_sys.device();
-
+        
         let vertex_buffer = DynamicBuffer::with_capacity(
             "Dynamic vertex buffer",
             &graphics_sys,
             BufferUsages::VERTEX | BufferUsages::COPY_DST,
-            Renderer::MAX_VERTEX_COUNT);
-        let indices = Renderer::create_indices();
+            BatchRenderer::MAX_VERTEX_COUNT);
+        let indices = BatchRenderer::create_indices();
+        let device = graphics_sys.device();
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
             contents: bytemuck::cast_slice(&indices),
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        let conf = graphics_sys.surface_config();
-        let device = graphics_sys.device();
-        
-
-
         // Set up a white 1x1 texture
-        let white_texture_descriptor = wgpu::TextureDescriptor {
-            size: wgpu::Extent3d::default(),
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            label: Some("White pixel texture descriptor"),
-            view_formats: &[],
-        };
-        let white_pixel = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("White pixel texture"),
-            view_formats: &[],
-            ..white_texture_descriptor
-        });
-        let white_pixel_view = white_pixel.create_view(&wgpu::TextureViewDescriptor::default());
-        let white_pixel_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("white pixel sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            //mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-        
-        let q = graphics_sys.queue();
-        q.write_texture(
-            white_pixel.as_image_copy(),
+        let queue = graphics_sys.queue();
+        let white_pixel = TextureBundle::new(device, queue,
+            "White pixel texture",
+            wgpu::Extent3d::default(),
+            wgpu::TextureDescriptor {
+                size: wgpu::Extent3d::default(),
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                label: Some("White pixel texture descriptor"),
+                view_formats: &[]
+            },
+            &wgpu::TextureViewDescriptor::default(),
+            &wgpu::SamplerDescriptor {
+                label: Some("white pixel sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                //mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            },
             &[255, 255, 255, 255],
             wgpu::ImageDataLayout {
                 offset: 0,
                 bytes_per_row: Some(4),
                 rows_per_image: None,
-            },
-            wgpu::Extent3d::default()
+            }
         );
-
         
         let camera = ctx.get::<Camera>();
         let shaderglobals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Shader globals buffer"),
             contents: bytemuck::cast_slice(&[camera.canvas_transform()]),
-            usage: BufferUsages::UNIFORM
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST
         });
 
         let asset_sys = ctx.get::<AssetSystem>();
+        let conf = graphics_sys.surface_config();
         let bind_group_layout = Self::create_bind_group_layout(device, 1, 1);
-        let bind_group = Renderer::create_bind_group(
+        let bind_group = BatchRenderer::create_bind_group(
             device,
             &bind_group_layout,
             &camera,
             &shaderglobals_buffer,
             Vec2::new(conf.width as f32, conf.height as f32),
-            &vec![&white_pixel_view],
-            &vec![&white_pixel_sampler]
+            &vec![white_pixel.view()],
+            &vec![white_pixel.sampler()]
         );
 
         let base_shader_module = asset_sys.get(&base_shader_handle);
@@ -686,7 +671,7 @@ impl GeeseSystem for Renderer {
             clear_color: Color::BLACK,
             shader_handle: base_shader_handle,
 
-            white_pixel: (white_pixel, white_pixel_view, white_pixel_sampler),
+            white_pixel,
         }
     }
 }
