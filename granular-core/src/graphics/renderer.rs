@@ -194,7 +194,7 @@ impl BatchRenderer {
                 // We want to create a completely new layout and render pipeline for this batch
                 if bind_group_layout_idx == -1 {
                     let layout = Self::create_bind_group_layout(device, views.len() as u32, samplers.len() as u32);
-                    let bg = Self::create_bind_group(device, &layout, &camera, &self.shaderglobals_buffer, screen_size, &views, &samplers);
+                    let bg = Self::create_bind_group(device, &layout, &self.shaderglobals_buffer, &views, &samplers);
                     let shader = asset_sys.get(&self.shader_handle);
                     let color_state = Some(graphics_sys.surface_config().format.into());
                     let rp = Self::create_render_pipeline(device, &layout, shader.module(), color_state);
@@ -206,7 +206,7 @@ impl BatchRenderer {
                 } else {
                     // Use the layout of the other batch
                     let layout = &bind_group_layouts[bind_group_layout_idx as usize];
-                    (Self::create_bind_group(device, layout, &camera, &self.shaderglobals_buffer, screen_size, &views, &samplers), bind_group_layout_idx as usize)
+                    (Self::create_bind_group(device, layout, &self.shaderglobals_buffer, &views, &samplers), bind_group_layout_idx as usize)
                 }
             };
 
@@ -510,7 +510,7 @@ impl BatchRenderer {
 
 
     /// Creates the bind group based on a list of textures
-    fn create_bind_group(device: &wgpu::Device, layout: &BindGroupLayout, camera: &Camera, shaderglobals: &Buffer, screen_size: Vec2, views: &Vec<&TextureView>, samplers: &Vec<&Sampler>) -> BindGroup {
+    fn create_bind_group(device: &wgpu::Device, layout: &BindGroupLayout, shaderglobals: &Buffer, views: &Vec<&TextureView>, samplers: &Vec<&Sampler>) -> BindGroup {
         let tex_views = views.as_slice();
         let tex_samplers = samplers.as_slice();
 
@@ -634,9 +634,7 @@ impl GeeseSystem for BatchRenderer {
         let bind_group = BatchRenderer::create_bind_group(
             device,
             &bind_group_layout,
-            &camera,
             &shaderglobals_buffer,
-            Vec2::new(conf.width as f32, conf.height as f32),
             &vec![white_pixel.view()],
             &vec![white_pixel.sampler()]
         );
