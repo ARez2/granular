@@ -1,5 +1,4 @@
 use geese::*;
-use log::info;
 use wgpu::{Adapter, Backends, Instance, InstanceDescriptor, RequestAdapterOptions};
 
 use super::WindowSystem;

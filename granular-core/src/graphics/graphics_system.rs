@@ -139,7 +139,7 @@ impl GeeseSystem for GraphicsSystem {
                 format.is_srgb()
             })
             .unwrap_or(&wgpu::TextureFormat::Bgra8UnormSrgb);
-        info!("Swapchain format: {:?}", swapchain_format);
+        debug!("Swapchain format: {:?}", swapchain_format);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: *swapchain_format,

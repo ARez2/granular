@@ -1,4 +1,4 @@
-use log::{debug, warn};
+use log::debug;
 
 use crate::{GRID_HEIGHT, GRID_WIDTH};
 

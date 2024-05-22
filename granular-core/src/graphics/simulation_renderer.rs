@@ -5,7 +5,7 @@ use log::{info, warn};
 use wgpu::{util::DeviceExt, Buffer, BufferUsages, Extent3d, ImageDataLayout, SamplerDescriptor, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor};
 
 use crate::{assets::{AssetHandle, ShaderAsset}, AssetSystem, Camera, Simulation, GRID_HEIGHT, GRID_WIDTH};
-use super::{graphics_system::Vertex, GraphicsSystem, TextureBundle};
+use super::{GraphicsSystem, TextureBundle};
 
 
 pub struct SimulationRenderer {

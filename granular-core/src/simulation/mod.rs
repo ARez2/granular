@@ -3,7 +3,6 @@ use geese::{GeeseContextHandle, GeeseSystem};
 
 mod grid;
 use grid::CellGrid;
-use log::info;
 use palette::Srgba;
 
 pub(self) mod cell;
