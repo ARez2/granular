@@ -13,11 +13,14 @@ pub(crate) use dynamic_buffer::DynamicBuffer;
 mod window_system;
 pub use window_system::WindowSystem;
 
-mod renderer;
-pub use renderer::{BatchRenderer, Quad};
-
 mod camera;
 pub use camera::Camera;
 
+mod batchrenderer;
+pub use batchrenderer::{BatchRenderer, Quad};
+
 mod simulation_renderer;
 pub use simulation_renderer::SimulationRenderer;
+
+mod renderer;
+pub use renderer::Renderer;

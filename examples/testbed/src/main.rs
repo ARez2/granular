@@ -69,7 +69,7 @@ impl Game {
             size: IVec2::new(200, 200),
             color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
             texture: Some(self.texture.clone())
-        }, 0);
+        }, -1);
         renderer.draw_quad(&graphics::Quad {
             center: IVec2::new(500, 0),
             size: IVec2::new(200, 200),

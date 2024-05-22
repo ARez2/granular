@@ -1,7 +1,10 @@
 #![allow(unused)]
-use geese::GeeseSystem;
+use geese::{dependencies, GeeseContextHandle, GeeseSystem};
 use glam::{Affine2, IVec2, Mat2, Mat4, Quat, Vec2, Vec3};
 use log::info;
+use wgpu::{util::DeviceExt, Buffer, BufferUsages};
+
+use super::GraphicsSystem;
 
 pub enum ScalingMode {
     Keep,
@@ -10,6 +13,8 @@ pub enum ScalingMode {
 
 
 pub struct Camera {
+    ctx: GeeseContextHandle<Self>,
+
     // === General ===
     position: IVec2,
     angle: f32,
@@ -29,7 +34,10 @@ pub struct Camera {
     top: f32,
     bottom: f32,
     near: f32,
-    far: f32
+    far: f32,
+
+    // === wgpu ===
+    shader_buffer: Buffer
 }
 impl Camera {
     pub fn set_position(&mut self, position: IVec2) {
@@ -81,6 +89,16 @@ impl Camera {
         self.canvas_transform
     }
 
+    
+    pub fn write_canvas_transform_buffer(&self) {
+        let graphics_sys = self.ctx.get::<GraphicsSystem>();
+        graphics_sys.queue().write_buffer(&self.shader_buffer, 0, bytemuck::cast_slice(&[self.canvas_transform]));
+    }
+
+    pub fn canvas_transform_buffer(&self) -> &Buffer {
+        &self.shader_buffer
+    }
+
 
     fn recalc_ortho(&mut self) {
         let aspect_ratio = match self.scaling_mode {
@@ -108,20 +126,34 @@ impl Camera {
     }
 }
 impl GeeseSystem for Camera {
+    const DEPENDENCIES: geese::Dependencies = dependencies()
+        .with::<GraphicsSystem>();
+
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
         let scale = Vec2::ONE;
         let (left, right, top, bottom, near, far) = (-1.0, 1.0, 1.0, -1.0, -1.0, 1.0);
         let ortho_proj = Mat4::orthographic_rh_gl(left, right, bottom, top, near, far);
         let view = Mat4::IDENTITY;
+        let canvas_transform = ortho_proj * view;
+
+        let graphics_sys = ctx.get::<GraphicsSystem>();
+        let shader_buffer = graphics_sys.device().create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("SimulationRenderer Shader globals buffer"),
+            contents: bytemuck::cast_slice(&[canvas_transform]),
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST
+        });
+        drop(graphics_sys);
 
         Self {
+            ctx,
+
             position: IVec2::ZERO,
             angle: 0.0,
             screen_size: Vec2::ONE,
             scaling_mode: ScalingMode::Keep,
             zoom: 1.0,
 
-            canvas_transform: ortho_proj * view,
+            canvas_transform,
             
             scale,
             view,
@@ -131,7 +163,9 @@ impl GeeseSystem for Camera {
             top,
             bottom,
             near,
-            far
+            far,
+
+            shader_buffer
         }
     }
 }

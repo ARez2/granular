@@ -1,8 +1,9 @@
 use std::num::NonZeroU64;
 
-use geese::{dependencies, GeeseContextHandle, GeeseSystem, Mut};
+use geese::{dependencies, event_handlers, EventHandlers, GeeseContextHandle, GeeseSystem, Mut};
 use log::{info, warn};
-use wgpu::{util::DeviceExt, Buffer, BufferUsages, Extent3d, ImageDataLayout, SamplerDescriptor, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor};
+use wgpu::{util::DeviceExt, BindGroup, BindGroupLayout, Buffer, ColorTargetState, Device, Extent3d, ImageDataLayout, RenderPipeline, SamplerDescriptor, ShaderModule, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor};
+use winit::dpi::PhysicalSize;
 
 use crate::{assets::{AssetHandle, ShaderAsset}, AssetSystem, Camera, Simulation, GRID_HEIGHT, GRID_WIDTH};
 use super::{GraphicsSystem, TextureBundle};
@@ -12,23 +13,22 @@ pub struct SimulationRenderer {
     ctx: GeeseContextHandle<Self>,
 
     vertex_buffer: Buffer,
-    bind_group: wgpu::BindGroup,
+    bind_group: BindGroup,
+    bind_group_layout: BindGroupLayout,
     render_pipeline: wgpu::RenderPipeline,
+    color_target_state: Option<ColorTargetState>,
+    vertex_size: u64,
     shader_handle: AssetHandle<ShaderAsset>,
-    shaderglobals_buffer: Buffer,
 
     sim_texture: TextureBundle
 }
 impl SimulationRenderer {
      pub fn render(&mut self) {
         let graphics_sys = self.ctx.get::<GraphicsSystem>();
-        let camera = self.ctx.get::<Camera>();
-        graphics_sys.queue().write_buffer(&self.shaderglobals_buffer, 0, bytemuck::cast_slice(&[camera.canvas_transform()]));
         let sim = self.ctx.get::<Simulation>();
         let d = sim.get_grid_texture_data();
         graphics_sys.queue().write_texture(self.sim_texture.texture().as_image_copy(), d, self.sim_texture.data_layout(), self.sim_texture.extent());
         drop(graphics_sys);
-        drop(camera);
         drop(sim);
 
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
@@ -58,6 +58,86 @@ impl SimulationRenderer {
         rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         rpass.draw(0..3, 0..1);
     }
+
+
+    fn get_vertex_data(window_size: (u32, u32)) -> [[f32; 2]; 3] {
+        let w = window_size.0 as f32;
+        let h = window_size.1 as f32;
+        // Create vertex buffer; array-of-array of position and texture coordinates
+        [
+            // One full-screen triangle
+            // See: https://github.com/parasyte/pixels/issues/180
+            [0.0 - w, 0.0 - h],
+            [3.0 * w, 0.0 - h],
+            [0.0 - w, 3.0 * h],
+        ]
+    }
+
+    pub(super) fn resize(&mut self, new_size: &PhysicalSize<u32>) {
+        let vertex_data = Self::get_vertex_data((new_size.width, new_size.height));
+        let graphics_sys = self.ctx.get::<GraphicsSystem>();
+        graphics_sys.queue().write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
+    }
+
+
+    /// Reloads parts of the renderer depending on what asset changed
+    fn on_assetchange(&mut self, event: &crate::assets::events::AssetReload) {
+        if event.asset_id == **self.shader_handle.id() {
+            self.reload_render_pipeline();
+        }
+    }
+
+
+    /// Helper function to set up a new render pipeline using the same shaders
+    fn reload_render_pipeline(&mut self) {
+        let graphics_sys = self.ctx.get::<GraphicsSystem>();
+        let asset_sys = self.ctx.get::<AssetSystem>();
+        let base_shader_module = asset_sys.get(&self.shader_handle).module();
+        self.render_pipeline = Self::create_render_pipeline(graphics_sys.device(), &self.bind_group_layout, &base_shader_module, &self.color_target_state, self.vertex_size);
+    }
+
+
+    /// Helper function for creating a new render pipeline
+    fn create_render_pipeline(
+        device: &Device,
+        bind_group_layout: &BindGroupLayout,
+        shader: &ShaderModule,
+        color_state: &Option<ColorTargetState>,
+        vertex_size: u64
+    ) -> RenderPipeline {
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("SimulationRenderer render pipeline layout"),
+            bind_group_layouts: &[bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("SimulationRenderer renderer pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: "vs_main",
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: vertex_size as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x2,
+                        offset: 0,
+                        shader_location: 0,
+                    }],
+                }],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: "fs_main",
+                targets: &[color_state.clone()],
+            }),
+            multiview: None,
+        })
+    }
 }
 impl GeeseSystem for SimulationRenderer {
     const DEPENDENCIES: geese::Dependencies = dependencies()
@@ -65,49 +145,26 @@ impl GeeseSystem for SimulationRenderer {
         .with::<Mut<AssetSystem>>()
         .with::<Camera>()
         .with::<Simulation>();
+
+    const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
+        .with(Self::on_assetchange);
     
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
-        info!("SimulationRenderer new");
         let mut asset_sys = ctx.get_mut::<AssetSystem>();
         let shader_handle = asset_sys.load::<ShaderAsset>("shaders/sim_renderer.wgsl", true);
         // Drop the mutable reference, from now on we only need it immutably
         drop(asset_sys);
 
         let graphics_sys = ctx.get::<GraphicsSystem>();
+        let vertex_data = Self::get_vertex_data((graphics_sys.surface_config().width, graphics_sys.surface_config().height));
         let device = graphics_sys.device();
-        
-        let w = graphics_sys.surface_config().width as f32;
-        let h = graphics_sys.surface_config().height as f32;
-        // Create vertex buffer; array-of-array of position and texture coordinates
-        let vertex_data: [[f32; 2]; 3] = [
-            // One full-screen triangle
-            // See: https://github.com/parasyte/pixels/issues/180
-            [0.0 - w, 0.0 - h],
-            [3.0 * w, 0.0 - h],
-            [0.0 - w, 3.0 * h],
-        ];
         let vertex_data_slice = bytemuck::cast_slice(&vertex_data);
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("SimulationRenderer vertex buffer"),
             contents: vertex_data_slice,
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
-        let vertex_buffer_layout = wgpu::VertexBufferLayout {
-            array_stride: (vertex_data_slice.len() / vertex_data.len()) as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: 0,
-                shader_location: 0,
-            }],
-        };
-
-        let camera = ctx.get::<Camera>();
-        let shaderglobals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("SimulationRenderer Shader globals buffer"),
-            contents: bytemuck::cast_slice(&[camera.canvas_transform()]),
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST
-        });
+        let vertex_size = (vertex_data_slice.len() / vertex_data.len()) as u64;
 
         let tex_extent = Extent3d {width: GRID_WIDTH as u32, height: GRID_HEIGHT as u32, depth_or_array_layers: 1};
         let sim_tex_data = [0u8; GRID_WIDTH * GRID_HEIGHT * 4];
@@ -176,6 +233,7 @@ impl GeeseSystem for SimulationRenderer {
                 },
             ],
         });
+        let camera = ctx.get::<Camera>();
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("SimulationRenderer bind group"),
             layout: &bind_group_layout,
@@ -190,41 +248,20 @@ impl GeeseSystem for SimulationRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: shaderglobals_buffer.as_entire_binding(),
+                    resource: camera.canvas_transform_buffer().as_entire_binding(),
                 },
             ],
         });
 
         // Create pipeline
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("SimulationRenderer pipeline layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
         let asset_sys = ctx.get::<AssetSystem>();
         let base_shader_module = asset_sys.get(&shader_handle).module();
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("SimulationRenderer renderer pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: base_shader_module,
-                entry_point: "vs_main",
-                buffers: &[vertex_buffer_layout],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: base_shader_module,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: graphics_sys.surface_config().format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview: None,
+        let color_target_state = Some(wgpu::ColorTargetState {
+            format: graphics_sys.surface_config().format,
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            write_mask: wgpu::ColorWrites::ALL,
         });
+        let render_pipeline = Self::create_render_pipeline(device, &bind_group_layout, &base_shader_module, &color_target_state, vertex_size);
 
         drop(asset_sys);
         drop(graphics_sys);
@@ -235,9 +272,11 @@ impl GeeseSystem for SimulationRenderer {
 
             vertex_buffer,
             bind_group,
+            bind_group_layout,
             render_pipeline,
+            color_target_state,
+            vertex_size,
             shader_handle,
-            shaderglobals_buffer,
 
             sim_texture
         }

@@ -11,7 +11,7 @@ pub use assets::AssetSystem;
 //mod tick;
 pub mod graphics;
 pub use graphics::{BatchRenderer, Camera};
-use graphics::{SimulationRenderer, WindowSystem};
+use graphics::{Renderer, SimulationRenderer, WindowSystem};
 
 mod eventloop_system;
 pub use eventloop_system::EventLoopSystem;
@@ -60,8 +60,7 @@ impl GranularEngine {
         let mut ctx: GeeseContext = GeeseContext::default();
         ctx.flush()
             .with(geese::notify::add_system::<EventLoopSystem>())
-            .with(geese::notify::add_system::<BatchRenderer>())
-            .with(geese::notify::add_system::<SimulationRenderer>())
+            .with(geese::notify::add_system::<Renderer>())
             .with(geese::notify::add_system::<WindowSystem>())
             .with(geese::notify::add_system::<FileWatcher>())
             .with(geese::notify::add_system::<AssetSystem>())
@@ -169,7 +168,7 @@ impl GranularEngine {
                     self.close_requested = true;
                 },
                 WindowEvent::Resized(new_size) => {
-                    let mut renderer = self.ctx.get_mut::<BatchRenderer>();
+                    let mut renderer = self.ctx.get_mut::<Renderer>();
                     renderer.resize(new_size);
                     #[cfg(target_os="macos")]
                     graphics.request_redraw();
@@ -179,19 +178,10 @@ impl GranularEngine {
                     input.update_modifiers(&modifiers);
                 },
                 WindowEvent::RedrawRequested => {
-                    let mut renderer = self.ctx.get_mut::<BatchRenderer>();
-                    renderer.start_frame();
-                    drop(renderer);
-
                     self.ctx.flush().with(events::Draw);
-
-                    let mut renderer = self.ctx.get_mut::<BatchRenderer>();
-                    renderer.flush();
-                    drop(renderer);
-                    let mut sim_renderer = self.ctx.get_mut::<SimulationRenderer>();
-                    sim_renderer.render();
-                    drop(sim_renderer);
-                    let mut renderer = self.ctx.get_mut::<BatchRenderer>();
+                    let mut renderer = self.ctx.get_mut::<Renderer>();
+                    renderer.start_frame();
+                    renderer.render();
                     renderer.end_frame();
                     renderer.request_redraw();
                 },
