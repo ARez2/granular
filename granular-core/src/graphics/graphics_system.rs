@@ -7,7 +7,7 @@ use log::*;
 use wgpu::{Device, Queue, SurfaceConfiguration, Surface, TextureViewDescriptor, CommandEncoderDescriptor, SurfaceTexture, TextureView, CommandEncoder};
 use winit::dpi::PhysicalSize;
 
-use super::{WindowSystem, GraphicsBackend};
+use super::{graphics_backend, GraphicsBackend, WindowSystem};
 
 pub type FrameData = Option<(SurfaceTexture, TextureView, CommandEncoder)>;
 pub type FrameDataMut<'a> = Option<&'a mut (wgpu::SurfaceTexture, wgpu::TextureView, wgpu::CommandEncoder)>;
@@ -98,12 +98,29 @@ impl GraphicsSystem {
 impl GeeseSystem for GraphicsSystem {
     const DEPENDENCIES: Dependencies = dependencies()
         .with::<WindowSystem>()
-        .with::<GraphicsBackend>();
+        .with::<Mut<GraphicsBackend>>();
 
-    fn new(ctx: GeeseContextHandle<Self>) -> Self {
+    fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
+        let surface;
+        let window_size;
+        {
+            let immut_backend = ctx.get::<GraphicsBackend>();
+            let window = ctx.get::<WindowSystem>();
+            window_size = window.window_handle().inner_size();
+            surface = immut_backend.instance().create_surface(window.window_handle()).unwrap();
+        }
+        {
+            let mut mut_backend = ctx.get_mut::<GraphicsBackend>();
+            let adapter = pollster::block_on(mut_backend.instance().request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })).expect("Could not create an adapter!");
+            mut_backend.set_adapter(adapter);
+        }
+
         let backend = ctx.get::<GraphicsBackend>();
         let adapter = backend.adapter();
-
         // Create the logical device and command queue
         let (device, queue) = pollster::block_on(
             adapter.request_device(
@@ -111,24 +128,21 @@ impl GeeseSystem for GraphicsSystem {
                     label: None,
                     required_features: wgpu::Features::TEXTURE_BINDING_ARRAY | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
                     // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-                    required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                        .using_resolution(adapter.limits()),
+                    required_limits: adapter.limits(),
                 },
                 None,
             )).expect("Failed to create device");
 
-        
-
-        let window = ctx.get::<WindowSystem>();
-        let window_size = window.window_handle().inner_size();
-        let surface = backend.instance().create_surface(window.window_handle()).unwrap();
         let swapchain_capabilities = surface.get_capabilities(adapter);
-        drop(window);
-        let swapchain_format = swapchain_capabilities.formats[0];
-        
+        let swapchain_format = swapchain_capabilities.formats.iter()
+            .find(|format| {
+                format.is_srgb()
+            })
+            .unwrap_or(&wgpu::TextureFormat::Bgra8UnormSrgb);
+        info!("Swapchain format: {:?}", swapchain_format);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: swapchain_format,
+            format: *swapchain_format,
             width: window_size.width,
             height: window_size.height,
             // Note: Having PresentMode::Fifo (as in the example) caused a Swapchain acquire texture timeout

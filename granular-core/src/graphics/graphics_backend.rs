@@ -1,21 +1,25 @@
 use geese::*;
-use wgpu::{Instance, Adapter, InstanceDescriptor, Backends};
+use log::info;
+use wgpu::{Adapter, Backends, Instance, InstanceDescriptor, RequestAdapterOptions};
 
 use super::WindowSystem;
 
 
 pub struct GraphicsBackend {
     instance: Instance,
-    adapters: Vec<Adapter>,
-    chosen_adapter_index: usize
+    adapter: Adapter
 }
 impl GraphicsBackend {
-    pub fn adapter(&self) -> &Adapter {
-        &self.adapters[self.chosen_adapter_index]
-    }
-
     pub fn instance(&self) -> &Instance {
         &self.instance
+    }
+
+    pub(super) fn adapter(&self) -> &Adapter {
+        &self.adapter
+    }
+
+    pub(super) fn set_adapter(&mut self, adapter: Adapter) {
+        self.adapter = adapter;
     }
 }
 impl GeeseSystem for GraphicsBackend {
@@ -27,19 +31,11 @@ impl GeeseSystem for GraphicsBackend {
             backends: Backends::VULKAN,
             ..Default::default()
         });
-        let adapters = instance.enumerate_adapters(Backends::VULKAN);
-        let chosen = {
-            if adapters.len() == 1 {
-                0
-            } else {
-                0 // TODO: do more here?
-            }
-        };
+        let adapter = pollster::block_on(instance.request_adapter(&RequestAdapterOptions::default())).expect("Cannot request any adapter");
 
         Self {
             instance,
-            adapters,
-            chosen_adapter_index: chosen,
+            adapter,
         }
     }
 }

@@ -196,7 +196,11 @@ impl BatchRenderer {
                     let layout = Self::create_bind_group_layout(device, views.len() as u32, samplers.len() as u32);
                     let bg = Self::create_bind_group(device, &layout, &self.shaderglobals_buffer, &views, &samplers);
                     let shader = asset_sys.get(&self.shader_handle);
-                    let color_state = Some(graphics_sys.surface_config().format.into());
+                    let color_state = Some(wgpu::ColorTargetState {
+                        format: graphics_sys.surface_config().format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    });
                     let rp = Self::create_render_pipeline(device, &layout, shader.module(), color_state);
                     bind_group_layouts.push(layout);
                     bind_group_layout_idx = bind_group_layouts.len() as i32 - 1;

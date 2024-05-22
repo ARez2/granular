@@ -217,7 +217,11 @@ impl GeeseSystem for SimulationRenderer {
             fragment: Some(wgpu::FragmentState {
                 module: base_shader_module,
                 entry_point: "fs_main",
-                targets: &[Some(graphics_sys.surface_config().format.into())],
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: graphics_sys.surface_config().format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
             }),
             multiview: None,
         });
