@@ -14,7 +14,7 @@ fn main() {
     std::env::set_var("RUST_LOG", "granular=debug");
 
     // Matches a full path until (excluding) "granular"
-    let path_regex = Regex::new(r" (.*)\bgranular\b").unwrap();
+    let path_regex = Regex::new(r"\/(.*)\bgranular\b").unwrap();
     env_logger::builder()
         .format(move |buf, record| {
             let ts = buf.timestamp_millis();
