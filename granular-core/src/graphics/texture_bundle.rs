@@ -6,6 +6,7 @@ use wgpu::{Device, Extent3d, ImageDataLayout, Queue, Sampler, SamplerDescriptor,
 pub struct TextureBundle {
     extent: Extent3d,
     texture: Texture,
+    data_layout: ImageDataLayout,
     view: TextureView,
     sampler: Sampler
 }
@@ -35,6 +36,7 @@ impl TextureBundle {
         
         Self {
             texture,
+            data_layout,
             extent,
             view,
             sampler
@@ -81,14 +83,22 @@ impl TextureBundle {
         &self.sampler
     }
 
+    pub fn texture(&self) -> &Texture {
+        &self.texture
+    }
+
+    pub fn data_layout(&self) -> ImageDataLayout {
+        self.data_layout
+    }
+
     pub fn width(&self) -> u32 {
         self.extent.width
     }
     pub fn height(&self) -> u32 {
         self.extent.height
     }
-    pub fn extent(&self) -> &Extent3d {
-        &self.extent
+    pub fn extent(&self) -> Extent3d {
+        self.extent
     }
 }
 impl PartialEq for TextureBundle {

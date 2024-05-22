@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use geese::{GeeseContext, EventQueue};
+use log::info;
 use rustc_hash::FxHashMap as HashMap;
 use winit::{dpi::PhysicalSize, event::WindowEvent};
 
@@ -10,7 +11,7 @@ pub use assets::AssetSystem;
 //mod tick;
 pub mod graphics;
 pub use graphics::{BatchRenderer, Camera};
-use graphics::WindowSystem;
+use graphics::{SimulationRenderer, WindowSystem};
 
 mod eventloop_system;
 pub use eventloop_system::EventLoopSystem;
@@ -56,10 +57,11 @@ pub struct GranularEngine {
 
 impl GranularEngine {
     pub fn new() -> Self {
-        let mut ctx = GeeseContext::default();
+        let mut ctx: GeeseContext = GeeseContext::default();
         ctx.flush()
             .with(geese::notify::add_system::<EventLoopSystem>())
             .with(geese::notify::add_system::<BatchRenderer>())
+            .with(geese::notify::add_system::<SimulationRenderer>())
             .with(geese::notify::add_system::<WindowSystem>())
             .with(geese::notify::add_system::<FileWatcher>())
             .with(geese::notify::add_system::<AssetSystem>())
@@ -95,6 +97,7 @@ impl GranularEngine {
 
 
     pub fn run(&mut self) {
+        info!("GranularEngine run");
         let mut event_loop_sys = self.ctx.get_mut::<EventLoopSystem>();
         let event_loop = event_loop_sys.take();
         drop(event_loop_sys);
@@ -184,6 +187,11 @@ impl GranularEngine {
 
                     let mut renderer = self.ctx.get_mut::<BatchRenderer>();
                     renderer.flush();
+                    drop(renderer);
+                    let mut sim_renderer = self.ctx.get_mut::<SimulationRenderer>();
+                    sim_renderer.render();
+                    drop(sim_renderer);
+                    let mut renderer = self.ctx.get_mut::<BatchRenderer>();
                     renderer.end_frame();
                     renderer.request_redraw();
                 },

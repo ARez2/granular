@@ -19,5 +19,5 @@ pub use renderer::{BatchRenderer, Quad};
 mod camera;
 pub use camera::Camera;
 
-//mod simulation_renderer;
-//pub use simulation_renderer::SimulationRenderer;
+mod simulation_renderer;
+pub use simulation_renderer::SimulationRenderer;
