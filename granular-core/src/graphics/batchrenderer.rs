@@ -25,9 +25,8 @@ use super::{Camera, DynamicBuffer, TextureBundle};
 
 
 struct Batch {
-    render_pipeline_idx: usize,
+    helper_idx: usize,
     bind_group: BindGroup,
-    bind_group_layout_idx: usize,
     num_textures_used: usize,
     vertices_range: Range<u64>,
     indices_end: u32,
@@ -82,7 +81,12 @@ impl Ord for BatchQuadEntry {
 
 
 
-
+#[derive(Debug)]
+struct BatchHelper {
+    num_textures_used: usize,
+    layout: BindGroupLayout,
+    pipeline: RenderPipeline
+}
 
 
 
@@ -100,7 +104,8 @@ pub struct BatchRenderer {
     quads_to_draw: BinaryHeap<std::cmp::Reverse<BatchQuadEntry>>,
     batches: Vec<Batch>,
     vertices_to_draw: Vec<Vertex>,
-    render_pipelines: Vec<RenderPipeline>,
+    // Saves how many textures are used in a specific bind group layout and pipeline
+    batch_helpers: Vec<BatchHelper>,
     
     bind_group: (BindGroup, BindGroupLayout),
 
@@ -120,7 +125,6 @@ impl BatchRenderer {
     pub(super) fn end_frame(&mut self) {
         self.batches.clear();
         self.quads_to_draw.clear();
-        self.render_pipelines.clear();
         self.vertices_to_draw.clear();
     }
 
@@ -135,7 +139,6 @@ impl BatchRenderer {
         /// when the amount of textures inside the bind group has changed (reuses existing ones if not)
         let mut create_new_batch = 
         | textures: &Vec<Option<AssetHandle<TextureAsset>>>,
-          bind_group_layouts: &mut Vec<BindGroupLayout>,
           vertices_range: Range<u64>,
           indices_end: u32,
           batch_layer: i32 | {
@@ -162,42 +165,34 @@ impl BatchRenderer {
             // See if another batch has already created a bind group layout with that many textures
             // use that if possible
             let num_textures_used = textures.len();
-            let mut bind_group_layout_idx = -1;
-            for batch in self.batches.iter() {
-                if batch.num_textures_used == num_textures_used {
-                    bind_group_layout_idx = batch.bind_group_layout_idx as i32;
-                    break;
-                }
-            };
+            let mut helper_idx = -1;
             let graphics_sys = self.ctx.get::<GraphicsSystem>();
             let device = graphics_sys.device();
-            let screen_size = {
-                let sc = graphics_sys.surface_config();
-                Vec2::new(sc.width as f32, sc.height as f32)
-            };
-            let (bind_group, render_pipeline_idx) = {
-                let camera = self.ctx.get::<Camera>();
-                // We want to create a completely new layout and render pipeline for this batch
-                if bind_group_layout_idx == -1 {
-                    let layout = Self::create_bind_group_layout(device, views.len() as u32, samplers.len() as u32);
-                    let bg = Self::create_bind_group(device, &layout, shaderglobals, &views, &samplers);
-                    let shader = asset_sys.get(&self.shader_handle);
-                    let color_state = Some(wgpu::ColorTargetState {
-                        format: graphics_sys.surface_config().format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    });
-                    let rp = Self::create_render_pipeline(device, &layout, shader.module(), color_state);
-                    bind_group_layouts.push(layout);
-                    bind_group_layout_idx = bind_group_layouts.len() as i32 - 1;
-                    self.render_pipelines.push(rp);
-                    (bg, self.render_pipelines.len() - 1)
-                // We reuse another batches layout/ pipeline
+            // If an existing helper already has the correct pipeline and BG layout for this batch use it
+            self.batch_helpers.iter().enumerate().find(|(h_index, helper)| {
+                if helper.num_textures_used == num_textures_used {
+                    helper_idx = *h_index as i32;
+                    true
                 } else {
-                    // Use the layout of the other batch
-                    let layout = &bind_group_layouts[bind_group_layout_idx as usize];
-                    (Self::create_bind_group(device, layout, shaderglobals, &views, &samplers), bind_group_layout_idx as usize)
+                    false
                 }
+            });
+            // Otherwise create a new BatchHelper and use that helper
+            if helper_idx == -1 {
+                let layout = Self::create_bind_group_layout(device, views.len() as u32, samplers.len() as u32);
+                let shader = asset_sys.get(&self.shader_handle);
+                let color_state = Some(wgpu::ColorTargetState {
+                    format: graphics_sys.surface_config().format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                });
+                let pipeline = Self::create_render_pipeline(device, &layout, shader.module(), color_state);
+                self.batch_helpers.push(BatchHelper {
+                    num_textures_used,
+                    layout,
+                    pipeline
+                });
+                helper_idx = self.batch_helpers.len() as i32 - 1;
             };
 
             trace!("Creating batch with");
@@ -205,25 +200,20 @@ impl BatchRenderer {
             trace!("    - Vert. range: {:?}", vertices_range);
             trace!("    - Ind. end: {:?}", indices_end);
             trace!("    - Num textures: {}", num_textures_used);
-            trace!("    - Bind group layout idx {}", bind_group_layout_idx);
             self.batches.push(Batch {
-                render_pipeline_idx,
-                bind_group,
-                bind_group_layout_idx: bind_group_layout_idx as usize,
+                helper_idx: helper_idx as usize,
+                bind_group: Self::create_bind_group(device, &self.batch_helpers[helper_idx as usize].layout, shaderglobals, &views, &samplers),
                 num_textures_used,
                 vertices_range,
                 indices_end,
                 layer: batch_layer
-            })
+            });
         };
 
         let total_quads_to_draw = self.quads_to_draw.len();
 
         let mut last_batch_end_quad_idx: u64 = 0;
-        let mut textures_in_batch: Vec<Option<AssetHandle<TextureAsset>>> = vec![];
-        // Will get filled by create_new_batch
-        let mut bind_group_layouts = vec![];
-        
+        let mut textures_in_batch: Vec<Option<AssetHandle<TextureAsset>>> = vec![];        
         let mut previous_layer = 0;
         let mut first_iteration = true;
         let mut num_quads_in_batch = 0;
@@ -241,7 +231,7 @@ impl BatchRenderer {
             if !first_iteration && current_layer != previous_layer {
                 let vertices_range = (last_batch_end_quad_idx * 4)..(total_quads_processed * 4);
                 let indices_end = num_quads_in_batch as u32 * 6;
-                create_new_batch(&textures_in_batch, &mut bind_group_layouts, vertices_range, indices_end, previous_layer);
+                create_new_batch(&textures_in_batch, vertices_range, indices_end, previous_layer);
                 textures_in_batch.clear();
                 last_batch_end_quad_idx = total_quads_processed;
                 num_quads_in_batch = 0;
@@ -277,7 +267,7 @@ impl BatchRenderer {
             if textures_in_batch.len() >= Self::MAX_TEXTURE_COUNT && !texture_in_batch {
                 let vertices_range = (last_batch_end_quad_idx * 4)..(total_quads_processed * 4);
                 let indices_end = num_quads_in_batch as u32 * 6;
-                create_new_batch(&textures_in_batch, &mut bind_group_layouts, vertices_range, indices_end, current_layer);
+                create_new_batch(&textures_in_batch, vertices_range, indices_end, current_layer);
                 textures_in_batch.clear();
                 last_batch_end_quad_idx = total_quads_processed;
                 num_quads_in_batch = 0;
@@ -304,7 +294,7 @@ impl BatchRenderer {
         // Create the last batch of this frame (with the remaining quads)
         let vertices_range = ((last_batch_end_quad_idx) * 4)..(self.vertices_to_draw.len() as u64);
         let indices_end = num_quads_in_batch as u32 * 6;
-        create_new_batch(&textures_in_batch, &mut bind_group_layouts, vertices_range, indices_end, previous_layer);
+        create_new_batch(&textures_in_batch, vertices_range, indices_end, previous_layer);
     }
 
 
@@ -345,11 +335,12 @@ impl BatchRenderer {
         self.batches.iter().filter(|b| {
             layer_range.contains(&b.layer)
         }).for_each(|batch| {
+            let helper = &self.batch_helpers[batch.helper_idx];
             // We only need to reload the pipeline if the bindgroup layout changed
             // (which would happen when the number of textures that are bound changes)
             // Meaning if we draw the first 2 batches both with 16 bound textures, the layout
             // stays the same and we do not need to reload the pipeline.
-            rpass.set_pipeline(&self.render_pipelines[batch.render_pipeline_idx]);
+            rpass.set_pipeline(&helper.pipeline);
             // The index buffer stays the same over all batches
             rpass.set_index_buffer(self.index_buffer.slice(..), self.index_format);
             // Only use a slice of the vertex buffer, which belongs to the current batch
@@ -398,12 +389,12 @@ impl BatchRenderer {
         shader: &ShaderModule,
         color_state: Option<ColorTargetState>
     ) -> RenderPipeline {
+        // IDEA: Create pipelines with different bind group layouts beforehand
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("main"),
             bind_group_layouts: &[bind_group_layout],
             push_constant_ranges: &[],
         });
-
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: None,
             layout: Some(&pipeline_layout),
@@ -616,7 +607,7 @@ impl GeeseSystem for BatchRenderer {
 
             quads_to_draw: BinaryHeap::new(),
             batches: vec![],
-            render_pipelines: Vec::with_capacity(10),
+            batch_helpers: vec![],
             vertices_to_draw: Vec::with_capacity(1000),
             
             bind_group: (bind_group, bind_group_layout),
