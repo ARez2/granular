@@ -1,7 +1,11 @@
 // Vertex shader bindings
+struct VertexInput {
+    @location(0) position: vec2<f32>,
+    //@location(1) tex_coords: vec2<f32>,
+}
 
 struct VertexOutput {
-    @location(0) tex_coord: vec2<f32>,
+    @location(0) tex_coords: vec2<f32>,
     @builtin(position) position: vec4<f32>,
 }
 
@@ -14,13 +18,12 @@ var<uniform> globals: Globals;
 
 
 @vertex
-fn vs_main(
-    @location(0) position: vec2<f32>,
-) -> VertexOutput {
+fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.position = globals.canvas_transform * vec4<f32>(position, 0.0, 1.0);
+    out.position = vec4<f32>(in.position, 0.0, 1.0);
     var p = vec2<f32>(out.position.x, out.position.y);
-    out.tex_coord = fma(p, vec2<f32>(0.5, -0.5), vec2<f32>(0.5, 0.5));
+    //out.tex_coords = in.tex_coords;
+    out.tex_coords = fma(p, vec2<f32>(0.5, -0.5), vec2<f32>(0.5, 0.5));
     return out;
 }
 
@@ -30,6 +33,6 @@ fn vs_main(
 @group(0) @binding(1) var r_tex_sampler: sampler;
 
 @fragment
-fn fs_main(@location(0) tex_coord: vec2<f32>) -> @location(0) vec4<f32> {
-    return textureSample(r_tex_color, r_tex_sampler, tex_coord);
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    return textureSample(r_tex_color, r_tex_sampler, in.tex_coords);
 }
