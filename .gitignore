@@ -1,3 +1,7 @@
 **/target/**
 /.VSCodeCounter/
 .vscode/
+
+# Flamegraph data
+**/flamegraph.svg
+**/perf.data*
