@@ -1,28 +1,15 @@
 use geese::{dependencies, GeeseContextHandle, GeeseSystem, Mut};
 use glam::Mat4;
 use bytemuck_derive::{Zeroable, Pod};
-use log::{info, warn};
-use wgpu::{util::DeviceExt, Buffer, BufferUsages, Color};
+use wgpu::{util::DeviceExt, Buffer, BufferUsages};
 use winit::dpi::PhysicalSize;
 
-use crate::{graphics::camera, BatchRenderer, Camera};
+use crate::{BatchRenderer, Camera};
 
-use super::{simulation_renderer, GraphicsSystem, SimulationRenderer};
-
-
-// We need this for Rust to store our data correctly for the shaders
-#[repr(C)]
-// This is so we can store this in a buffer
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
-struct ShaderGlobals {
-    transform: Mat4
-}
-
+use super::{GraphicsSystem, SimulationRenderer};
 
 pub struct Renderer {
     ctx: GeeseContextHandle<Self>,
-
-    shaderglobals_buffer: Buffer,
 }
 impl Renderer {
     pub fn start_frame(&mut self) {
@@ -44,7 +31,7 @@ impl Renderer {
 
 
     /// Resizes the surface with the new_size
-    pub(crate) fn resize(&mut self, new_size: &PhysicalSize<u32>) {
+    pub(crate) fn resize(&mut self, new_size: PhysicalSize<u32>) {
         {
             let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
             graphics_sys.resize_surface(new_size);
@@ -106,8 +93,7 @@ impl GeeseSystem for Renderer {
         drop(graphics_sys);
         
         Self {
-            ctx,
-            shaderglobals_buffer
+            ctx
         }
     }
 }

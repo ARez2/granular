@@ -6,15 +6,12 @@ edition = "2021"
 [workspace]
 members = [
     "granular-core",
-    #"examples/testbed"
+    "examples/*"
 ]
-exclude = [
-    "examples/testbed"
-]
+# exclude = [
+#     "examples/*"
+# ]
 
-[[example]]
-name = "testbed"
-path = "examples/testbed"
 
 
 [dependencies]

@@ -219,7 +219,7 @@ impl InputSystem {
 
 
     /// Sets the current mouse position and updates the last mouse position
-    pub(crate) fn handle_cursor_movement(&mut self, new_position: &PhysicalPosition<f64>) {
+    pub(crate) fn handle_cursor_movement(&mut self, new_position: PhysicalPosition<f64>) {
         let tmp = self.mouse_position;
         // new_position always ends in .0 so we can safely cast here without loosing precision
         self.mouse_position = IVec2::new(new_position.x as i32, new_position.y as i32);

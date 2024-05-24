@@ -158,8 +158,9 @@ impl GeeseSystem for AssetSystem {
 
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
         let cur = std::env::current_exe().unwrap();
-        let base_path = cur.parent().unwrap().parent().unwrap().parent().unwrap().parent().unwrap().parent().unwrap().to_path_buf();
-        
+        let base_path = cur.parent().unwrap().parent().unwrap().parent().unwrap().to_path_buf();
+        info!("AssetServer is using base path '{}'", base_path.display());
+
         Self {
             ctx,
             base_path,

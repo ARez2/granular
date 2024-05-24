@@ -1,7 +1,7 @@
 use std::num::NonZeroU64;
 
 use geese::{dependencies, event_handlers, EventHandlers, GeeseContextHandle, GeeseSystem, Mut};
-use log::{info, warn};
+use log::warn;
 use wgpu::{util::DeviceExt, BindGroup, BindGroupLayout, Buffer, ColorTargetState, Device, Extent3d, ImageDataLayout, RenderPipeline, SamplerDescriptor, ShaderModule, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor};
 use winit::dpi::PhysicalSize;
 
@@ -73,7 +73,7 @@ impl SimulationRenderer {
         ]
     }
 
-    pub(super) fn resize(&mut self, new_size: &PhysicalSize<u32>) {
+    pub(super) fn resize(&mut self, new_size: PhysicalSize<u32>) {
         let vertex_data = Self::get_vertex_data((new_size.width, new_size.height));
         let graphics_sys = self.ctx.get::<GraphicsSystem>();
         graphics_sys.queue().write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertex_data));
@@ -126,6 +126,7 @@ impl SimulationRenderer {
                         shader_location: 0,
                     }],
                 }],
+                compilation_options: Default::default()
             },
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
@@ -134,8 +135,10 @@ impl SimulationRenderer {
                 module: shader,
                 entry_point: "fs_main",
                 targets: &[color_state.clone()],
+                compilation_options: Default::default()
             }),
             multiview: None,
+            cache: None,
         })
     }
 }

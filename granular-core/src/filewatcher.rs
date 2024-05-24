@@ -28,7 +28,7 @@ impl FileWatcher {
             true => notify::RecursiveMode::Recursive,
             false => notify::RecursiveMode::NonRecursive
         };
-        self.filewatcher.watch(path.as_ref(), rec).unwrap_or_else(|_| panic!("Cannot watch: {:?}", path.as_ref().display()));
+        self.filewatcher.watch(path.as_ref(), rec).unwrap_or_else(|_| warn!("Cannot watch: {:?}", path.as_ref().display()));
         info!("Watching {}", path.as_ref().display());
     }
 

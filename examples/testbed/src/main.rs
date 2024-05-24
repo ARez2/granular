@@ -13,8 +13,8 @@ fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
     std::env::set_var("RUST_LOG", "granular=debug");
 
-    // Matches a full path until (excluding) "granular"
-    let path_regex = Regex::new(r"\/(.*)\bgranular\b").unwrap();
+    // Matches a full path until (excluding) "granular"\/(.*)\bgranular\b
+    let path_regex = Regex::new(r"").unwrap();
     env_logger::builder()
         .format(move |buf, record| {
             let ts = buf.timestamp_millis();
@@ -38,10 +38,7 @@ fn main() {
         })
         .init();
 
-    let window_size = Some(winit::dpi::PhysicalSize::new(640, 480));
-    let mut engine = GranularEngine::new();
-    engine.get_ctx().flush().with(geese::notify::add_system::<Game>());
-    engine.create_window("Granular", window_size);
+    let mut engine = GranularEngine::<Game>::new();
     engine.run();
 }
 
@@ -53,6 +50,14 @@ struct Game {
     texture: AssetHandle<TextureAsset>
 }
 impl Game {
+    fn init(&mut self, event: &events::Initialized) {
+        let win_sys = self.ctx.get::<WindowSystem>();
+        let window = win_sys.window_handle();
+        window.set_visible(true);
+        window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(640, 480)));
+        window.set_title("Granular engine testbed");
+    }
+
     fn on_update(&mut self, _: &events::timing::Tick::<1>) {
         let input = self.ctx.get::<InputSystem>();
         let vector = input.get_input_vector("cam_left", "cam_right", "cam_up", "cam_down");
@@ -86,10 +91,12 @@ impl Game {
 }
 impl GeeseSystem for Game {
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
+        .with(Self::init)
         .with(Self::on_update)
         .with(Self::on_draw);
 
     const DEPENDENCIES: Dependencies = dependencies()
+        .with::<WindowSystem>()
         .with::<Mut<InputSystem>>()
         .with::<Mut<Camera>>()
         .with::<Mut<AssetSystem>>()

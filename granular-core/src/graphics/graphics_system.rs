@@ -49,7 +49,7 @@ impl GraphicsSystem {
     }
 
 
-    pub fn resize_surface(&mut self, new_size: &PhysicalSize<u32>) {
+    pub fn resize_surface(&mut self, new_size: PhysicalSize<u32>) {
         self.surface_config.width = new_size.width.max(1);
         self.surface_config.height = new_size.height.max(1);
         self.surface.configure(&self.device, &self.surface_config);

@@ -5,6 +5,6 @@ pub mod prelude {
         events,
         input_system::*,
         AssetSystem, assets::{AssetHandle, TextureAsset},
-        Camera, BatchRenderer, graphics
+        Camera, BatchRenderer, graphics::{self, WindowSystem}
     };
 }

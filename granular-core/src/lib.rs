@@ -1,9 +1,9 @@
-use std::time::{Duration, Instant};
+use std::{marker::PhantomData, time::{Duration, Instant}};
 
-use geese::{GeeseContext, EventQueue};
+use geese::{EventQueue, GeeseContext, GeeseSystem};
 use log::info;
 use rustc_hash::FxHashMap as HashMap;
-use winit::{dpi::PhysicalSize, event::WindowEvent};
+use winit::{application::ApplicationHandler, dpi::PhysicalSize, event::{DeviceEvent, DeviceId, WindowEvent}, event_loop::ActiveEventLoop, window::WindowId};
 
 pub mod assets;
 pub use assets::AssetSystem;
@@ -11,7 +11,7 @@ pub use assets::AssetSystem;
 //mod tick;
 pub mod graphics;
 pub use graphics::{BatchRenderer, Camera};
-use graphics::{Renderer, SimulationRenderer, WindowSystem};
+use graphics::{Renderer, WindowSystem};
 
 mod eventloop_system;
 pub use eventloop_system::EventLoopSystem;
@@ -46,24 +46,23 @@ pub mod events {
 
 
 
-pub struct GranularEngine {
+pub struct GranularEngine<AppSystem: GeeseSystem> {
     ctx: GeeseContext,
     close_requested: bool,
     /// Current frame
     frame: u64,
     /// When each tick (in ms) last occured
-    last_ticks: HashMap<Duration, Instant>
+    last_ticks: HashMap<Duration, Instant>,
+    application: PhantomData<AppSystem>
 }
 
-impl GranularEngine {
+impl<AppSystem: GeeseSystem> GranularEngine<AppSystem> {
     pub fn new() -> Self {
         let mut ctx: GeeseContext = GeeseContext::default();
         ctx.flush()
-            .with(geese::notify::add_system::<EventLoopSystem>())
-            .with(geese::notify::add_system::<Renderer>())
             .with(geese::notify::add_system::<WindowSystem>())
+            .with(geese::notify::add_system::<EventLoopSystem>())
             .with(geese::notify::add_system::<FileWatcher>())
-            .with(geese::notify::add_system::<AssetSystem>())
             .with(geese::notify::add_system::<InputSystem>());
 
         let now = Instant::now();
@@ -76,7 +75,8 @@ impl GranularEngine {
             ctx,
             close_requested: false,
             frame: 0,
-            last_ticks
+            last_ticks,
+            application: PhantomData
         }
     }
 
@@ -86,38 +86,15 @@ impl GranularEngine {
     }
 
 
-    pub fn create_window(&self, title: &str, size: Option<PhysicalSize<u32>>) {
-        let win_sys = self.ctx.get::<WindowSystem>();
-        let window = win_sys.window_handle();
-        window.set_visible(true);
-        window.set_min_inner_size(size);
-        window.set_title(title);
-    }
-
-
     pub fn run(&mut self) {
         info!("GranularEngine run");
         let mut event_loop_sys = self.ctx.get_mut::<EventLoopSystem>();
         let event_loop = event_loop_sys.take();
         drop(event_loop_sys);
-        event_loop.run(move |event, target| {
-            {
-                let mut input = self.ctx.get_mut::<InputSystem>();
-                input.reset_just_pressed();
-            }
-            let handled = self.handle_winit_events(&event);
-            if !handled {
-                self.ctx.flush().with(event);
-            };
-            //self.use_window_target(target);
-            if self.close_requested {
-                target.exit();
-            };
-            self.update();
-            self.handle_scheduling();
-            self.frame += 1;
-        }).unwrap();
+        event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+        let _ = event_loop.run_app(self);
     }
+
 
     pub fn update(&mut self) {
 
@@ -155,60 +132,117 @@ impl GranularEngine {
         
         self.ctx.flush().with_buffer(buffer);
     }
-
-
-    pub fn handle_winit_events(&mut self, event: &winit::event::Event<()>) -> bool {
-        let mut handled = true;
-        if let winit::event::Event::WindowEvent {
-            window_id: _,
-            event,
-        } = event {
-            match event {
-                WindowEvent::CloseRequested => {
-                    self.close_requested = true;
-                },
-                WindowEvent::Resized(new_size) => {
-                    let mut renderer = self.ctx.get_mut::<Renderer>();
-                    renderer.resize(new_size);
-                    #[cfg(target_os="macos")]
-                    graphics.request_redraw();
-                },
-                WindowEvent::ModifiersChanged(modifiers) => {
-                    let mut input = self.ctx.get_mut::<InputSystem>();
-                    input.update_modifiers(&modifiers);
-                },
-                WindowEvent::RedrawRequested => {
-                    self.ctx.flush().with(events::Draw);
-                    let mut renderer = self.ctx.get_mut::<Renderer>();
-                    renderer.start_frame();
-                    renderer.render();
-                    renderer.end_frame();
-                    renderer.request_redraw();
-                },
-                WindowEvent::KeyboardInput{event, is_synthetic: false, ..} => {
-                    let mut input = self.ctx.get_mut::<InputSystem>();
-                    input.handle_keyevent(event);
-                },
-                WindowEvent::CursorMoved {position, .. } => {
-                    let mut input = self.ctx.get_mut::<InputSystem>();
-                    input.handle_cursor_movement(position);
-                },
-                WindowEvent::MouseInput {state, button, ..} => {
-                    let mut input = self.ctx.get_mut::<InputSystem>();
-                    input.handle_mouse_input(*button, *state);
-                }
-                _ => {handled = false;}
-            }
-        } else {
-            handled = false;
+}
+impl<AppSystem: GeeseSystem> ApplicationHandler for GranularEngine<AppSystem> {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        info!("Resumed!");
+        {
+            let mut window_sys = self.ctx.get_mut::<WindowSystem>();
+            window_sys.init(event_loop);
         }
-        handled
+        self.ctx.flush()
+            .with(geese::notify::add_system::<Renderer>())
+            .with(geese::notify::add_system::<AssetSystem>())
+            .with(geese::notify::add_system::<AppSystem>())
+            .with(events::Initialized{});
+        
     }
 
 
-    // pub fn use_window_target(&self, target: &winit::event_loop::EventLoopWindowTarget) {
-    //     if self.close_requested {
-    //         target.exit();
-    //     }
-    // }
+    fn exiting(&mut self, event_loop: &ActiveEventLoop) {
+        info!("Exiting...");
+    }
+
+
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+        {
+            let mut input = self.ctx.get_mut::<InputSystem>();
+            input.reset_just_pressed();
+        }
+        self.update();
+        self.handle_scheduling();
+        self.frame += 1;
+    }
+
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        match event {
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
+            },
+            WindowEvent::Resized(new_size) => {
+                let mut renderer = self.ctx.get_mut::<Renderer>();
+                renderer.resize(new_size);
+                #[cfg(target_os="macos")]
+                graphics.request_redraw();
+            },
+            WindowEvent::ModifiersChanged(modifiers) => {
+                let mut input = self.ctx.get_mut::<InputSystem>();
+                input.update_modifiers(&modifiers);
+            },
+            WindowEvent::RedrawRequested => {
+                self.ctx.flush().with(events::Draw);
+                let mut renderer = self.ctx.get_mut::<Renderer>();
+                renderer.start_frame();
+                renderer.render();
+                renderer.end_frame();
+                renderer.request_redraw();
+            },
+            WindowEvent::KeyboardInput{event, is_synthetic: false, ..} => {
+                let mut input = self.ctx.get_mut::<InputSystem>();
+                input.handle_keyevent(&event);
+            },
+            WindowEvent::CursorMoved {position, .. } => {
+                let mut input = self.ctx.get_mut::<InputSystem>();
+                input.handle_cursor_movement(position);
+            },
+            WindowEvent::MouseInput {state, button, ..} => {
+                let mut input = self.ctx.get_mut::<InputSystem>();
+                input.handle_mouse_input(button, state);
+            },
+            WindowEvent::MouseWheel { device_id, delta, phase } => {
+
+            },
+            
+            
+            WindowEvent::CursorLeft { .. }
+            | WindowEvent::TouchpadPressure { .. }
+            | WindowEvent::HoveredFileCancelled
+            | WindowEvent::KeyboardInput { .. }
+            | WindowEvent::CursorEntered { .. }
+            | WindowEvent::AxisMotion { .. }
+            | WindowEvent::DroppedFile(_)
+            | WindowEvent::HoveredFile(_)
+            | WindowEvent::Destroyed
+            | WindowEvent::Touch(_)
+            | WindowEvent::Moved(_)
+            | WindowEvent::DoubleTapGesture { .. }
+            | WindowEvent::PanGesture{ .. }
+            | WindowEvent::RotationGesture { .. }
+            | WindowEvent::PinchGesture { .. }
+            | WindowEvent::Ime(_)
+            | WindowEvent::ActivationTokenDone { .. }
+            | WindowEvent::Occluded(_)
+            | WindowEvent::Focused(_)
+            | WindowEvent::ScaleFactorChanged { .. }
+            | WindowEvent::ThemeChanged(_) => {
+                self.ctx.flush().with(event);
+            }
+        };
+    }
+
+
+    fn device_event(
+            &mut self,
+            event_loop: &ActiveEventLoop,
+            device_id: DeviceId,
+            event: DeviceEvent,
+        ) {
+        //info!("Device {device_id:?} event: {event:?}");
+    }
 }

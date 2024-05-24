@@ -406,11 +406,13 @@ impl BatchRenderer {
                     step_mode: wgpu::VertexStepMode::Vertex, // position        color       tex_coords     tex_index
                     attributes: &wgpu::vertex_attr_array![0 => Sint32x2, 1 => Float32x4, 2 => Float32x2, 3 => Sint32],
                 }],
+                compilation_options: Default::default()
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader,
                 entry_point: "uniform_main",
                 targets: &[color_state],
+                compilation_options: Default::default()
             }),
             primitive: wgpu::PrimitiveState {
                 front_face: wgpu::FrontFace::Ccw,
@@ -419,6 +421,7 @@ impl BatchRenderer {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
+            cache: None
         })
     }
 
