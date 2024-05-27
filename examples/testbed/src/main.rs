@@ -11,7 +11,7 @@ use winit::keyboard::{KeyCode, ModifiersState};
 
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
-    std::env::set_var("RUST_LOG", "granular=debug");
+    std::env::set_var("RUST_LOG", "granular=debug,testbed=trace");
 
     // Matches a full path until (excluding) "granular"\/(.*)\bgranular\b
     let path_regex = Regex::new(r"").unwrap();
@@ -63,7 +63,11 @@ impl Game {
         let vector = input.get_input_vector("cam_left", "cam_right", "cam_up", "cam_down");
         drop(input);
         let mut camera = self.ctx.get_mut::<Camera>();
-        camera.translate(vector * -2)
+        camera.translate(vector * 1);
+        let pos = camera.position();
+        drop(camera);
+        let mut sim = self.ctx.get_mut::<Simulation>();
+        sim.set_center_position(pos);
     }
 
 
@@ -99,6 +103,7 @@ impl GeeseSystem for Game {
         .with::<WindowSystem>()
         .with::<Mut<InputSystem>>()
         .with::<Mut<Camera>>()
+        .with::<Mut<Simulation>>()
         .with::<Mut<AssetSystem>>()
         .with::<Mut<BatchRenderer>>();
     

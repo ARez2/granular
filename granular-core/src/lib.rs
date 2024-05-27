@@ -22,8 +22,8 @@ use filewatcher::FileWatcher;
 pub mod input_system;
 pub use input_system::{InputSystem, InputActionTrigger, InputAction};
 
-mod simulation;
-use simulation::*;
+pub mod simulation;
+pub use simulation::*;
 
 
 pub mod events {
