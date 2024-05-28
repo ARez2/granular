@@ -83,11 +83,6 @@ impl GeeseSystem for Renderer {
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
         let camera = ctx.get::<Camera>();
         let graphics_sys = ctx.get::<GraphicsSystem>();
-        let shaderglobals_buffer = graphics_sys.device().create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Shader globals buffer"),
-            contents: bytemuck::cast_slice(&[camera.canvas_transform()]),
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST
-        });
 
         drop(camera);
         drop(graphics_sys);
