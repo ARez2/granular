@@ -4,23 +4,18 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace]
-members = [
-    "granular-core",
-    "examples/*"
-]
+members = ["granular-core", "examples/*"]
 # exclude = [
 #     "examples/*"
 # ]
 
-
-
 [dependencies]
-granular-core = {path = "granular-core"}
+granular-core = { path = "granular-core" }
 palette.workspace = true
 
 
 [workspace.dependencies]
-geese = "0.3.7"
+geese = "0.3.11"
 log = "0.4.20"
-winit = { version = "*"}
+winit = { version = "*" }
 palette = "0.7.5"
