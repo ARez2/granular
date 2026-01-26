@@ -1,7 +1,5 @@
-use geese::{event_handlers, EventHandlers, GeeseContextHandle, GeeseSystem};
 use glam::IVec2;
 use grid::CellGrid;
-use log::{debug, error, info};
 use palette::Srgba;
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use std::{
@@ -18,6 +16,7 @@ use crate::{
     cell::Cell,
     chunk::{CHUNK_SIZE, HALO_DIRECTIONS},
     simulation::grid::GridPos,
+    utils::*,
 };
 use material::Material;
 
@@ -34,6 +33,9 @@ pub struct Simulation {
 }
 impl Simulation {
     pub fn setup(&mut self, _: &crate::events::Initialized) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("Simulation::setup").entered();
+
         for chunk_idx in 0..self.chunks.len() {
             let chunk_pos = self.chunks[chunk_idx].position;
             for (neigh_idx, neigh_dir) in HALO_DIRECTIONS.iter().enumerate() {
@@ -126,6 +128,9 @@ impl Simulation {
 
     pub const DEBUG_UPDATE: bool = false;
     pub fn update(&mut self, _: &crate::events::timing::FixedTick<16>) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("Simulation::update").entered();
+
         self.tick += 1;
         if Self::DEBUG_UPDATE {
             let phase = (self.tick / 16) % 4;
@@ -157,6 +162,9 @@ impl GeeseSystem for Simulation {
         event_handlers().with(Self::update).with(Self::setup);
 
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("Simulation::new").entered();
+
         let mut chunks: [Chunk; NUM_CHUNKS_TOTAL] = core::array::from_fn(|i| Chunk {
             grid: UnsafeCell::new(CellGrid::empty()),
             position: IVec2::ZERO,

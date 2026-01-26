@@ -1,9 +1,7 @@
 use std::{borrow::Cow, path::Path};
-
-use log::error;
 use wgpu::{ShaderModule, ShaderModuleDescriptor};
 
-use crate::graphics::GraphicsSystem;
+use crate::{graphics::GraphicsSystem, utils::*};
 
 use super::Asset;
 

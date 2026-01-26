@@ -9,6 +9,18 @@ log = "0.4.20"
 env_logger = "0.10.1"
 regex = "1.10.3"
 geese = "0.3.7"
-winit = { version = "0.30.*"}
-glam = { version = "0.25.0", features = ["approx"]}
+winit = { version = "0.30.*" }
+glam = { version = "0.25.0", features = ["approx"] }
 palette = "0.7.5"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = [
+    "env-filter",
+    "local-time",
+] }
+
+
+tracing-tracy = { version = "0.11.4", optional = true }
+time = { version = "0.3.46", features = ["macros"] }
+
+[features]
+trace = ["dep:tracing-tracy"]

@@ -1,23 +1,24 @@
-use bytemuck_derive::{Pod, Zeroable};
-use geese::{dependencies, GeeseContextHandle, GeeseSystem, Mut};
-use glam::Mat4;
-use wgpu::{util::DeviceExt, Buffer, BufferUsages};
 use winit::dpi::PhysicalSize;
 
-use crate::{BatchRenderer, Camera};
-
 use super::{GraphicsSystem, SimulationRenderer};
+use crate::{utils::*, BatchRenderer, Camera};
 
 pub struct Renderer {
     ctx: GeeseContextHandle<Self>,
 }
 impl Renderer {
     pub fn start_frame(&mut self) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("Renderer::start_frame").entered();
+
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         graphics_sys.begin_frame();
     }
 
     pub fn end_frame(&mut self) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("Renderer::end_frame").entered();
+
         {
             let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
             graphics_sys.present_frame();
@@ -30,6 +31,8 @@ impl Renderer {
 
     /// Resizes the surface with the new_size
     pub(crate) fn resize(&mut self, new_size: PhysicalSize<u32>) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("Renderer::resize").entered();
         {
             let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
             graphics_sys.resize_surface(new_size);
@@ -47,6 +50,9 @@ impl Renderer {
     }
 
     pub fn render(&mut self) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("Renderer::render").entered();
+
         {
             let camera = self.ctx.get::<Camera>();
             camera.write_canvas_transform_buffer();
@@ -69,6 +75,9 @@ impl GeeseSystem for Renderer {
         .with::<Mut<Camera>>();
 
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("Renderer::new").entered();
+
         let camera = ctx.get::<Camera>();
         let graphics_sys = ctx.get::<GraphicsSystem>();
 

@@ -1,18 +1,20 @@
+use rustc_hash::FxHashMap as HashMap;
 use std::{
     marker::PhantomData,
     time::{Duration, Instant},
 };
-
-use geese::{EventQueue, GeeseContext, GeeseSystem};
-use log::info;
-use rustc_hash::FxHashMap as HashMap;
 use winit::{
     application::ApplicationHandler,
-    dpi::PhysicalSize,
     event::{DeviceEvent, DeviceId, WindowEvent},
     event_loop::ActiveEventLoop,
     window::WindowId,
 };
+
+pub mod utils;
+use utils::*;
+
+#[cfg(feature = "trace")]
+use tracing_tracy::client::frame_mark;
 
 pub mod assets;
 pub use assets::AssetSystem;
@@ -49,18 +51,25 @@ pub mod events {
     pub struct Draw;
 }
 
-pub struct GranularEngine<AppSystem: GeeseSystem> {
+#[derive(Debug)]
+pub struct GranularEngine<AppSystem: GeeseSystem + std::fmt::Debug> {
     ctx: GeeseContext,
-    close_requested: bool,
     /// Current frame
     frame: u64,
     /// When each tick (in ms) last occured
     last_ticks: HashMap<Duration, Instant>,
     application: PhantomData<AppSystem>,
 }
-
-impl<AppSystem: GeeseSystem> GranularEngine<AppSystem> {
+impl<AppSystem: GeeseSystem + std::fmt::Debug> Default for GranularEngine<AppSystem> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
     pub fn new() -> Self {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("GranularEngine::new").entered();
+
         let mut ctx: GeeseContext = GeeseContext::default();
         ctx.flush()
             .with(geese::notify::add_system::<WindowSystem>())
@@ -76,7 +85,6 @@ impl<AppSystem: GeeseSystem> GranularEngine<AppSystem> {
 
         Self {
             ctx,
-            close_requested: false,
             frame: 0,
             last_ticks,
             application: PhantomData,
@@ -96,9 +104,14 @@ impl<AppSystem: GeeseSystem> GranularEngine<AppSystem> {
         let _ = event_loop.run_app(self);
     }
 
-    pub fn update(&mut self) {}
+    pub fn update(&mut self) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("GranularEngine::update").entered();
+    }
 
     pub fn handle_scheduling(&mut self) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("GranularEngine::handle_scheduling").entered();
         let mut buffer = geese::EventBuffer::default().with(events::timing::Tick::<1>);
 
         let now = Instant::now();
@@ -138,8 +151,11 @@ impl<AppSystem: GeeseSystem> GranularEngine<AppSystem> {
         self.ctx.flush().with_buffer(buffer);
     }
 }
-impl<AppSystem: GeeseSystem> ApplicationHandler for GranularEngine<AppSystem> {
+// Implement the winit::ApplicationHandler trait
+impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler for GranularEngine<AppSystem> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("GranularEngine::resumed").entered();
         info!("Resumed!");
         {
             let mut window_sys = self.ctx.get_mut::<WindowSystem>();
@@ -154,11 +170,15 @@ impl<AppSystem: GeeseSystem> ApplicationHandler for GranularEngine<AppSystem> {
             .with(events::Initialized {});
     }
 
-    fn exiting(&mut self, event_loop: &ActiveEventLoop) {
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("GranularEngine::exiting").entered();
         info!("Exiting...");
     }
 
-    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: winit::event::StartCause) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("GranularEngine::new_events").entered();
         {
             let mut input = self.ctx.get_mut::<InputSystem>();
             input.reset_just_pressed();
@@ -174,49 +194,69 @@ impl<AppSystem: GeeseSystem> ApplicationHandler for GranularEngine<AppSystem> {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("GranularEngine::window_event").entered();
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {
+                #[cfg(feature = "trace")]
+                let _span = info_span!("WindowEvent::Resized").entered();
                 let mut renderer = self.ctx.get_mut::<Renderer>();
                 renderer.resize(new_size);
                 #[cfg(target_os = "macos")]
                 graphics.request_redraw();
             }
             WindowEvent::ModifiersChanged(modifiers) => {
+                #[cfg(feature = "trace")]
+                let _span = info_span!("WindowEvent::ModifiersChanged").entered();
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.update_modifiers(&modifiers);
             }
             WindowEvent::RedrawRequested => {
+                #[cfg(feature = "trace")]
+                let _span = info_span!("WindowEvent::RedrawRequested").entered();
+
                 self.ctx.flush().with(events::Draw);
                 let mut renderer = self.ctx.get_mut::<Renderer>();
                 renderer.start_frame();
                 renderer.render();
                 renderer.end_frame();
                 renderer.request_redraw();
+
+                #[cfg(feature = "trace")]
+                frame_mark();
             }
             WindowEvent::KeyboardInput {
                 event,
                 is_synthetic: false,
                 ..
             } => {
+                #[cfg(feature = "trace")]
+                let _span = info_span!("WindowEvent::KeyboardInput").entered();
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.handle_keyevent(&event);
             }
             WindowEvent::CursorMoved { position, .. } => {
+                #[cfg(feature = "trace")]
+                let _span = info_span!("WindowEvent::CursorMoved").entered();
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.handle_cursor_movement(position);
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                #[cfg(feature = "trace")]
+                let _span = info_span!("WindowEvent::MouseInput").entered();
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.handle_mouse_input(button, state);
             }
             WindowEvent::MouseWheel {
-                device_id,
-                delta,
-                phase,
-            } => {}
+                device_id: _,
+                delta: _,
+                phase: _,
+            } => {
+                // TODO: input.handle_mouse_wheel()
+            }
 
             WindowEvent::CursorLeft { .. }
             | WindowEvent::TouchpadPressure { .. }
@@ -239,6 +279,8 @@ impl<AppSystem: GeeseSystem> ApplicationHandler for GranularEngine<AppSystem> {
             | WindowEvent::Focused(_)
             | WindowEvent::ScaleFactorChanged { .. }
             | WindowEvent::ThemeChanged(_) => {
+                #[cfg(feature = "trace")]
+                let _span = info_span!("Other WindowEvent").entered();
                 self.ctx.flush().with(event);
             }
         };
@@ -246,10 +288,10 @@ impl<AppSystem: GeeseSystem> ApplicationHandler for GranularEngine<AppSystem> {
 
     fn device_event(
         &mut self,
-        event_loop: &ActiveEventLoop,
-        device_id: DeviceId,
-        event: DeviceEvent,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        _event: DeviceEvent,
     ) {
-        //info!("Device {device_id:?} event: {event:?}");
+        // info!("Device {device_id:?} event: {event:?}");
     }
 }

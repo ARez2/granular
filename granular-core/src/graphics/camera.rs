@@ -1,10 +1,9 @@
 #![allow(unused)]
-use geese::{dependencies, GeeseContextHandle, GeeseSystem};
 use glam::{Affine2, IVec2, Mat2, Mat4, Quat, Vec2, Vec3};
-use log::info;
 use wgpu::{util::DeviceExt, Buffer, BufferUsages};
 
 use super::GraphicsSystem;
+use crate::utils::*;
 
 pub enum ScalingMode {
     Keep,

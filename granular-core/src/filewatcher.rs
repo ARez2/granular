@@ -1,8 +1,7 @@
+use notify::{RecommendedWatcher, Watcher};
 use std::sync::mpsc::Receiver;
 
-use geese::{event_handlers, GeeseContextHandle, GeeseSystem};
-use log::*;
-use notify::{RecommendedWatcher, Watcher};
+use crate::utils::*;
 
 pub mod events {
     pub struct FilesChanged {

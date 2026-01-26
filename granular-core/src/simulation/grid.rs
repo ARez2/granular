@@ -1,11 +1,11 @@
 use glam::I16Vec2;
-use log::debug;
 
 use super::{
     cell::{Cell, CellColor},
     chunk::{CHUNK_SIZE, NUM_CELLS_IN_CHUNK},
     material::Material,
 };
+use crate::utils::*;
 
 pub type GridPos = I16Vec2;
 

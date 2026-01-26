@@ -1,11 +1,10 @@
-
 pub mod prelude {
     pub use granular_core::{
-        GranularEngine,
+        assets::{AssetHandle, TextureAsset},
         events,
-        Simulation,
+        graphics::{self, WindowSystem},
         input_system::*,
-        AssetSystem, assets::{AssetHandle, TextureAsset},
-        Camera, BatchRenderer, graphics::{self, WindowSystem}
+        utils::*,
+        AssetSystem, BatchRenderer, Camera, GranularEngine, Simulation,
     };
 }

@@ -1,9 +1,7 @@
 #![allow(unused)]
 
 use bytemuck_derive::{Pod, Zeroable};
-use geese::*;
 use glam::{IVec2, Vec2};
-use log::*;
 use wgpu::{
     CommandEncoder, CommandEncoderDescriptor, Device, Queue, Surface, SurfaceConfiguration,
     SurfaceTexture, TextureView, TextureViewDescriptor,
@@ -11,6 +9,7 @@ use wgpu::{
 use winit::dpi::PhysicalSize;
 
 use super::{graphics_backend, GraphicsBackend, WindowSystem};
+use crate::utils::*;
 
 pub type FrameData = Option<(SurfaceTexture, TextureView, CommandEncoder)>;
 pub type FrameDataMut<'a> = Option<&'a mut (
@@ -49,6 +48,9 @@ pub struct GraphicsSystem {
 }
 impl GraphicsSystem {
     pub fn request_redraw(&self) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("GraphicsSystem::request_redraw").entered();
+
         self.ctx
             .get::<WindowSystem>()
             .window_handle()
@@ -56,12 +58,18 @@ impl GraphicsSystem {
     }
 
     pub fn resize_surface(&mut self, new_size: PhysicalSize<u32>) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("GraphicsSystem::resize_surface").entered();
+
         self.surface_config.width = new_size.width.max(1);
         self.surface_config.height = new_size.height.max(1);
         self.surface.configure(&self.device, &self.surface_config);
     }
 
     pub fn begin_frame(&mut self) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("GraphicsSystem::begin_frame").entered();
+
         let frame = self
             .surface
             .get_current_texture()
@@ -94,6 +102,9 @@ impl GraphicsSystem {
     }
 
     pub fn present_frame(&mut self) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("GraphicsSystem::present_frame").entered();
+
         if self.frame_data.is_none() {
             warn!("No frame data present, begin a frame by calling begin_frame()");
             return;
@@ -113,6 +124,9 @@ impl GeeseSystem for GraphicsSystem {
         .with::<Mut<GraphicsBackend>>();
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("GraphicsSystem::new").entered();
+
         let surface;
         let window_size;
         {

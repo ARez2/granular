@@ -1,7 +1,7 @@
-use geese::*;
 use wgpu::{Adapter, Backends, Instance, InstanceDescriptor, RequestAdapterOptions};
 
 use super::WindowSystem;
+use crate::utils::*;
 
 pub struct GraphicsBackend {
     instance: Instance,

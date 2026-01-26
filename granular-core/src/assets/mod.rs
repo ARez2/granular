@@ -1,5 +1,3 @@
-use geese::*;
-use log::{debug, info, warn};
 use rustc_hash::FxHashMap as HashMap;
 use std::{
     marker::PhantomData,
@@ -7,10 +5,10 @@ use std::{
     sync::Arc,
 };
 
+use crate::{filewatcher::FileWatcher, graphics::GraphicsSystem, utils::*};
+
 mod holder;
 use holder::{AssetHolder, TypedAssetHolder};
-
-use crate::{filewatcher::FileWatcher, graphics::GraphicsSystem};
 
 mod texture_asset;
 pub use texture_asset::TextureAsset;
@@ -88,6 +86,9 @@ impl AssetSystem {
         path: impl TryInto<PathBuf>,
         hot_reload: bool,
     ) -> AssetHandle<T> {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("AssetSystem::load").entered();
+
         let path = self.add_basepath(path);
 
         let id = self.assets.len() as u64;
@@ -112,6 +113,9 @@ impl AssetSystem {
     }
 
     pub fn register<T: Asset>(&mut self, asset: T) -> AssetHandle<T> {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("AssetSystem::register").entered();
+
         let id = self.assets.len() as u64;
         self.assets
             .insert(Arc::new(id), Box::new(TypedAssetHolder::new(asset)));
@@ -124,6 +128,9 @@ impl AssetSystem {
     }
 
     fn reload(&mut self, event: &crate::filewatcher::events::FilesChanged) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("AssetSystem::reload").entered();
+
         for path in event.paths.iter() {
             let id = self.path_to_id.get(path);
             if let Some(id) = id {
@@ -150,6 +157,9 @@ impl AssetSystem {
     }
 
     pub fn drop_unused_assets(&mut self, _: &crate::events::timing::FixedTick<2500>) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("AssetSystem::drop_unused_assets").entered();
+
         let mut removed_usizes = vec![];
         self.assets.retain(|arc, _| {
             if Arc::strong_count(arc) <= 1 {
@@ -186,7 +196,7 @@ impl GeeseSystem for AssetSystem {
             .parent()
             .unwrap()
             .to_path_buf();
-        info!("AssetServer is using base path '{}'", base_path.display());
+        info!("AssetSystem is using base path '{}'", base_path.display());
 
         Self {
             ctx,

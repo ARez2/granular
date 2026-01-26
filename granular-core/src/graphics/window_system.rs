@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use geese::*;
 use winit::{
     event_loop::ActiveEventLoop,
     window::{Window, WindowAttributes},
 };
 
-use crate::EventLoopSystem;
+use crate::{utils::*, EventLoopSystem};
 
 pub struct WindowSystem {
     windows: Vec<Arc<Window>>,
@@ -20,6 +19,9 @@ impl WindowSystem {
     }
 
     pub fn init(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("WindowSystem::init").entered();
+
         let window_attributes = WindowAttributes::default()
             .with_title("Default Granular Window")
             .with_visible(false)

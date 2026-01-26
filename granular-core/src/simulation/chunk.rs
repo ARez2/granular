@@ -4,6 +4,7 @@ use std::{cell::UnsafeCell, ops::Range};
 use crate::{
     material::Material,
     simulation::grid::{CellGrid, GridPos},
+    utils::*,
 };
 
 pub const CHUNK_SIZE: u16 = 32;
@@ -47,6 +48,9 @@ impl Chunk {
 
     /// Updates all cells inside this chunk.
     pub fn update(&mut self, tick: usize) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("Chunk::update").entered();
+
         let own_grid = self.get_grid_mut();
         for y in self.update_range(0..CHUNK_SIZE as i16, tick.is_multiple_of(2)) {
             for x in self.update_range(0..CHUNK_SIZE as i16, tick.is_multiple_of(4)) {

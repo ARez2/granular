@@ -1,7 +1,7 @@
-use geese::GeeseContextHandle;
 use std::{any::Any, path::Path};
 
 use super::{Asset, AssetSystem};
+use crate::utils::*;
 
 pub(super) trait AssetHolder {
     fn as_any(&self) -> &dyn Any;

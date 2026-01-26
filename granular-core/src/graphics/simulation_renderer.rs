@@ -1,4 +1,3 @@
-use geese::{dependencies, event_handlers, EventHandlers, GeeseContextHandle, GeeseSystem, Mut};
 use glam::IVec2;
 use palette::{Srgba, WithAlpha};
 use wgpu::{
@@ -10,9 +9,12 @@ use super::{GraphicsSystem, TextureBundle};
 use crate::{
     assets::{AssetHandle, TextureAsset},
     chunk::{CHUNK_SIZE, NUM_CELLS_IN_CHUNK},
-    graphics, AssetSystem, BatchRenderer, Camera, Simulation, NUM_CHUNKS_TOTAL,
+    graphics,
+    utils::*,
+    AssetSystem, BatchRenderer, Camera, Simulation, NUM_CHUNKS_TOTAL,
 };
 
+#[derive(Debug)]
 pub struct SimulationRenderer {
     ctx: GeeseContextHandle<Self>,
 
@@ -23,9 +25,16 @@ pub struct SimulationRenderer {
 }
 impl SimulationRenderer {
     pub fn on_draw(&mut self, _: &crate::events::Draw) {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("SimulationRenderer::on_draw").entered();
+
         let graphics_sys = self.ctx.get::<GraphicsSystem>();
         let asset_sys = self.ctx.get::<AssetSystem>();
         let sim = self.ctx.get::<Simulation>();
+        #[cfg(feature = "trace")]
+        let span_write_chunks = info_span!("SimulationRenderer write chunk textures");
+        #[cfg(feature = "trace")]
+        let span_guard = span_write_chunks.enter();
         // Collect the chunk positions here, because we need to borrow the BatchRenderer
         // mutably later and we cant have Simulation borrowed at the same time
         let mut chunk_positions = vec![IVec2::ZERO; NUM_CHUNKS_TOTAL];
@@ -51,6 +60,7 @@ impl SimulationRenderer {
         drop(graphics_sys);
         drop(asset_sys);
         drop(sim);
+        drop(span_guard);
 
         let mut quad_renderer = self.ctx.get_mut::<BatchRenderer>();
         for (idx, chunk_pos) in chunk_positions.into_iter().enumerate() {
@@ -94,6 +104,9 @@ impl GeeseSystem for SimulationRenderer {
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers().with(Self::on_draw);
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
+        #[cfg(feature = "trace")]
+        let _span = info_span!("SimulationRenderer::new").entered();
+
         let chunk_textures: [AssetHandle<TextureAsset>; NUM_CHUNKS_TOTAL] =
             core::array::from_fn(|i| {
                 let tex_extent = Extent3d {

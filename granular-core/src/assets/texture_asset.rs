@@ -1,11 +1,13 @@
 #![allow(unused)]
 
-use geese::GeeseContextHandle;
 use std::path::Path;
 use wgpu::{Extent3d, Sampler, Texture, TextureView};
 
 use super::{Asset, AssetSystem};
-use crate::graphics::{GraphicsSystem, TextureBundle};
+use crate::{
+    graphics::{GraphicsSystem, TextureBundle},
+    utils::*,
+};
 
 #[derive(Debug, PartialEq)]
 pub struct TextureAsset {

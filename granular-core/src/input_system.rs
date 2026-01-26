@@ -1,14 +1,14 @@
 #![allow(unused)]
 
-use geese::{EventQueue, GeeseContextHandle, GeeseSystem};
 use glam::IVec2;
-use log::*;
 use rustc_hash::FxHashMap as HashMap;
 use winit::{
     dpi::PhysicalPosition,
     event::{ElementState, KeyEvent, Modifiers, MouseButton},
     keyboard::{KeyCode, ModifiersState, PhysicalKey},
 };
+
+use crate::utils::*;
 
 pub mod events {
     use super::InputAction;
