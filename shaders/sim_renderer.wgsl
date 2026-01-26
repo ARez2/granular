@@ -20,7 +20,7 @@ var<uniform> globals: Globals;
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    out.position = vec4<f32>(in.position, 0.0, 1.0);
+    out.position = globals.canvas_transform * vec4<f32>(in.position, 0.0, 1.0);
     var p = vec2<f32>(out.position.x, out.position.y);
     //out.tex_coords = in.tex_coords;
     out.tex_coords = fma(p, vec2<f32>(0.5, -0.5), vec2<f32>(0.5, 0.5));

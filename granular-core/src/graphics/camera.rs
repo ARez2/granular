@@ -113,7 +113,7 @@ impl Camera {
 
     fn recalc_view(&mut self) {
         self.view = Mat4::from_scale_rotation_translation(
-            Vec3::new(self.scale.x * self.zoom, self.scale.y * self.zoom, 1.0),
+            Vec3::new(self.scale.x * self.zoom, -self.scale.y * self.zoom, 1.0),
             Quat::from_rotation_z(self.angle),
             Vec3::new(
                 -self.position.x as f32 * self.scale.x,

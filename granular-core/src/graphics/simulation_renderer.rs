@@ -65,7 +65,7 @@ impl SimulationRenderer {
         let mut quad_renderer = self.ctx.get_mut::<BatchRenderer>();
         for (idx, chunk_pos) in chunk_positions.into_iter().enumerate() {
             let chunk_center =
-                chunk_pos * IVec2::new(1, -1) * CHUNK_SIZE as i32 * self.display_scale * 3;
+                chunk_pos * IVec2::new(1, 1) * CHUNK_SIZE as i32 * self.display_scale * 2;
             let chunk_display_size = IVec2::new(
                 CHUNK_SIZE as i32 * self.display_scale,
                 CHUNK_SIZE as i32 * self.display_scale,

@@ -61,10 +61,7 @@ impl Renderer {
         let mut batch_renderer = self.ctx.get_mut::<BatchRenderer>();
         batch_renderer.create_batches();
         batch_renderer.prepare_to_render();
-        batch_renderer.render_batch_layers(i32::MIN..0, true);
-        drop(batch_renderer);
-        let mut batch_renderer = self.ctx.get_mut::<BatchRenderer>();
-        batch_renderer.render_batch_layers(0..i32::MAX, false);
+        batch_renderer.render_batch_layers(i32::MIN..i32::MAX, true);
     }
 }
 impl GeeseSystem for Renderer {
@@ -77,12 +74,6 @@ impl GeeseSystem for Renderer {
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
         #[cfg(feature = "trace")]
         let _span = info_span!("Renderer::new").entered();
-
-        let camera = ctx.get::<Camera>();
-        let graphics_sys = ctx.get::<GraphicsSystem>();
-
-        drop(camera);
-        drop(graphics_sys);
 
         Self { ctx }
     }

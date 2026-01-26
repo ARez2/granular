@@ -31,8 +31,6 @@ fn vert_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
-
-
 @group(0) @binding(1)
 var textures: binding_array<texture_2d<f32>>;
 @group(0) @binding(2)
@@ -42,5 +40,5 @@ var samplers: binding_array<sampler>;
 @fragment
 fn uniform_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var index: i32 = in.tex_index;
-    return textureSample(textures[index], samplers[index], in.tex_coords) * in.color;
+    return textureSample(textures[index], samplers[index], vec2<f32>(in.tex_coords.x, 1.0 - in.tex_coords.y)) * in.color;
 }
