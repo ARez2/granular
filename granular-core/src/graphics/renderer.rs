@@ -1,6 +1,6 @@
+use bytemuck_derive::{Pod, Zeroable};
 use geese::{dependencies, GeeseContextHandle, GeeseSystem, Mut};
 use glam::Mat4;
-use bytemuck_derive::{Zeroable, Pod};
 use wgpu::{util::DeviceExt, Buffer, BufferUsages};
 use winit::dpi::PhysicalSize;
 
@@ -17,7 +17,6 @@ impl Renderer {
         graphics_sys.begin_frame();
     }
 
-
     pub fn end_frame(&mut self) {
         {
             let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
@@ -29,7 +28,6 @@ impl Renderer {
         }
     }
 
-
     /// Resizes the surface with the new_size
     pub(crate) fn resize(&mut self, new_size: PhysicalSize<u32>) {
         {
@@ -40,19 +38,13 @@ impl Renderer {
             let mut camera = self.ctx.get_mut::<Camera>();
             camera.set_screen_size((new_size.width, new_size.height));
         }
-        {
-            let mut sim_renderer = self.ctx.get_mut::<SimulationRenderer>();
-            sim_renderer.resize(new_size);
-        }
     }
-
 
     /// Requests a redraw from the underlying GraphicsSystem
     pub fn request_redraw(&self) {
         let graphics_sys = self.ctx.get::<GraphicsSystem>();
         graphics_sys.request_redraw();
     }
-
 
     pub fn render(&mut self) {
         {
@@ -65,10 +57,6 @@ impl Renderer {
         batch_renderer.prepare_to_render();
         batch_renderer.render_batch_layers(i32::MIN..0, true);
         drop(batch_renderer);
-        {
-            let mut sim_renderer = self.ctx.get_mut::<SimulationRenderer>();
-            sim_renderer.render();
-        }
         let mut batch_renderer = self.ctx.get_mut::<BatchRenderer>();
         batch_renderer.render_batch_layers(0..i32::MAX, false);
     }
@@ -86,9 +74,7 @@ impl GeeseSystem for Renderer {
 
         drop(camera);
         drop(graphics_sys);
-        
-        Self {
-            ctx
-        }
+
+        Self { ctx }
     }
 }

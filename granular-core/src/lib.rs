@@ -1,9 +1,18 @@
-use std::{marker::PhantomData, time::{Duration, Instant}};
+use std::{
+    marker::PhantomData,
+    time::{Duration, Instant},
+};
 
 use geese::{EventQueue, GeeseContext, GeeseSystem};
 use log::info;
 use rustc_hash::FxHashMap as HashMap;
-use winit::{application::ApplicationHandler, dpi::PhysicalSize, event::{DeviceEvent, DeviceId, WindowEvent}, event_loop::ActiveEventLoop, window::WindowId};
+use winit::{
+    application::ApplicationHandler,
+    dpi::PhysicalSize,
+    event::{DeviceEvent, DeviceId, WindowEvent},
+    event_loop::ActiveEventLoop,
+    window::WindowId,
+};
 
 pub mod assets;
 pub use assets::AssetSystem;
@@ -20,16 +29,13 @@ mod filewatcher;
 use filewatcher::FileWatcher;
 
 pub mod input_system;
-pub use input_system::{InputSystem, InputActionTrigger, InputAction};
+pub use input_system::{InputAction, InputActionTrigger, InputSystem};
 
 pub mod simulation;
 pub use simulation::*;
 
-
 pub mod events {
-    pub struct Initialized {
-        
-    }
+    pub struct Initialized {}
 
     pub mod timing {
         /// Gets sent out every N frames
@@ -37,14 +43,11 @@ pub mod events {
 
         /// Gets sent out every T milliseconds
         pub struct FixedTick<const N: u64>;
-        pub const FIXED_TICKS: [u64; 3] = [5000, 2500, 1000];
+        pub const FIXED_TICKS: [u64; 4] = [5000, 2500, 1000, 16];
     }
 
     pub struct Draw;
 }
-
-
-
 
 pub struct GranularEngine<AppSystem: GeeseSystem> {
     ctx: GeeseContext,
@@ -53,7 +56,7 @@ pub struct GranularEngine<AppSystem: GeeseSystem> {
     frame: u64,
     /// When each tick (in ms) last occured
     last_ticks: HashMap<Duration, Instant>,
-    application: PhantomData<AppSystem>
+    application: PhantomData<AppSystem>,
 }
 
 impl<AppSystem: GeeseSystem> GranularEngine<AppSystem> {
@@ -69,22 +72,20 @@ impl<AppSystem: GeeseSystem> GranularEngine<AppSystem> {
         let mut last_ticks = HashMap::default();
         for fixed_tick in events::timing::FIXED_TICKS {
             last_ticks.insert(Duration::from_millis(fixed_tick), now);
-        };
+        }
 
         Self {
             ctx,
             close_requested: false,
             frame: 0,
             last_ticks,
-            application: PhantomData
+            application: PhantomData,
         }
     }
-
 
     pub fn get_ctx(&mut self) -> &mut GeeseContext {
         &mut self.ctx
     }
-
 
     pub fn run(&mut self) {
         info!("GranularEngine run");
@@ -95,41 +96,45 @@ impl<AppSystem: GeeseSystem> GranularEngine<AppSystem> {
         let _ = event_loop.run_app(self);
     }
 
-
-    pub fn update(&mut self) {
-
-    }
-
+    pub fn update(&mut self) {}
 
     pub fn handle_scheduling(&mut self) {
-        let mut buffer = geese::EventBuffer::default()
-            .with(events::timing::Tick::<1>);
-        
+        let mut buffer = geese::EventBuffer::default().with(events::timing::Tick::<1>);
+
         let now = Instant::now();
         self.last_ticks.iter_mut().for_each(|(tickrate, last)| {
             if *last + *tickrate < now {
                 *last = now;
                 let tickrate_millis = tickrate.as_millis() as u64;
                 match tickrate_millis {
-                    1000 => {self.ctx.flush().with(events::timing::FixedTick::<1000>);},
-                    2500 => {self.ctx.flush().with(events::timing::FixedTick::<2500>);},
-                    5000 => {self.ctx.flush().with(events::timing::FixedTick::<5000>);},
-                    _ => ()
+                    16 => {
+                        self.ctx.flush().with(events::timing::FixedTick::<16>);
+                    }
+                    1000 => {
+                        self.ctx.flush().with(events::timing::FixedTick::<1000>);
+                    }
+                    2500 => {
+                        self.ctx.flush().with(events::timing::FixedTick::<2500>);
+                    }
+                    5000 => {
+                        self.ctx.flush().with(events::timing::FixedTick::<5000>);
+                    }
+                    _ => (),
                 };
             }
         });
 
-        if self.frame % 60 == 0 {
+        if self.frame.is_multiple_of(60) {
             buffer = buffer.with(events::timing::Tick::<60>);
         };
-        if self.frame % 30 == 0 {
+        if self.frame.is_multiple_of(30) {
             buffer = buffer.with(events::timing::Tick::<30>);
         };
-        if self.frame % 2 == 0 {
+        if self.frame.is_multiple_of(2) {
             buffer = buffer.with(events::timing::Tick::<2>);
         };
         // 1 Frame tick is already handled at the very top
-        
+
         self.ctx.flush().with_buffer(buffer);
     }
 }
@@ -140,19 +145,18 @@ impl<AppSystem: GeeseSystem> ApplicationHandler for GranularEngine<AppSystem> {
             let mut window_sys = self.ctx.get_mut::<WindowSystem>();
             window_sys.init(event_loop);
         }
-        self.ctx.flush()
+        self.ctx
+            .flush()
             .with(geese::notify::add_system::<Renderer>())
             .with(geese::notify::add_system::<AssetSystem>())
+            .with(geese::notify::add_system::<Simulation>())
             .with(geese::notify::add_system::<AppSystem>())
-            .with(events::Initialized{});
-        
+            .with(events::Initialized {});
     }
-
 
     fn exiting(&mut self, event_loop: &ActiveEventLoop) {
         info!("Exiting...");
     }
-
 
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
         {
@@ -164,7 +168,6 @@ impl<AppSystem: GeeseSystem> ApplicationHandler for GranularEngine<AppSystem> {
         self.frame += 1;
     }
 
-
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -174,17 +177,17 @@ impl<AppSystem: GeeseSystem> ApplicationHandler for GranularEngine<AppSystem> {
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
-            },
+            }
             WindowEvent::Resized(new_size) => {
                 let mut renderer = self.ctx.get_mut::<Renderer>();
                 renderer.resize(new_size);
-                #[cfg(target_os="macos")]
+                #[cfg(target_os = "macos")]
                 graphics.request_redraw();
-            },
+            }
             WindowEvent::ModifiersChanged(modifiers) => {
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.update_modifiers(&modifiers);
-            },
+            }
             WindowEvent::RedrawRequested => {
                 self.ctx.flush().with(events::Draw);
                 let mut renderer = self.ctx.get_mut::<Renderer>();
@@ -192,24 +195,29 @@ impl<AppSystem: GeeseSystem> ApplicationHandler for GranularEngine<AppSystem> {
                 renderer.render();
                 renderer.end_frame();
                 renderer.request_redraw();
-            },
-            WindowEvent::KeyboardInput{event, is_synthetic: false, ..} => {
+            }
+            WindowEvent::KeyboardInput {
+                event,
+                is_synthetic: false,
+                ..
+            } => {
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.handle_keyevent(&event);
-            },
-            WindowEvent::CursorMoved {position, .. } => {
+            }
+            WindowEvent::CursorMoved { position, .. } => {
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.handle_cursor_movement(position);
-            },
-            WindowEvent::MouseInput {state, button, ..} => {
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.handle_mouse_input(button, state);
-            },
-            WindowEvent::MouseWheel { device_id, delta, phase } => {
+            }
+            WindowEvent::MouseWheel {
+                device_id,
+                delta,
+                phase,
+            } => {}
 
-            },
-            
-            
             WindowEvent::CursorLeft { .. }
             | WindowEvent::TouchpadPressure { .. }
             | WindowEvent::HoveredFileCancelled
@@ -222,7 +230,7 @@ impl<AppSystem: GeeseSystem> ApplicationHandler for GranularEngine<AppSystem> {
             | WindowEvent::Touch(_)
             | WindowEvent::Moved(_)
             | WindowEvent::DoubleTapGesture { .. }
-            | WindowEvent::PanGesture{ .. }
+            | WindowEvent::PanGesture { .. }
             | WindowEvent::RotationGesture { .. }
             | WindowEvent::PinchGesture { .. }
             | WindowEvent::Ime(_)
@@ -236,13 +244,12 @@ impl<AppSystem: GeeseSystem> ApplicationHandler for GranularEngine<AppSystem> {
         };
     }
 
-
     fn device_event(
-            &mut self,
-            event_loop: &ActiveEventLoop,
-            device_id: DeviceId,
-            event: DeviceEvent,
-        ) {
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
         //info!("Device {device_id:?} event: {event:?}");
     }
 }

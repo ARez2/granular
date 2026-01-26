@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 geese.workspace = true
-wgpu = { git = "https://github.com/gfx-rs/wgpu", features = ["glsl"]}
+wgpu = { git = "https://github.com/gfx-rs/wgpu", features = ["glsl"] }
 winit.workspace = true
 log.workspace = true
 palette.workspace = true
@@ -19,3 +19,4 @@ rustc-hash = "1.1.0"
 anyhow = "1.0.79"
 glam = { version = "0.25.0", features = ["approx", "bytemuck"] }
 pollster = "0.3.0"
+rayon = "1.11"

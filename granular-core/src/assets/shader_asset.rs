@@ -7,8 +7,6 @@ use crate::graphics::GraphicsSystem;
 
 use super::Asset;
 
-
-
 #[derive(Debug)]
 pub struct ShaderAsset {
     module: ShaderModule,
@@ -25,7 +23,7 @@ impl Asset for ShaderAsset {
 
         let shader_contents = std::fs::read_to_string(path);
         let shader_src = match shader_contents {
-            Ok(data) => {data},
+            Ok(data) => data,
             Err(e) => {
                 error!("Error while reading shader: {:?}", e);
                 String::new()
@@ -36,8 +34,6 @@ impl Asset for ShaderAsset {
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(&shader_src)),
         });
 
-        Self {
-            module,
-        }
+        Self { module }
     }
 }

@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
 use geese::*;
-use winit::{event_loop::ActiveEventLoop, window::{Window, WindowAttributes}};
+use winit::{
+    event_loop::ActiveEventLoop,
+    window::{Window, WindowAttributes},
+};
 
 use crate::EventLoopSystem;
 
-
 pub struct WindowSystem {
-    windows: Vec<Arc<Window>>
+    windows: Vec<Arc<Window>>,
 }
 impl WindowSystem {
     pub fn window_handle(&self) -> Arc<Window> {
@@ -33,12 +35,9 @@ impl WindowSystem {
     }
 }
 impl GeeseSystem for WindowSystem {
-    const DEPENDENCIES: Dependencies = dependencies()
-        .with::<EventLoopSystem>();
-    
+    const DEPENDENCIES: Dependencies = dependencies().with::<EventLoopSystem>();
+
     fn new(ctx: GeeseContextHandle<Self>) -> Self {
-        Self {
-            windows: vec![]
-        }
+        Self { windows: vec![] }
     }
 }

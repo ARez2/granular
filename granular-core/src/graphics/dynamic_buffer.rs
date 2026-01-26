@@ -1,11 +1,18 @@
-use std::{marker::PhantomData, mem::{align_of, size_of}, num::NonZeroU64, ops::Range};
+use std::{
+    marker::PhantomData,
+    mem::{align_of, size_of},
+    num::NonZeroU64,
+    ops::Range,
+};
 
 use bytemuck::{cast_slice, cast_slice_mut};
 use bytemuck::{Pod, Zeroable};
-use wgpu::{BindingResource, Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, QueueWriteBufferView};
+use wgpu::{
+    BindingResource, Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor,
+    QueueWriteBufferView,
+};
 
 use super::graphics_system::GraphicsSystem;
-
 
 /// Manages a GPU-side `Buffer` and allows it to grow automatically to accomodate new data.
 /// Thanks to Douglas Dwyer for this
@@ -18,7 +25,7 @@ pub struct DynamicBuffer<T: Pod + Zeroable> {
     /// How the buffer will be used by the GPU.
     usage: BufferUsages,
     /// Marker data.
-    marker: PhantomData<T>
+    marker: PhantomData<T>,
 }
 
 impl<T: Pod + Zeroable> DynamicBuffer<T> {
@@ -29,22 +36,27 @@ impl<T: Pod + Zeroable> DynamicBuffer<T> {
 
     /// Creates a new dynamic buffer on the GPU with the given usages, ensuring that it
     /// can hold at least `len` instances of `T` before reallocating.
-    pub fn with_capacity(name: &str, gpu: &GraphicsSystem, mut usage: BufferUsages, len: usize) -> Self {
+    pub fn with_capacity(
+        name: &str,
+        gpu: &GraphicsSystem,
+        mut usage: BufferUsages,
+        len: usize,
+    ) -> Self {
         usage |= BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
-        
+
         let elements = (len * size_of::<T>()).next_power_of_two() as u64;
         let buffer = gpu.device().create_buffer(&BufferDescriptor {
             label: Some(name),
             size: 4.max(elements),
             usage,
-            mapped_at_creation: false
+            mapped_at_creation: false,
         });
 
         Self {
             buffer,
             dirty: false,
             usage,
-            marker: PhantomData
+            marker: PhantomData,
         }
     }
 
@@ -84,22 +96,32 @@ impl<T: Pod + Zeroable> DynamicBuffer<T> {
     }
 
     /// Returns a writer which can be used to overwrite this buffer's data within the provided range.
-    pub fn write_with<'a>(&'a mut self, gpu: &'a GraphicsSystem, range: Range<usize>) -> DynamicBufferWrite<'a, T> {
-        debug_assert!(align_of::<T>() <= 4, "Target type may only have a maximum alignment of 4 bytes.");
+    pub fn write_with<'a>(
+        &'a mut self,
+        gpu: &'a GraphicsSystem,
+        range: Range<usize>,
+    ) -> DynamicBufferWrite<'a, T> {
+        debug_assert!(
+            align_of::<T>() <= 4,
+            "Target type may only have a maximum alignment of 4 bytes."
+        );
         let start = (range.start * size_of::<T>()) as u64;
         let end = (range.end * size_of::<T>()) as u64;
         self.ensure_raw_size(gpu, end);
-        
+
         if let Some(size) = NonZeroU64::new(end - start) {
             DynamicBufferWrite {
-                write: Some(gpu.queue().write_buffer_with(&self.buffer, start, size).expect("Failed to write to dynamic buffer.")),
-                marker: PhantomData
+                write: Some(
+                    gpu.queue()
+                        .write_buffer_with(&self.buffer, start, size)
+                        .expect("Failed to write to dynamic buffer."),
+                ),
+                marker: PhantomData,
             }
-        }
-        else {
+        } else {
             DynamicBufferWrite {
                 write: None,
-                marker: PhantomData
+                marker: PhantomData,
             }
         }
     }
@@ -113,14 +135,21 @@ impl<T: Pod + Zeroable> DynamicBuffer<T> {
     fn ensure_raw_size(&mut self, gpu: &GraphicsSystem, size: u64) {
         let old_size = self.buffer.size();
         if old_size < size {
-            let old_buffer = std::mem::replace(&mut self.buffer, gpu.device().create_buffer(&BufferDescriptor {
-                label: Some("Dynamic buffer"),
-                size: (2 * old_size).max(size.next_power_of_two()),
-                usage: self.usage,
-                mapped_at_creation: false
-            }));
-            
-            let mut copy_encoder = gpu.device().create_command_encoder(&CommandEncoderDescriptor { label: Some("Dynamic buffer copy encoder") });
+            let old_buffer = std::mem::replace(
+                &mut self.buffer,
+                gpu.device().create_buffer(&BufferDescriptor {
+                    label: Some("Dynamic buffer"),
+                    size: (2 * old_size).max(size.next_power_of_two()),
+                    usage: self.usage,
+                    mapped_at_creation: false,
+                }),
+            );
+
+            let mut copy_encoder = gpu
+                .device()
+                .create_command_encoder(&CommandEncoderDescriptor {
+                    label: Some("Dynamic buffer copy encoder"),
+                });
             copy_encoder.copy_buffer_to_buffer(&old_buffer, 0, &self.buffer, 0, old_buffer.size());
             gpu.queue().submit(Some(copy_encoder.finish()));
 
@@ -134,7 +163,7 @@ pub struct DynamicBufferWrite<'a, T: Pod + Zeroable> {
     /// The buffer view to write data into, if any.
     write: Option<QueueWriteBufferView<'a>>,
     /// Marker data.
-    marker: PhantomData<T>
+    marker: PhantomData<T>,
 }
 
 impl<'a, T: Pod + Zeroable> std::fmt::Debug for DynamicBufferWrite<'a, T> {
@@ -155,8 +184,7 @@ impl<'a, T: Pod + Zeroable> std::ops::DerefMut for DynamicBufferWrite<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         if let Some(write) = self.write.as_mut() {
             cast_slice_mut::<_, T>(&mut **write)
-        }
-        else {
+        } else {
             &mut []
         }
     }

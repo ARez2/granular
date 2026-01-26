@@ -1,20 +1,24 @@
 #![allow(unused)]
 
+use geese::GeeseContextHandle;
 use std::path::Path;
 use wgpu::{Extent3d, Sampler, Texture, TextureView};
-use geese::GeeseContextHandle;
 
-use crate::graphics::{GraphicsSystem, TextureBundle};
 use super::{Asset, AssetSystem};
-
+use crate::graphics::{GraphicsSystem, TextureBundle};
 
 #[derive(Debug, PartialEq)]
 pub struct TextureAsset {
-    texture: TextureBundle
+    texture: TextureBundle,
 }
 impl TextureAsset {
     pub fn texture(&self) -> &TextureBundle {
         &self.texture
+    }
+}
+impl From<TextureBundle> for TextureAsset {
+    fn from(value: TextureBundle) -> Self {
+        Self { texture: value }
     }
 }
 impl Asset for TextureAsset {
@@ -24,10 +28,14 @@ impl Asset for TextureAsset {
         let queue = sys.queue();
 
         let img = image::open(path).unwrap().to_rgba8();
-        let extent = Extent3d {width: img.width(), height: img.height(), depth_or_array_layers: 1};
+        let extent = Extent3d {
+            width: img.width(),
+            height: img.height(),
+            depth_or_array_layers: 1,
+        };
 
         Self {
-            texture: TextureBundle::default(device, queue, extent, &img)
+            texture: TextureBundle::default(device, queue, extent, &img),
         }
     }
 }

@@ -2,16 +2,22 @@
 
 use bytemuck_derive::{Pod, Zeroable};
 use geese::*;
-use glam::{Vec2, IVec2};
+use glam::{IVec2, Vec2};
 use log::*;
-use wgpu::{Device, Queue, SurfaceConfiguration, Surface, TextureViewDescriptor, CommandEncoderDescriptor, SurfaceTexture, TextureView, CommandEncoder};
+use wgpu::{
+    CommandEncoder, CommandEncoderDescriptor, Device, Queue, Surface, SurfaceConfiguration,
+    SurfaceTexture, TextureView, TextureViewDescriptor,
+};
 use winit::dpi::PhysicalSize;
 
 use super::{graphics_backend, GraphicsBackend, WindowSystem};
 
 pub type FrameData = Option<(SurfaceTexture, TextureView, CommandEncoder)>;
-pub type FrameDataMut<'a> = Option<&'a mut (wgpu::SurfaceTexture, wgpu::TextureView, wgpu::CommandEncoder)>;
-
+pub type FrameDataMut<'a> = Option<&'a mut (
+    wgpu::SurfaceTexture,
+    wgpu::TextureView,
+    wgpu::CommandEncoder,
+)>;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -33,21 +39,21 @@ impl Vertex {
 }
 pub const VERTEX_SIZE: usize = std::mem::size_of::<Vertex>();
 
-
-
 pub struct GraphicsSystem {
     ctx: GeeseContextHandle<Self>,
     surface_config: SurfaceConfiguration,
     frame_data: FrameData,
     surface: Surface<'static>,
     device: Device,
-    queue: Queue
+    queue: Queue,
 }
 impl GraphicsSystem {
     pub fn request_redraw(&self) {
-        self.ctx.get::<WindowSystem>().window_handle().request_redraw();
+        self.ctx
+            .get::<WindowSystem>()
+            .window_handle()
+            .request_redraw();
     }
-
 
     pub fn resize_surface(&mut self, new_size: PhysicalSize<u32>) {
         self.surface_config.width = new_size.width.max(1);
@@ -56,11 +62,17 @@ impl GraphicsSystem {
     }
 
     pub fn begin_frame(&mut self) {
-        let frame = self.surface.get_current_texture().expect("Failed to acquire next swapchain texture");
-        let view = frame.texture.create_view(&TextureViewDescriptor{..Default::default()});
-        let encoder = self.device.create_command_encoder(
-            &CommandEncoderDescriptor {
-                label: Some("Command encoder")
+        let frame = self
+            .surface
+            .get_current_texture()
+            .expect("Failed to acquire next swapchain texture");
+        let view = frame.texture.create_view(&TextureViewDescriptor {
+            ..Default::default()
+        });
+        let encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("Command encoder"),
             });
         self.frame_data = Some((frame, view, encoder))
     }
@@ -107,37 +119,44 @@ impl GeeseSystem for GraphicsSystem {
             let immut_backend = ctx.get::<GraphicsBackend>();
             let window = ctx.get::<WindowSystem>();
             window_size = window.window_handle().inner_size();
-            surface = immut_backend.instance().create_surface(window.window_handle()).unwrap();
+            surface = immut_backend
+                .instance()
+                .create_surface(window.window_handle())
+                .unwrap();
         }
         {
             let mut mut_backend = ctx.get_mut::<GraphicsBackend>();
-            let adapter = pollster::block_on(mut_backend.instance().request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })).expect("Could not create an adapter!");
+            let adapter = pollster::block_on(mut_backend.instance().request_adapter(
+                &wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::default(),
+                    compatible_surface: Some(&surface),
+                    force_fallback_adapter: false,
+                },
+            ))
+            .expect("Could not create an adapter!");
             mut_backend.set_adapter(adapter);
         }
 
         let backend = ctx.get::<GraphicsBackend>();
         let adapter = backend.adapter();
         // Create the logical device and command queue
-        let (device, queue) = pollster::block_on(
-            adapter.request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: wgpu::Features::TEXTURE_BINDING_ARRAY | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
-                    // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-                    required_limits: adapter.limits(),
-                },
-                None,
-            )).expect("Failed to create device");
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: None,
+                required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
+                    | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+                // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
+                required_limits: adapter.limits(),
+            },
+            None,
+        ))
+        .expect("Failed to create device");
 
         let swapchain_capabilities = surface.get_capabilities(adapter);
-        let swapchain_format = swapchain_capabilities.formats.iter()
-            .find(|format| {
-                format.is_srgb()
-            })
+        let swapchain_format = swapchain_capabilities
+            .formats
+            .iter()
+            .find(|format| format.is_srgb())
             .unwrap_or(&wgpu::TextureFormat::Bgra8UnormSrgb);
         debug!("Swapchain format: {:?}", swapchain_format);
         let config = wgpu::SurfaceConfiguration {
@@ -150,9 +169,9 @@ impl GeeseSystem for GraphicsSystem {
             present_mode: wgpu::PresentMode::AutoNoVsync,
             alpha_mode: swapchain_capabilities.alpha_modes[0],
             view_formats: vec![],
-            desired_maximum_frame_latency: 2
+            desired_maximum_frame_latency: 2,
         };
-    
+
         surface.configure(&device, &config);
 
         drop(backend);
@@ -163,7 +182,7 @@ impl GeeseSystem for GraphicsSystem {
             queue,
             surface,
             surface_config: config,
-            frame_data: None
+            frame_data: None,
         }
     }
 }

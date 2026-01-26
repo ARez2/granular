@@ -1,10 +1,7 @@
-use std::{any::Any, path::Path};
 use geese::GeeseContextHandle;
+use std::{any::Any, path::Path};
 
 use super::{Asset, AssetSystem};
-
-
-
 
 pub(super) trait AssetHolder {
     fn as_any(&self) -> &dyn Any;
@@ -12,20 +9,18 @@ pub(super) trait AssetHolder {
 }
 
 pub(super) struct TypedAssetHolder<T: Asset> {
-    value: T
+    value: T,
 }
 impl<T: Asset> TypedAssetHolder<T> {
     pub fn new(value: T) -> Self {
-        Self {
-            value
-        }
+        Self { value }
     }
 }
 impl<T: Asset> AssetHolder for TypedAssetHolder<T> {
     fn as_any(&self) -> &dyn Any {
         &self.value
     }
-    
+
     fn update_from_path(&mut self, ctx: &GeeseContextHandle<AssetSystem>, path: &Path) {
         self.value = T::from_path(ctx, path);
     }

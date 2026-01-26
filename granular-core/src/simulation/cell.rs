@@ -1,30 +1,26 @@
 use palette::Srgba;
 
-use super::grid::GridPos;
-
+use crate::material::Material;
 
 pub type CellColor = Srgba<u8>;
 
-
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Cell {
-    pos: GridPos,
-    color: CellColor // Sand: CellColor::new(221, 193, 48, 255)
+    pub color: CellColor, // Sand: CellColor::new(221, 193, 48, 255)
+    pub material: Material,
+    pub last_processed_in_tick: usize,
 }
 impl Cell {
-    pub fn new(pos: GridPos, color: CellColor) -> Self {
+    pub const fn new(material: Material) -> Self {
         Self {
-            pos,
-            color
+            color: material.color(),
+            material,
+            last_processed_in_tick: 0,
         }
     }
 
-    pub fn pos(&self) -> GridPos {
-        self.pos
-    }
-
-    pub fn color(&self) -> &CellColor {
-        &self.color
+    pub fn is_empty(&self) -> bool {
+        self.material == Material::Empty
     }
 }
 impl Eq for Cell {}

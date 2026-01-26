@@ -1,6 +1,7 @@
-use wgpu::{Device, Extent3d, ImageDataLayout, Queue, Sampler, SamplerDescriptor, Texture, TextureDescriptor, TextureView, TextureViewDescriptor};
-
-
+use wgpu::{
+    Device, Extent3d, ImageDataLayout, Queue, Sampler, SamplerDescriptor, Texture,
+    TextureDescriptor, TextureView, TextureViewDescriptor,
+};
 
 #[derive(Debug)]
 pub struct TextureBundle {
@@ -8,12 +9,21 @@ pub struct TextureBundle {
     texture: Texture,
     data_layout: ImageDataLayout,
     view: TextureView,
-    sampler: Sampler
+    sampler: Sampler,
 }
 impl TextureBundle {
-    pub fn new(device: &Device, queue: &Queue, label: &str, extent: Extent3d,
-        tex_descriptor: TextureDescriptor, view_descriptor: &TextureViewDescriptor,
-        sampler_descriptor: &SamplerDescriptor, data: &[u8], data_layout: ImageDataLayout) -> Self {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        device: &Device,
+        queue: &Queue,
+        label: &str,
+        extent: Extent3d,
+        tex_descriptor: TextureDescriptor,
+        view_descriptor: &TextureViewDescriptor,
+        sampler_descriptor: &SamplerDescriptor,
+        data: &[u8],
+        data_layout: ImageDataLayout,
+    ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             view_formats: &[],
@@ -21,7 +31,7 @@ impl TextureBundle {
         });
         let view = texture.create_view(view_descriptor);
         let sampler = device.create_sampler(sampler_descriptor);
-        
+
         queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &texture,
@@ -33,16 +43,15 @@ impl TextureBundle {
             data_layout,
             extent,
         );
-        
+
         Self {
             texture,
             data_layout,
             extent,
             view,
-            sampler
+            sampler,
         }
     }
-
 
     pub fn default(device: &Device, queue: &Queue, extent: Extent3d, data: &[u8]) -> Self {
         let tex_descriptor = wgpu::TextureDescriptor {
@@ -56,7 +65,7 @@ impl TextureBundle {
             view_formats: &[],
         };
         let view_descriptor = TextureViewDescriptor::default();
-        
+
         let sampler_descriptor = wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -71,8 +80,18 @@ impl TextureBundle {
             bytes_per_row: Some(4 * extent.width),
             rows_per_image: Some(extent.height),
         };
-        
-        Self::new(device, queue, "New default texture", extent, tex_descriptor, &view_descriptor, &sampler_descriptor, data, data_layout)
+
+        Self::new(
+            device,
+            queue,
+            "New default texture",
+            extent,
+            tex_descriptor,
+            &view_descriptor,
+            &sampler_descriptor,
+            data,
+            data_layout,
+        )
     }
 
     pub fn view(&self) -> &TextureView {
@@ -103,9 +122,9 @@ impl TextureBundle {
 }
 impl PartialEq for TextureBundle {
     fn eq(&self, other: &Self) -> bool {
-        self.extent == other.extent &&
-        self.texture.global_id() == other.texture.global_id() &&
-        self.view.global_id() == other.view.global_id() &&
-        self.sampler.global_id() == other.sampler.global_id()
+        self.extent == other.extent
+            && self.texture.global_id() == other.texture.global_id()
+            && self.view.global_id() == other.view.global_id()
+            && self.sampler.global_id() == other.sampler.global_id()
     }
 }

@@ -3,9 +3,8 @@
 use geese::*;
 use winit::event_loop::EventLoop;
 
-
 pub struct EventLoopSystem {
-    event_loop: Option<EventLoop<()>>
+    event_loop: Option<EventLoop<()>>,
 }
 impl EventLoopSystem {
     pub fn get(&self) -> &EventLoop<()> {

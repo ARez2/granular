@@ -1,4 +1,4 @@
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 use geese::*;
 
@@ -8,7 +8,7 @@ pub struct TickTiming {
     ctx: GeeseContextHandle<Self>,
     last_tick: Instant,
     interval: Duration,
-    tick_count: u64
+    tick_count: u64,
 }
 
 impl TickTiming {
@@ -61,6 +61,11 @@ impl GeeseSystem for TickTiming {
         let tick_count = 0;
         ctx.raise_event(on::Tick);
 
-        Self { ctx, last_tick, interval, tick_count }
+        Self {
+            ctx,
+            last_tick,
+            interval,
+            tick_count,
+        }
     }
 }
