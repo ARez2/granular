@@ -14,6 +14,13 @@ use crate::{
     AssetSystem, BatchRenderer, Camera, Simulation, NUM_CHUNKS_TOTAL,
 };
 
+#[derive(Debug, Clone)]
+struct ChunkRenderData {
+    position: IVec2,
+    chunk_update_this_tick: bool,
+    chunk_texture_data_changed: bool,
+}
+
 #[derive(Debug)]
 pub struct SimulationRenderer {
     ctx: GeeseContextHandle<Self>,
@@ -24,48 +31,70 @@ pub struct SimulationRenderer {
     chunk_textures: [AssetHandle<TextureAsset>; NUM_CHUNKS_TOTAL],
 }
 impl SimulationRenderer {
+    /// Writes the chunks textures and then renders them using the [`BatchRenderer`].
     pub fn on_draw(&mut self, _: &crate::events::Draw) {
         #[cfg(feature = "trace")]
         let _span = info_span!("SimulationRenderer::on_draw").entered();
 
+        let sim = self.ctx.get::<Simulation>();
         let graphics_sys = self.ctx.get::<GraphicsSystem>();
         let asset_sys = self.ctx.get::<AssetSystem>();
-        let sim = self.ctx.get::<Simulation>();
+        let sim_tick = sim.tick;
+        // Collect the chunk data here, because we need to borrow the BatchRenderer
+        // mutably later and we cant have Simulation borrowed at the same time
+        let mut chunk_render_data = vec![
+            ChunkRenderData {
+                position: IVec2::ZERO,
+                chunk_update_this_tick: false,
+                chunk_texture_data_changed: false,
+            };
+            NUM_CHUNKS_TOTAL
+        ];
+
         #[cfg(feature = "trace")]
         let span_write_chunks = info_span!("SimulationRenderer write chunk textures");
         #[cfg(feature = "trace")]
         let span_guard = span_write_chunks.enter();
-        // Collect the chunk positions here, because we need to borrow the BatchRenderer
-        // mutably later and we cant have Simulation borrowed at the same time
-        let mut chunk_positions = vec![IVec2::ZERO; NUM_CHUNKS_TOTAL];
-        let mut should_chunk_update = vec![];
         for (idx, chunk) in sim.get_chunks().iter().enumerate() {
-            // Fetch the color data from the chunk itself
-            let tex_data = chunk.get_texture_data();
-            // Get the texture for this chunk from ourself
-            let sim_texture = asset_sys
-                .get::<TextureAsset>(&self.chunk_textures[idx])
-                .texture();
-            graphics_sys.queue().write_texture(
-                sim_texture.texture().as_image_copy(),
-                tex_data,
-                sim_texture.data_layout(),
-                sim_texture.extent(),
-            );
-            chunk_positions[idx] = chunk.position;
-            if Simulation::DEBUG_UPDATE {
-                should_chunk_update.push(chunk.should_update(((sim.tick / 16) % 4) as u8))
-            };
+            chunk_render_data[idx].position = chunk.position;
+            chunk_render_data[idx].chunk_update_this_tick =
+                chunk.should_update(((sim_tick / 16) % 4) as u8);
+            chunk_render_data[idx].chunk_texture_data_changed = chunk.is_texture_data_dirty();
+
+            // Write the chunk texture only if it has changed
+            if chunk.is_texture_data_dirty() {
+                // Get the texture for this chunk from ourself
+                let sim_texture = asset_sys
+                    .get::<TextureAsset>(&self.chunk_textures[idx])
+                    .texture();
+                graphics_sys.queue().write_texture(
+                    sim_texture.texture().as_image_copy(),
+                    chunk.get_texture_data(),
+                    sim_texture.data_layout(),
+                    sim_texture.extent(),
+                );
+            }
         }
+        drop(span_guard);
         drop(graphics_sys);
         drop(asset_sys);
         drop(sim);
-        drop(span_guard);
+
+        let mut sim_mut = self.ctx.get_mut::<Simulation>();
+
+        // Now if the chunk texture has changed, we will have written it to its texture earlier
+        // so now, we can set the chunk texture to be clean again
+        for (idx, data) in chunk_render_data.iter().enumerate() {
+            if data.chunk_texture_data_changed {
+                sim_mut.get_chunks_mut()[idx].set_texture_data_clean();
+            }
+        }
+        drop(sim_mut);
 
         let mut quad_renderer = self.ctx.get_mut::<BatchRenderer>();
-        for (idx, chunk_pos) in chunk_positions.into_iter().enumerate() {
+        for (idx, chunk_data) in chunk_render_data.into_iter().enumerate() {
             let chunk_center =
-                chunk_pos * IVec2::new(1, 1) * CHUNK_SIZE as i32 * self.display_scale * 2;
+                chunk_data.position * IVec2::new(1, 1) * CHUNK_SIZE as i32 * self.display_scale * 2;
             let chunk_display_size = IVec2::new(
                 CHUNK_SIZE as i32 * self.display_scale,
                 CHUNK_SIZE as i32 * self.display_scale,
@@ -79,7 +108,7 @@ impl SimulationRenderer {
                 },
                 0,
             );
-            if Simulation::DEBUG_UPDATE && should_chunk_update[idx] {
+            if Simulation::DEBUG_UPDATE && chunk_data.chunk_update_this_tick {
                 quad_renderer.draw_quad(
                     &graphics::Quad {
                         center: chunk_center,
@@ -99,7 +128,7 @@ impl GeeseSystem for SimulationRenderer {
         .with::<Mut<AssetSystem>>()
         .with::<Mut<BatchRenderer>>()
         .with::<Camera>()
-        .with::<Simulation>();
+        .with::<Mut<Simulation>>();
 
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers().with(Self::on_draw);
 

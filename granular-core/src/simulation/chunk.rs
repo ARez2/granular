@@ -121,4 +121,12 @@ impl Chunk {
     pub fn get_texture_data(&self) -> &[u8] {
         self.get_grid().get_texture_data()
     }
+
+    pub fn is_texture_data_dirty(&self) -> bool {
+        self.get_grid().is_texture_data_dirty()
+    }
+
+    pub fn set_texture_data_clean(&mut self) {
+        self.get_grid_mut().set_texture_data_clean();
+    }
 }

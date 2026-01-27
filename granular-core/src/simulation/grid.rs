@@ -16,6 +16,7 @@ pub struct CellGrid {
     cells: [Cell; NUM_CELLS_IN_CHUNK],
 
     texture_data: Vec<u8>,
+    texture_data_dirty: bool,
 }
 impl CellGrid {
     // Creates a new empty CellGrid. You can also use `CellGrid::empty()`
@@ -30,6 +31,7 @@ impl CellGrid {
         Self {
             cells: [Cell::new(Material::Empty); NUM_CELLS_IN_CHUNK],
             texture_data,
+            texture_data_dirty: true,
         }
     }
 
@@ -46,11 +48,21 @@ impl CellGrid {
         Self {
             cells: [Cell::new(material); NUM_CELLS_IN_CHUNK],
             texture_data,
+            texture_data_dirty: true,
         }
     }
 
+    /// Fetches the texture_data for rendering. Sets dirty back to false
     pub(super) fn get_texture_data(&self) -> &[u8] {
         &self.texture_data
+    }
+
+    pub(super) fn is_texture_data_dirty(&self) -> bool {
+        self.texture_data_dirty
+    }
+
+    pub(super) fn set_texture_data_clean(&mut self) {
+        self.texture_data_dirty = false;
     }
 
     /// Converts the position into an index to be used in self.data
@@ -98,6 +110,7 @@ impl CellGrid {
     }
 
     pub fn set_color_at_grididx(&mut self, grid_idx: usize, color: &CellColor) {
+        self.texture_data_dirty = true;
         self.texture_data[grid_idx * 4 + 0] = color.red;
         self.texture_data[grid_idx * 4 + 1] = color.green;
         self.texture_data[grid_idx * 4 + 2] = color.blue;

@@ -2,10 +2,7 @@ use glam::IVec2;
 use grid::CellGrid;
 use palette::Srgba;
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
-use std::{
-    cell::UnsafeCell,
-    time::{Duration, Instant},
-};
+use std::cell::UnsafeCell;
 
 pub mod cell;
 pub mod chunk;
@@ -38,6 +35,9 @@ impl Simulation {
 
         for chunk_idx in 0..self.chunks.len() {
             let chunk_pos = self.chunks[chunk_idx].position;
+            // Calculate the halo for each chunk. We need to do this here, because if we were to do
+            // it in the new(), the adresses of the pointers would change due to moving the chunks
+            // list into the struct.
             for (neigh_idx, neigh_dir) in HALO_DIRECTIONS.iter().enumerate() {
                 // Calculate the position of the neighbor based on the halo direction
                 let neigh_pos = chunk_pos + IVec2::from(*neigh_dir);
@@ -56,16 +56,16 @@ impl Simulation {
         &self.chunks
     }
 
+    pub fn get_chunks_mut(&mut self) -> &mut [Chunk; NUM_CHUNKS_TOTAL] {
+        &mut self.chunks
+    }
+
+    /// This is a pretty important function. We do a wrapping of the chunk position so that for ex.
+    /// when a column of chunks on the left is loaded, the column on the right gets unloaded.
+    /// For that, we calculate a 2D wrapped position and then convert that 2D position into a 1D index.
     fn get_idx_in_chunks(chunk_pos: IVec2) -> usize {
-        // pos.x = 0 -> arr_x = (0 + 4) % 4 = 0
-        // pos.x = 4 -> arr_x = (4 + 4) % 4 = 0
-        // pos.x = 5 -> arr_x = (5 + 4) % 4 = 1
         let arr_x = (chunk_pos.x + (NUM_CHUNKS_X as i32 / 2)).rem_euclid(NUM_CHUNKS_X as i32);
         let arr_y = (chunk_pos.y + (NUM_CHUNKS_Y as i32 / 2)).rem_euclid(NUM_CHUNKS_Y as i32);
-        // info!(
-        //     "  Chunk pos: {:?} at 2D index {},{}",
-        //     chunk_pos, arr_x, arr_y
-        // );
         arr_y as usize * NUM_CHUNKS_X + arr_x as usize
     }
 
@@ -143,15 +143,14 @@ impl Simulation {
         } else {
             #[allow(clippy::collapsible_else_if)]
             if self.tick > 60 {
-                for phase in 0..4 {
-                    //let start = Instant::now();
+                for phase in 0..4u8 {
+                    let _phase_span = span!(Level::INFO, "update phase: ", phase).entered();
                     self.chunks.par_iter_mut().for_each(|chunk| {
                         let should_update = chunk.should_update(phase);
                         if should_update {
                             chunk.update(self.tick);
                         }
                     });
-                    //aggregated_time += start.elapsed();
                 }
             }
         }
@@ -189,6 +188,8 @@ impl GeeseSystem for Simulation {
                 idx += 1;
             }
         }
+        // if we were to calculate halos here, the adresses of the pointers
+        // would change due to moving the chunks into the struct afterwards
 
         Self {
             ctx,
