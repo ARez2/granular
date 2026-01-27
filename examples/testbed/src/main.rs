@@ -4,8 +4,6 @@ use palette::{Srgba, WithAlpha};
 use regex::Regex;
 use std::error::Error;
 use time::macros::format_description;
-#[cfg(feature = "trace")]
-use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{
     fmt::{self, format::FmtSpan, time::FormatTime},
     layer::SubscriberExt,
