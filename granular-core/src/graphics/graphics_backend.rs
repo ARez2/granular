@@ -31,6 +31,7 @@ impl GeeseSystem for GraphicsBackend {
         let adapter =
             pollster::block_on(instance.request_adapter(&RequestAdapterOptions::default()))
                 .expect("Cannot request any adapter");
+        trace!("Got adapter with limits: {:#?}", adapter.limits());
 
         Self { instance, adapter }
     }

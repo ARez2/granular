@@ -113,7 +113,6 @@ impl BatchRenderer {
     const MAX_QUAD_COUNT: usize = 1000;
     const MAX_VERTEX_COUNT: usize = BatchRenderer::MAX_QUAD_COUNT * 4;
     const MAX_INDEX_COUNT: usize = BatchRenderer::MAX_QUAD_COUNT * 6;
-    const MAX_TEXTURE_COUNT: usize = 15;
 
     pub(super) fn end_frame(&mut self) {
         #[cfg(feature = "trace")]
@@ -281,7 +280,12 @@ impl BatchRenderer {
             }
 
             // In case we run out of bind slots, we create a new batch (and therefore new bind group)
-            if textures_in_batch.len() >= Self::MAX_TEXTURE_COUNT && !texture_in_batch {
+
+            let max_textures = {
+                let graphics_sys = self.ctx.get::<GraphicsSystem>();
+                graphics_sys.device().limits().max_bindings_per_bind_group / 2
+            };
+            if textures_in_batch.len() >= max_textures as usize && !texture_in_batch {
                 let vertices_range = (last_batch_end_quad_idx * 4)..(total_quads_processed * 4);
                 let indices_end = num_quads_in_batch as u32 * 6;
                 create_new_batch(
