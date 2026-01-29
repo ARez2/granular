@@ -174,7 +174,7 @@ impl GeeseSystem for Simulation {
         for y in -(NUM_CHUNKS_Y as i32) / 2..NUM_CHUNKS_Y as i32 / 2 {
             for x in -(NUM_CHUNKS_X as i32) / 2..NUM_CHUNKS_X as i32 / 2 {
                 let position = IVec2::new(x, y);
-                let mat = if y == 0 {
+                let mat = if y == -2 && (-2..2).contains(&x) {
                     Material::Sand
                 } else {
                     Material::Empty
