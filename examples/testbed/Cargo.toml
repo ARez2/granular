@@ -20,7 +20,7 @@ tracing-subscriber = { version = "0.3.22", features = [
 
 
 tracing-tracy = { version = "0.11.4", optional = true }
-time = { version = "0.3.46", features = ["macros"] }
+time = { version = "0.3.47", features = ["macros"] }
 
 [features]
 trace = ["dep:tracing-tracy"]
