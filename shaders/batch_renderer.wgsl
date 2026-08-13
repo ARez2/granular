@@ -1,3 +1,5 @@
+enable wgpu_binding_array;
+
 struct VertexInput {
     @location(0) position: vec2<i32>,
     @location(1) color: vec4<f32>,
@@ -9,7 +11,7 @@ struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) tex_coords: vec2<f32>,
-    @location(2) tex_index: i32,
+    @interpolate(flat) @location(2) tex_index: i32,
 }
 
 struct Globals {
@@ -31,9 +33,9 @@ fn vert_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
-@group(0) @binding(1)
+@group(1) @binding(0)
 var textures: binding_array<texture_2d<f32>>;
-@group(0) @binding(2)
+@group(1) @binding(1)
 var samplers: binding_array<sampler>;
 
 

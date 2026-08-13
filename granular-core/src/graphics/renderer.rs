@@ -68,7 +68,7 @@ impl GeeseSystem for Renderer {
     const DEPENDENCIES: geese::Dependencies = dependencies()
         .with::<Mut<GraphicsSystem>>()
         .with::<Mut<BatchRenderer>>()
-        .with::<Mut<SimulationRenderer>>()
+        // .with::<Mut<SimulationRenderer>>()
         .with::<Mut<Camera>>();
 
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {

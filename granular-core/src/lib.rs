@@ -1,14 +1,18 @@
 use rustc_hash::FxHashMap as HashMap;
 use std::{
+    future::Future,
     marker::PhantomData,
     time::{Duration, Instant},
 };
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, DeviceId, WindowEvent},
-    event_loop::ActiveEventLoop,
+    event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     window::WindowId,
 };
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 
 pub mod utils;
 use utils::*;
@@ -24,9 +28,6 @@ pub mod graphics;
 pub use graphics::{BatchRenderer, Camera};
 use graphics::{Renderer, WindowSystem};
 
-mod eventloop_system;
-pub use eventloop_system::EventLoopSystem;
-
 mod filewatcher;
 use filewatcher::FileWatcher;
 
@@ -35,6 +36,22 @@ pub use input_system::{InputAction, InputActionTrigger, InputSystem};
 
 pub mod simulation;
 pub use simulation::*;
+
+use crate::graphics::GraphicsSystem;
+
+/// Runs a future to completion. On native this blocks synchronously via pollster.
+/// On wasm this spawns a local task so control returns to the browser immediately.
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn(f: impl Future<Output = ()> + 'static) {
+    pollster::block_on(f);
+}
+
+/// Runs a future to completion. On native this blocks synchronously via pollster.
+/// On wasm this spawns a local task so control returns to the browser immediately.
+#[cfg(target_arch = "wasm32")]
+fn spawn(f: impl Future<Output = ()> + 'static) {
+    wasm_bindgen_futures::spawn_local(f);
+}
 
 pub mod events {
     pub struct Initialized {}
@@ -52,8 +69,23 @@ pub mod events {
 }
 
 #[derive(Debug)]
+enum CustomWinitEvent {
+    GraphicsSystemInitialized(graphics::GraphicsState),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum EngineState {
+    Uninitialized,
+    Preparing,
+    Running,
+}
+
+#[derive(Debug)]
 pub struct GranularEngine<AppSystem: GeeseSystem + std::fmt::Debug> {
     ctx: GeeseContext,
+    event_loop: Option<EventLoop<CustomWinitEvent>>,
+    event_loop_proxy: EventLoopProxy<CustomWinitEvent>,
+    state: EngineState,
     /// Current frame
     frame: u64,
     /// When each tick (in ms) last occured
@@ -70,21 +102,30 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
         #[cfg(feature = "trace")]
         let _span = info_span!("GranularEngine::new").entered();
 
-        let mut ctx: GeeseContext = GeeseContext::default();
-        ctx.flush()
-            .with(geese::notify::add_system::<WindowSystem>())
-            .with(geese::notify::add_system::<EventLoopSystem>())
-            .with(geese::notify::add_system::<FileWatcher>())
-            .with(geese::notify::add_system::<InputSystem>());
-
         let now = Instant::now();
         let mut last_ticks = HashMap::default();
         for fixed_tick in events::timing::FIXED_TICKS {
             last_ticks.insert(Duration::from_millis(fixed_tick), now);
         }
 
+        let mut ctx = GeeseContext::default();
+        ctx.flush()
+            .with(geese::notify::add_system::<WindowSystem>())
+            .with(geese::notify::add_system::<GraphicsSystem>())
+            .with(geese::notify::add_system::<FileWatcher>())
+            .with(geese::notify::add_system::<InputSystem>());
+
+        info!("Core systems added.");
+
+        let event_loop = EventLoop::with_user_event().build().unwrap();
+        event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+        let proxy = event_loop.create_proxy();
+
         Self {
             ctx,
+            event_loop: Some(event_loop),
+            event_loop_proxy: proxy,
+            state: EngineState::Uninitialized,
             frame: 0,
             last_ticks,
             application: PhantomData,
@@ -96,12 +137,17 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
     }
 
     pub fn run(&mut self) {
-        info!("GranularEngine run");
-        let mut event_loop_sys = self.ctx.get_mut::<EventLoopSystem>();
-        let event_loop = event_loop_sys.take();
-        drop(event_loop_sys);
-        event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
-        let _ = event_loop.run_app(self);
+        let event_loop = self
+            .event_loop
+            .take()
+            .expect("Event loop was already taken!");
+        #[cfg(target_arch = "wasm32")]
+        {
+            use winit::platform::web::EventLoopExtWebSys;
+            event_loop.spawn_app(self);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        event_loop.run_app(self).unwrap();
     }
 
     pub fn update(&mut self) {
@@ -143,6 +189,9 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
         if self.frame.is_multiple_of(30) {
             buffer = buffer.with(events::timing::Tick::<30>);
         };
+        if self.frame.is_multiple_of(10) {
+            buffer = buffer.with(events::timing::Tick::<10>);
+        };
         if self.frame.is_multiple_of(2) {
             buffer = buffer.with(events::timing::Tick::<2>);
         };
@@ -152,22 +201,49 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
     }
 }
 // Implement the winit::ApplicationHandler trait
-impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler for GranularEngine<AppSystem> {
+impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEvent>
+    for GranularEngine<AppSystem>
+{
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(feature = "trace")]
         let _span = info_span!("GranularEngine::resumed").entered();
-        info!("Resumed!");
+
+        self.state = EngineState::Preparing;
+
         {
             let mut window_sys = self.ctx.get_mut::<WindowSystem>();
             window_sys.init(event_loop);
         }
-        self.ctx
-            .flush()
-            .with(geese::notify::add_system::<Renderer>())
-            .with(geese::notify::add_system::<AssetSystem>())
-            .with(geese::notify::add_system::<Simulation>())
-            .with(geese::notify::add_system::<AppSystem>())
-            .with(events::Initialized {});
+        {
+            let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+            graphics_sys.init(event_loop, self.event_loop_proxy.clone());
+        }
+    }
+
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: CustomWinitEvent) {
+        match event {
+            CustomWinitEvent::GraphicsSystemInitialized(graphics_state) => {
+                let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+                graphics_sys.initialize_callback(graphics_state);
+                drop(graphics_sys);
+
+                self.ctx
+                    .flush()
+                    .with(geese::notify::add_system::<Renderer>())
+                    .with(geese::notify::add_system::<AssetSystem>())
+                    .with(geese::notify::add_system::<Simulation>())
+                    .with(geese::notify::add_system::<AppSystem>())
+                    .with(events::Initialized {});
+                self.state = EngineState::Running;
+                info!("Everything is initialized.");
+
+                {
+                    let window_size = self.ctx.get::<WindowSystem>().window_handle().inner_size();
+                    let mut renderer = self.ctx.get_mut::<Renderer>();
+                    renderer.resize(window_size);
+                }
+            }
+        }
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
@@ -177,6 +253,9 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler for GranularEn
     }
 
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: winit::event::StartCause) {
+        if self.state != EngineState::Running {
+            return;
+        }
         #[cfg(feature = "trace")]
         let _span = info_span!("GranularEngine::new_events").entered();
         {
@@ -194,6 +273,10 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler for GranularEn
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        if self.state != EngineState::Running {
+            return;
+        }
+
         #[cfg(feature = "trace")]
         let _span = info_span!("GranularEngine::window_event").entered();
         match event {

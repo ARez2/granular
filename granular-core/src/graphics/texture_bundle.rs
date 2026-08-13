@@ -1,5 +1,5 @@
 use wgpu::{
-    Device, Extent3d, ImageDataLayout, Queue, Sampler, SamplerDescriptor, Texture,
+    Device, Extent3d, Queue, Sampler, SamplerDescriptor, TexelCopyBufferLayout, Texture,
     TextureDescriptor, TextureView, TextureViewDescriptor,
 };
 
@@ -7,7 +7,7 @@ use wgpu::{
 pub struct TextureBundle {
     extent: Extent3d,
     texture: Texture,
-    data_layout: ImageDataLayout,
+    data_layout: TexelCopyBufferLayout,
     view: TextureView,
     sampler: Sampler,
 }
@@ -22,7 +22,7 @@ impl TextureBundle {
         view_descriptor: &TextureViewDescriptor,
         sampler_descriptor: &SamplerDescriptor,
         data: &[u8],
-        data_layout: ImageDataLayout,
+        data_layout: TexelCopyBufferLayout,
     ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
@@ -33,7 +33,7 @@ impl TextureBundle {
         let sampler = device.create_sampler(sampler_descriptor);
 
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
@@ -72,10 +72,10 @@ impl TextureBundle {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         };
-        let data_layout = wgpu::ImageDataLayout {
+        let data_layout = wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(4 * extent.width),
             rows_per_image: Some(extent.height),
@@ -106,7 +106,7 @@ impl TextureBundle {
         &self.texture
     }
 
-    pub fn data_layout(&self) -> ImageDataLayout {
+    pub fn data_layout(&self) -> TexelCopyBufferLayout {
         self.data_layout
     }
 
@@ -123,8 +123,8 @@ impl TextureBundle {
 impl PartialEq for TextureBundle {
     fn eq(&self, other: &Self) -> bool {
         self.extent == other.extent
-            && self.texture.global_id() == other.texture.global_id()
-            && self.view.global_id() == other.view.global_id()
-            && self.sampler.global_id() == other.sampler.global_id()
+            && self.texture == other.texture
+            && self.view == other.view
+            && self.sampler == other.sampler
     }
 }

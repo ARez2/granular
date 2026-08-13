@@ -3,20 +3,25 @@
 use bytemuck_derive::{Pod, Zeroable};
 use glam::{IVec2, Vec2};
 use wgpu::{
-    CommandEncoder, CommandEncoderDescriptor, Device, Queue, Surface, SurfaceConfiguration,
-    SurfaceTexture, TextureView, TextureViewDescriptor,
+    naga::back, Adapter, CommandEncoder, CommandEncoderDescriptor, CurrentSurfaceTexture, Device,
+    Instance, Queue, Surface, SurfaceConfiguration, SurfaceTexture, TextureView,
+    TextureViewDescriptor,
 };
-use winit::dpi::PhysicalSize;
+use winit::{
+    dpi::PhysicalSize,
+    event_loop::{ActiveEventLoop, EventLoopProxy},
+};
 
-use super::{graphics_backend, GraphicsBackend, WindowSystem};
-use crate::utils::*;
+use super::WindowSystem;
+use crate::{utils::*, CustomWinitEvent};
 
-pub type FrameData = Option<(SurfaceTexture, TextureView, CommandEncoder)>;
-pub type FrameDataMut<'a> = Option<&'a mut (
-    wgpu::SurfaceTexture,
-    wgpu::TextureView,
-    wgpu::CommandEncoder,
-)>;
+pub type FrameData = (
+    SurfaceTexture,
+    TextureView,
+    CommandEncoder,
+    std::sync::Arc<winit::window::Window>,
+);
+pub type FrameDataMut<'a> = Option<&'a mut FrameData>;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -38,15 +43,112 @@ impl Vertex {
 }
 pub const VERTEX_SIZE: usize = std::mem::size_of::<Vertex>();
 
-pub struct GraphicsSystem {
-    ctx: GeeseContextHandle<Self>,
+#[derive(Debug)]
+pub struct GraphicsState {
+    instance: Instance,
+    adapter: Adapter,
     surface_config: SurfaceConfiguration,
-    frame_data: FrameData,
+    frame_data: Option<FrameData>,
     surface: Surface<'static>,
     device: Device,
     queue: Queue,
 }
+
+enum GraphicsSystemState {
+    Uninitialized,
+    Loading,
+    Ready(GraphicsState),
+}
+
+pub struct GraphicsSystem {
+    ctx: GeeseContextHandle<Self>,
+    state: GraphicsSystemState,
+}
 impl GraphicsSystem {
+    pub fn init(&mut self, event_loop: &ActiveEventLoop, proxy: EventLoopProxy<CustomWinitEvent>) {
+        if !matches!(self.state, GraphicsSystemState::Uninitialized) {
+            return;
+        }
+        self.state = GraphicsSystemState::Loading;
+
+        let window_sys = self.ctx.get::<WindowSystem>();
+        let window = window_sys.window_handle();
+        drop(window_sys);
+        let display_handle = event_loop.owned_display_handle();
+
+        let mut size = window.inner_size();
+        size.width = size.width.max(1);
+        size.height = size.height.max(1);
+
+        crate::spawn(async move {
+            let mut inst_desc = wgpu::InstanceDescriptor::new_with_display_handle_from_env(
+                Box::new(display_handle),
+            );
+            inst_desc.flags = wgpu::InstanceFlags::advanced_debugging();
+
+            let instance = wgpu::Instance::new(inst_desc);
+            let surface = instance.create_surface(window.clone()).unwrap();
+            let adapter = instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::default(),
+                    // Request an adapter which can render to our surface
+                    compatible_surface: Some(&surface),
+                    ..Default::default()
+                })
+                .await
+                .expect("Failed to find an appropriate adapter");
+
+            #[cfg(not(feature = "trace"))]
+            let device_required_features = wgpu::Features::empty()
+                | wgpu::Features::TEXTURE_BINDING_ARRAY
+                | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
+            #[cfg(feature = "trace")]
+            let device_required_features =
+                adapter.features() & GpuProfiler::ALL_WGPU_TIMER_FEATURES;
+
+            // Create the logical device and command queue
+            let (device, queue) = adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("wgpu device"),
+                    required_features: device_required_features,
+                    // Make sure we use the texture resolution limits from the adapter,
+                    // so we can support images the size of the swapchain.
+                    required_limits: adapter.limits(),
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                    memory_hints: wgpu::MemoryHints::MemoryUsage,
+                    trace: wgpu::Trace::Off,
+                })
+                .await
+                .expect("Failed to create device");
+
+            let mut surface_config = surface
+                .get_default_config(&adapter, size.width, size.height)
+                .unwrap();
+            surface_config.present_mode = wgpu::PresentMode::AutoNoVsync;
+
+            let _ = proxy.send_event(CustomWinitEvent::GraphicsSystemInitialized(GraphicsState {
+                instance,
+                adapter,
+                surface_config,
+                frame_data: None,
+                surface,
+                device,
+                queue,
+            }));
+        });
+    }
+
+    pub fn initialize_callback(&mut self, state: GraphicsState) {
+        self.state = GraphicsSystemState::Ready(state);
+
+        let window_sys = self.ctx.get::<WindowSystem>();
+        let window_size = window_sys.window_handle().inner_size();
+        drop(window_sys);
+        // winit might have updated the window size while we were
+        // creating the surface asynchronously, so resize the surface.
+        self.resize_surface(window_size);
+    }
+
     pub fn request_redraw(&self) {
         #[cfg(feature = "trace")]
         let _span = info_span!("GraphicsSystem::request_redraw").entered();
@@ -60,143 +162,135 @@ impl GraphicsSystem {
     pub fn resize_surface(&mut self, new_size: PhysicalSize<u32>) {
         #[cfg(feature = "trace")]
         let _span = info_span!("GraphicsSystem::resize_surface").entered();
+        let GraphicsSystemState::Ready(state) = &mut self.state else {
+            return;
+        };
 
-        self.surface_config.width = new_size.width.max(1);
-        self.surface_config.height = new_size.height.max(1);
-        self.surface.configure(&self.device, &self.surface_config);
+        state.surface_config.width = new_size.width.max(1);
+        state.surface_config.height = new_size.height.max(1);
+        state
+            .surface
+            .configure(&state.device, &state.surface_config);
     }
 
     pub fn begin_frame(&mut self) {
         #[cfg(feature = "trace")]
         let _span = info_span!("GraphicsSystem::begin_frame").entered();
 
-        let frame = self
-            .surface
-            .get_current_texture()
-            .expect("Failed to acquire next swapchain texture");
+        let GraphicsSystemState::Ready(state) = &mut self.state else {
+            return;
+        };
+
+        let window = self.ctx.get::<WindowSystem>().window_handle();
+
+        let frame = match state.surface.get_current_texture() {
+            CurrentSurfaceTexture::Success(frame) => frame,
+            CurrentSurfaceTexture::Timeout | CurrentSurfaceTexture::Occluded => {
+                // Try again later
+                window.request_redraw();
+                return;
+            }
+            CurrentSurfaceTexture::Suboptimal(texture) => {
+                drop(texture);
+
+                state
+                    .surface
+                    .configure(&state.device, &state.surface_config);
+                window.request_redraw();
+                return;
+            }
+            CurrentSurfaceTexture::Outdated => {
+                state
+                    .surface
+                    .configure(&state.device, &state.surface_config);
+                window.request_redraw();
+                return;
+            }
+            CurrentSurfaceTexture::Validation => {
+                unreachable!("No error scope registered, so validation errors will panic")
+            }
+            CurrentSurfaceTexture::Lost => {
+                state.surface = state.instance.create_surface(window.clone()).unwrap();
+                state
+                    .surface
+                    .configure(&state.device, &state.surface_config);
+                window.request_redraw();
+                return;
+            }
+        };
         let view = frame.texture.create_view(&TextureViewDescriptor {
             ..Default::default()
         });
-        let encoder = self
+        let encoder = state
             .device
             .create_command_encoder(&CommandEncoderDescriptor {
                 label: Some("Command encoder"),
             });
-        self.frame_data = Some((frame, view, encoder))
+        state.frame_data = Some((frame, view, encoder, window))
     }
 
     pub fn device(&self) -> &Device {
-        &self.device
+        if let GraphicsSystemState::Ready(state) = &self.state {
+            return &state.device;
+        }
+        panic!("GraphicsSystem is not ready!");
     }
 
     pub fn surface_config(&self) -> &SurfaceConfiguration {
-        &self.surface_config
+        if let GraphicsSystemState::Ready(state) = &self.state {
+            return &state.surface_config;
+        }
+        panic!("GraphicsSystem is not ready!");
     }
 
     pub fn queue(&self) -> &Queue {
-        &self.queue
+        if let GraphicsSystemState::Ready(state) = &self.state {
+            return &state.queue;
+        }
+        panic!("GraphicsSystem is not ready!");
     }
 
     pub fn queue_mut(&mut self) -> &mut Queue {
-        &mut self.queue
+        if let GraphicsSystemState::Ready(state) = &mut self.state {
+            return &mut state.queue;
+        }
+        panic!("GraphicsSystem is not ready!");
     }
 
     pub fn present_frame(&mut self) {
         #[cfg(feature = "trace")]
         let _span = info_span!("GraphicsSystem::present_frame").entered();
+        let GraphicsSystemState::Ready(state) = &mut self.state else {
+            return;
+        };
 
-        if self.frame_data.is_none() {
+        if state.frame_data.is_none() {
             warn!("No frame data present, begin a frame by calling begin_frame()");
             return;
         };
-        let (frame, _, encoder) = self.frame_data.take().unwrap();
-        self.queue.submit(Some(encoder.finish()));
-        frame.present();
+        let (frame, _, encoder, window) = state.frame_data.take().unwrap();
+        state.queue.submit(Some(encoder.finish()));
+        window.pre_present_notify();
+        state.queue.present(frame);
     }
 
-    pub fn frame_data_mut(&mut self) -> FrameDataMut {
-        self.frame_data.as_mut()
+    pub fn frame_data_mut(&mut self) -> FrameDataMut<'_> {
+        if let GraphicsSystemState::Ready(state) = &mut self.state {
+            return state.frame_data.as_mut();
+        }
+        panic!("GraphicsSystem is not ready!");
     }
 }
 impl GeeseSystem for GraphicsSystem {
-    const DEPENDENCIES: Dependencies = dependencies()
-        .with::<WindowSystem>()
-        .with::<Mut<GraphicsBackend>>();
+    const DEPENDENCIES: Dependencies = dependencies().with::<WindowSystem>();
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         #[cfg(feature = "trace")]
         let _span = info_span!("GraphicsSystem::new").entered();
 
-        let surface;
-        let window_size;
-        {
-            let immut_backend = ctx.get::<GraphicsBackend>();
-            let window = ctx.get::<WindowSystem>();
-            window_size = window.window_handle().inner_size();
-            surface = immut_backend
-                .instance()
-                .create_surface(window.window_handle())
-                .unwrap();
-        }
-        {
-            let mut mut_backend = ctx.get_mut::<GraphicsBackend>();
-            let adapter = pollster::block_on(mut_backend.instance().request_adapter(
-                &wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::default(),
-                    compatible_surface: Some(&surface),
-                    force_fallback_adapter: false,
-                },
-            ))
-            .expect("Could not create an adapter!");
-            mut_backend.set_adapter(adapter);
-        }
-
-        let backend = ctx.get::<GraphicsBackend>();
-        let adapter = backend.adapter();
-        // Create the logical device and command queue
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: None,
-                required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
-                    | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
-                // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-                required_limits: adapter.limits(),
-            },
-            None,
-        ))
-        .expect("Failed to create device");
-
-        let swapchain_capabilities = surface.get_capabilities(adapter);
-        let swapchain_format = swapchain_capabilities
-            .formats
-            .iter()
-            .find(|format| format.is_srgb())
-            .unwrap_or(&wgpu::TextureFormat::Bgra8UnormSrgb);
-        debug!("Swapchain format: {:?}", swapchain_format);
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: *swapchain_format,
-            width: window_size.width,
-            height: window_size.height,
-            // Note: Having PresentMode::Fifo (as in the example) caused a Swapchain acquire texture timeout
-            // See: https://github.com/bevyengine/bevy/issues/3606
-            present_mode: wgpu::PresentMode::AutoNoVsync,
-            alpha_mode: swapchain_capabilities.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
-
-        surface.configure(&device, &config);
-
-        drop(backend);
-
         Self {
             ctx,
-            device,
-            queue,
-            surface,
-            surface_config: config,
-            frame_data: None,
+            state: GraphicsSystemState::Uninitialized,
         }
     }
 }

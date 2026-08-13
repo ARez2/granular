@@ -11,7 +11,7 @@ use tracing_subscriber::{
 };
 use winit::keyboard::{KeyCode, ModifiersState};
 
-const DEFAULT_LOG_FILTER: &str = "wgpu=error,granular=debug,testbed=error";
+const DEFAULT_LOG_FILTER: &str = "wgpu=error,granular=debug,testbed=trace";
 
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
@@ -94,12 +94,12 @@ impl Game {
         window.set_title("Granular engine testbed");
     }
 
-    fn on_update(&mut self, _: &events::timing::Tick<1>) {
+    fn on_update(&mut self, _: &events::timing::FixedTick<16>) {
         let input = self.ctx.get::<InputSystem>();
         let vector = input.get_input_vector("cam_left", "cam_right", "cam_up", "cam_down");
         drop(input);
         let mut camera = self.ctx.get_mut::<Camera>();
-        camera.translate(vector * 1);
+        camera.translate(vector * 10);
         let pos = camera.position();
         drop(camera);
     }

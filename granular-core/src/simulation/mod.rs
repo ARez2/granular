@@ -144,6 +144,7 @@ impl Simulation {
             #[allow(clippy::collapsible_else_if)]
             if self.tick > 60 {
                 for phase in 0..4u8 {
+                    #[cfg(feature = "trace")]
                     let _phase_span = span!(Level::INFO, "update phase: ", phase).entered();
                     self.chunks.par_iter_mut().for_each(|chunk| {
                         let should_update = chunk.should_update(phase);

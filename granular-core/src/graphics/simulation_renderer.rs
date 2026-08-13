@@ -1,7 +1,7 @@
 use glam::IVec2;
 use palette::{Srgba, WithAlpha};
 use wgpu::{
-    Extent3d, ImageDataLayout, SamplerDescriptor, TextureDescriptor, TextureDimension,
+    Extent3d, SamplerDescriptor, TexelCopyBufferLayout, TextureDescriptor, TextureDimension,
     TextureFormat, TextureUsages, TextureViewDescriptor,
 };
 
@@ -75,6 +75,7 @@ impl SimulationRenderer {
                 );
             }
         }
+        #[cfg(feature = "trace")]
         drop(span_guard);
         drop(graphics_sys);
         drop(asset_sys);
@@ -171,11 +172,11 @@ impl GeeseSystem for SimulationRenderer {
                         address_mode_w: wgpu::AddressMode::ClampToEdge,
                         mag_filter: wgpu::FilterMode::Nearest,
                         min_filter: wgpu::FilterMode::Nearest,
-                        mipmap_filter: wgpu::FilterMode::Nearest,
+                        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
                         ..Default::default()
                     },
                     &chunk_tex_data,
-                    ImageDataLayout {
+                    TexelCopyBufferLayout {
                         offset: 0,
                         bytes_per_row: Some(4 * tex_extent.width),
                         rows_per_image: Some(tex_extent.height),

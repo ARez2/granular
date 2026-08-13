@@ -20,7 +20,7 @@ use wgpu::{
 use winit::dpi::PhysicalSize;
 
 use super::graphics_system::{GraphicsSystem, Vertex, VERTEX_SIZE};
-use super::{Camera, DynamicBuffer, TextureBundle};
+use super::{Camera, TextureBundle};
 use crate::{
     assets::{AssetHandle, AssetSystem, ShaderAsset, TextureAsset},
     utils::*,
@@ -28,7 +28,8 @@ use crate::{
 
 struct Batch {
     helper_idx: usize,
-    bind_group: BindGroup,
+    globals_bind_group: BindGroup,
+    batch_bind_group: BindGroup,
     num_textures_used: usize,
     vertices_range: Range<u64>,
     indices_end: u32,
@@ -80,7 +81,7 @@ impl Ord for BatchQuadEntry {
 #[derive(Debug)]
 struct BatchHelper {
     num_textures_used: usize,
-    layout: BindGroupLayout,
+    layouts: (BindGroupLayout, BindGroupLayout),
     pipeline: RenderPipeline,
 }
 
@@ -88,7 +89,7 @@ struct BatchHelper {
 pub struct BatchRenderer {
     ctx: GeeseContextHandle<Self>,
 
-    vertex_buffer: DynamicBuffer<Vertex>,
+    vertex_buffer: Buffer,
     index_buffer: Buffer,
     index_format: IndexFormat,
     // Links the asset id (1st u64) of a texture to its position in the internal
@@ -101,7 +102,8 @@ pub struct BatchRenderer {
     // Saves how many textures are used in a specific bind group layout and pipeline
     batch_helpers: Vec<BatchHelper>,
 
-    bind_group: (BindGroup, BindGroupLayout),
+    globals_bind_group: (BindGroup, BindGroupLayout),
+    batch_bind_group: (BindGroup, BindGroupLayout),
 
     render_pipeline: RenderPipeline,
     shader_handle: AssetHandle<ShaderAsset>,
@@ -177,7 +179,7 @@ impl BatchRenderer {
                 });
             // Otherwise create a new BatchHelper and use that helper
             if helper_idx == -1 {
-                let layout = Self::create_bind_group_layout(
+                let layouts = Self::create_bind_group_layouts(
                     device,
                     views.len() as u32,
                     samplers.len() as u32,
@@ -188,11 +190,15 @@ impl BatchRenderer {
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 });
-                let pipeline =
-                    Self::create_render_pipeline(device, &layout, shader.module(), color_state);
+                let pipeline = Self::create_render_pipeline(
+                    device,
+                    &[Some(&layouts.0), Some(&layouts.1)],
+                    shader.module(),
+                    color_state,
+                );
                 self.batch_helpers.push(BatchHelper {
                     num_textures_used,
-                    layout,
+                    layouts,
                     pipeline,
                 });
                 helper_idx = self.batch_helpers.len() as i32 - 1;
@@ -203,15 +209,18 @@ impl BatchRenderer {
             trace!("    - Vert. range: {:?}", vertices_range);
             trace!("    - Ind. end: {:?}", indices_end);
             trace!("    - Num textures: {}", num_textures_used);
+            let bind_groups = Self::create_bind_groups(
+                device,
+                &self.batch_helpers[helper_idx as usize].layouts.0,
+                shaderglobals,
+                &self.batch_helpers[helper_idx as usize].layouts.1,
+                &views,
+                &samplers,
+            );
             self.batches.push(Batch {
                 helper_idx: helper_idx as usize,
-                bind_group: Self::create_bind_group(
-                    device,
-                    &self.batch_helpers[helper_idx as usize].layout,
-                    shaderglobals,
-                    &views,
-                    &samplers,
-                ),
+                globals_bind_group: bind_groups.0,
+                batch_bind_group: bind_groups.1,
                 num_textures_used,
                 vertices_range,
                 indices_end,
@@ -354,8 +363,8 @@ impl BatchRenderer {
 
         // Write the data from vertices to the vertex buffer
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
-        self.vertex_buffer.write(
-            &graphics_sys,
+        graphics_sys.queue().write_buffer(
+            &self.vertex_buffer,
             0,
             bytemuck::cast_slice(&self.vertices_to_draw),
         );
@@ -385,10 +394,12 @@ impl BatchRenderer {
                     },
                     store: wgpu::StoreOp::Store,
                 },
+                depth_slice: None,
             })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         self.batches
@@ -406,13 +417,14 @@ impl BatchRenderer {
                 // Only use a slice of the vertex buffer, which belongs to the current batch
                 rpass.set_vertex_buffer(
                     0,
-                    self.vertex_buffer.buffer().slice(
+                    self.vertex_buffer.slice(
                         (batch.vertices_range.start * VERTEX_SIZE as u64)
                             ..(batch.vertices_range.end * VERTEX_SIZE as u64),
                     ),
                 );
                 // Use the bind group specified by the batch
-                rpass.set_bind_group(0, &batch.bind_group, &[]);
+                rpass.set_bind_group(0, &batch.globals_bind_group, &[]);
+                rpass.set_bind_group(1, &batch.batch_bind_group, &[]);
                 rpass.draw_indexed(0..batch.indices_end, 0, 0..1);
             });
     }
@@ -442,7 +454,10 @@ impl BatchRenderer {
         let shader = asset_sys.get(&self.shader_handle);
         self.render_pipeline = Self::create_render_pipeline(
             graphics_sys.device(),
-            &self.bind_group.1,
+            &[
+                Some(&self.globals_bind_group.1),
+                Some(&self.batch_bind_group.1),
+            ],
             shader.module(),
             Some(graphics_sys.surface_config().format.into()),
         );
@@ -451,7 +466,7 @@ impl BatchRenderer {
     /// Helper function for creating a new render pipeline
     fn create_render_pipeline(
         device: &Device,
-        bind_group_layout: &BindGroupLayout,
+        bind_group_layouts: &[Option<&BindGroupLayout>],
         shader: &ShaderModule,
         color_state: Option<ColorTargetState>,
     ) -> RenderPipeline {
@@ -461,25 +476,25 @@ impl BatchRenderer {
         // IDEA: Create pipelines with different bind group layouts beforehand
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("main"),
-            bind_group_layouts: &[bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts,
+            immediate_size: 0,
         });
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: None,
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: shader,
-                entry_point: "vert_main",
-                buffers: &[wgpu::VertexBufferLayout {
+                entry_point: Some("vert_main"),
+                buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: VERTEX_SIZE as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex, // position        color       tex_coords     tex_index
                     attributes: &wgpu::vertex_attr_array![0 => Sint32x2, 1 => Float32x4, 2 => Float32x2, 3 => Sint32],
-                }],
+                })],
                 compilation_options: Default::default()
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader,
-                entry_point: "uniform_main",
+                entry_point: Some("uniform_main"),
                 targets: &[color_state],
                 compilation_options: Default::default()
             }),
@@ -489,36 +504,40 @@ impl BatchRenderer {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None
         })
     }
 
     /// Creates a new bind group layout from a number of texture views/ samplers
-    fn create_bind_group_layout(
+    fn create_bind_group_layouts(
         device: &Device,
         num_views: u32,
         num_samplers: u32,
-    ) -> BindGroupLayout {
+    ) -> (BindGroupLayout, BindGroupLayout) {
         #[cfg(feature = "trace")]
         let _span = info_span!("BatchRenderer::create_bind_group_layout").entered();
 
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("bind group layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(NonZeroU64::new(64).unwrap()),
-                    },
-                    count: None,
+        let globals_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Globals bind group layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(NonZeroU64::new(64).unwrap()),
                 },
+                count: None,
+            }],
+        });
+
+        let batch_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("batch bind group layout"),
+            entries: &[
                 // Texture array
                 wgpu::BindGroupLayoutEntry {
-                    binding: 1,
+                    binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -529,49 +548,57 @@ impl BatchRenderer {
                 },
                 // Sampler array
                 wgpu::BindGroupLayoutEntry {
-                    binding: 2,
+                    binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: NonZeroU32::new(num_samplers),
                 },
             ],
-        })
+        });
+
+        (globals_bgl, batch_bgl)
     }
 
     /// Creates the bind group based on a list of textures
-    fn create_bind_group(
+    fn create_bind_groups(
         device: &wgpu::Device,
-        layout: &BindGroupLayout,
+        globals_layout: &BindGroupLayout,
         shaderglobals: &Buffer,
+        batch_layout: &BindGroupLayout,
         views: &Vec<&TextureView>,
         samplers: &Vec<&Sampler>,
-    ) -> BindGroup {
+    ) -> (BindGroup, BindGroup) {
         #[cfg(feature = "trace")]
         let _span = info_span!("BatchRenderer::create_bind_group").entered();
+
+        let globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: shaderglobals.as_entire_binding(),
+            }],
+            layout: globals_layout,
+            label: Some("globals bind group"),
+        });
 
         let tex_views = views.as_slice();
         let tex_samplers = samplers.as_slice();
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let batch_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: shaderglobals.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
                     resource: wgpu::BindingResource::TextureViewArray(tex_views),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 2,
+                    binding: 1,
                     resource: wgpu::BindingResource::SamplerArray(tex_samplers),
                 },
             ],
-            layout,
-            label: Some("bind group"),
+            layout: batch_layout,
+            label: Some("batch bind group"),
         });
 
-        bind_group
+        (globals_bind_group, batch_bind_group)
     }
 
     /// Creates an array of indices, following the typical quad indexing method (0-1-2, 2-3-0)
@@ -617,15 +644,15 @@ impl GeeseSystem for BatchRenderer {
         drop(asset_sys);
 
         let graphics_sys = ctx.get::<GraphicsSystem>();
-
-        let vertex_buffer = DynamicBuffer::with_capacity(
-            "Dynamic vertex buffer",
-            &graphics_sys,
-            BufferUsages::VERTEX | BufferUsages::COPY_DST,
-            BatchRenderer::MAX_VERTEX_COUNT,
-        );
-        let indices = BatchRenderer::create_indices();
         let device = graphics_sys.device();
+
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("BatchRenderer vertex buffer"),
+            size: (BatchRenderer::MAX_VERTEX_COUNT * size_of::<Vertex>()) as u64,
+            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let indices = BatchRenderer::create_indices();
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
             contents: bytemuck::cast_slice(&indices),
@@ -661,7 +688,7 @@ impl GeeseSystem for BatchRenderer {
                 ..Default::default()
             },
             &[255, 255, 255, 255],
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4),
                 rows_per_image: None,
@@ -671,11 +698,12 @@ impl GeeseSystem for BatchRenderer {
         let camera = ctx.get::<Camera>();
         let asset_sys = ctx.get::<AssetSystem>();
         let conf = graphics_sys.surface_config();
-        let bind_group_layout = Self::create_bind_group_layout(device, 1, 1);
-        let bind_group = BatchRenderer::create_bind_group(
+        let bind_group_layouts = Self::create_bind_group_layouts(device, 1, 1);
+        let bind_groups = BatchRenderer::create_bind_groups(
             device,
-            &bind_group_layout,
+            &bind_group_layouts.0,
             camera.canvas_transform_buffer(),
+            &bind_group_layouts.1,
             &vec![white_pixel.view()],
             &vec![white_pixel.sampler()],
         );
@@ -683,7 +711,7 @@ impl GeeseSystem for BatchRenderer {
         let base_shader_module = asset_sys.get(&base_shader_handle);
         let render_pipeline = Self::create_render_pipeline(
             device,
-            &bind_group_layout,
+            &[Some(&bind_group_layouts.0), Some(&bind_group_layouts.1)],
             base_shader_module.module(),
             Some(graphics_sys.surface_config().format.into()),
         );
@@ -705,7 +733,8 @@ impl GeeseSystem for BatchRenderer {
             batch_helpers: vec![],
             vertices_to_draw: Vec::with_capacity(1000),
 
-            bind_group: (bind_group, bind_group_layout),
+            globals_bind_group: (bind_groups.0, bind_group_layouts.0),
+            batch_bind_group: (bind_groups.1, bind_group_layouts.1),
 
             render_pipeline,
             clear_color: Color::RED,

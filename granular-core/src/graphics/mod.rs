@@ -1,16 +1,14 @@
-mod graphics_backend;
-pub use graphics_backend::GraphicsBackend;
+// pub(super) mod graphics_backend;
+// pub use graphics_backend::GraphicsBackend;
 
 mod graphics_system;
+pub(super) use graphics_system::GraphicsState;
 pub use graphics_system::GraphicsSystem;
 
 mod texture_bundle;
 pub(crate) use texture_bundle::TextureBundle;
 
-mod dynamic_buffer;
-pub(crate) use dynamic_buffer::DynamicBuffer;
-
-mod window_system;
+pub(super) mod window_system;
 pub use window_system::WindowSystem;
 
 mod camera;
