@@ -196,7 +196,6 @@ impl GeeseSystem for AssetSystem {
             .parent()
             .unwrap()
             .to_path_buf();
-        info!("AssetSystem is using base path '{}'", base_path.display());
 
         Self {
             ctx,

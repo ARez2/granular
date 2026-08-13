@@ -2,14 +2,15 @@ use glam::IVec2;
 use granular::prelude::*;
 use palette::{Srgba, WithAlpha};
 use regex::Regex;
-use std::error::Error;
 use time::macros::format_description;
 use tracing_subscriber::{
-    fmt::{self, format::FmtSpan, time::FormatTime},
+    fmt::{self},
     layer::SubscriberExt,
     Layer,
 };
 use winit::keyboard::{KeyCode, ModifiersState};
+
+mod utils;
 
 const DEFAULT_LOG_FILTER: &str = "wgpu=error,granular=debug,testbed=trace";
 
@@ -17,38 +18,7 @@ fn main() {
     std::env::set_var("RUST_BACKTRACE", "1");
     //std::env::set_var("RUST_LOG", "testbed=trace");
 
-    // Matches a full path until (excluding) "granular"\/(.*)\bgranular\b
-    // let path_regex = Regex::new(r"\/(.*)\bgranular\b").unwrap();
-    // env_logger::builder()
-    //     .format(move |buf, record| {
-    //         let ts = buf.timestamp_millis();
-    //         let ts = ts.to_string();
-    //         let timestamp = &ts[11..ts.len() - 1];
-    //         let level = buf.default_styled_level(record.level());
-    //         let width = 27;
-    //         let mod_path = match record.module_path() {
-    //             Some(path) => format!("{:<width$}", path),
-    //             None => format!("{:width$}", ""),
-    //         };
-
-    //         // Remove personal stuff from full path
-    //         let mut msg_clean = record.args().to_string();
-    //         if let Some(re_match) = path_regex.captures(&msg_clean) {
-    //             if let Some(pre_path) = re_match.get(1) {
-    //                 msg_clean.replace_range(pre_path.start()..pre_path.end(), "");
-    //             }
-    //         };
-    //         writeln!(
-    //             buf,
-    //             "[{ts} {lvl} {path}]: {msg}",
-    //             ts = timestamp,
-    //             lvl = level,
-    //             path = buf.style().set_dimmed(true).value(mod_path),
-    //             msg = msg_clean
-    //         )
-    //     })
-    //     .init();
-
+    let path_regex = std::sync::Arc::new(Regex::new(r"(\S*/)$").unwrap());
     let subscriber = tracing_subscriber::registry();
     let filter_layer = tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER);
     let subscriber = subscriber.with(filter_layer);
@@ -61,10 +31,17 @@ fn main() {
         .with_file(true)
         .with_line_number(true)
         .with_target(false)
-        //.with_thread_ids(true)
+        .with_writer({
+            let path_regex = std::sync::Arc::clone(&path_regex);
+
+            move || {
+                utils::CleaningWriter::new(std::io::stdout(), std::sync::Arc::clone(&path_regex))
+            }
+        })
         .with_filter(tracing_subscriber::filter::filter_fn(move |meta| {
             !meta.is_span() || show_spans
         }));
+
     let subscriber = subscriber.with(fmt_layer);
 
     #[cfg(feature = "trace")]
@@ -86,7 +63,7 @@ struct Game {
     texture: AssetHandle<TextureAsset>,
 }
 impl Game {
-    fn init(&mut self, event: &events::Initialized) {
+    fn init(&mut self, _event: &events::Initialized) {
         let win_sys = self.ctx.get::<WindowSystem>();
         let window = win_sys.window_handle();
         window.set_visible(true);
@@ -100,7 +77,7 @@ impl Game {
         drop(input);
         let mut camera = self.ctx.get_mut::<Camera>();
         camera.translate(vector * 10);
-        let pos = camera.position();
+        let _pos = camera.position();
         drop(camera);
     }
 
