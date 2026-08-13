@@ -105,7 +105,6 @@ pub struct BatchRenderer {
     globals_bind_group: (BindGroup, BindGroupLayout),
     batch_bind_group: (BindGroup, BindGroupLayout),
 
-    render_pipeline: RenderPipeline,
     shader_handle: AssetHandle<ShaderAsset>,
     clear_color: Color,
 
@@ -440,27 +439,10 @@ impl BatchRenderer {
     /// Reloads parts of the renderer depending on what asset changed
     fn on_assetchange(&mut self, event: &crate::assets::events::AssetReload) {
         if event.asset_id == **self.shader_handle.id() {
-            self.reload_render_pipeline();
+            // since we store the pipelines inside of batch_helpers, we just need
+            // to clear those and they will create new pipelines automatically
+            self.batch_helpers.clear();
         }
-    }
-
-    /// Helper function to set up a new render pipeline using the same shaders
-    fn reload_render_pipeline(&mut self) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("BatchRenderer::reload_render_pipeline").entered();
-
-        let graphics_sys = self.ctx.get::<GraphicsSystem>();
-        let asset_sys = self.ctx.get::<AssetSystem>();
-        let shader = asset_sys.get(&self.shader_handle);
-        self.render_pipeline = Self::create_render_pipeline(
-            graphics_sys.device(),
-            &[
-                Some(&self.globals_bind_group.1),
-                Some(&self.batch_bind_group.1),
-            ],
-            shader.module(),
-            Some(graphics_sys.surface_config().format.into()),
-        );
     }
 
     /// Helper function for creating a new render pipeline
@@ -480,7 +462,7 @@ impl BatchRenderer {
             immediate_size: 0,
         });
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
+            label: Some("batch renderer pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: shader,
@@ -696,7 +678,6 @@ impl GeeseSystem for BatchRenderer {
         );
 
         let camera = ctx.get::<Camera>();
-        let asset_sys = ctx.get::<AssetSystem>();
         let conf = graphics_sys.surface_config();
         let bind_group_layouts = Self::create_bind_group_layouts(device, 1, 1);
         let bind_groups = BatchRenderer::create_bind_groups(
@@ -708,16 +689,7 @@ impl GeeseSystem for BatchRenderer {
             &vec![white_pixel.sampler()],
         );
 
-        let base_shader_module = asset_sys.get(&base_shader_handle);
-        let render_pipeline = Self::create_render_pipeline(
-            device,
-            &[Some(&bind_group_layouts.0), Some(&bind_group_layouts.1)],
-            base_shader_module.module(),
-            Some(graphics_sys.surface_config().format.into()),
-        );
-
         drop(graphics_sys);
-        drop(asset_sys);
         drop(camera);
 
         Self {
@@ -736,7 +708,6 @@ impl GeeseSystem for BatchRenderer {
             globals_bind_group: (bind_groups.0, bind_group_layouts.0),
             batch_bind_group: (bind_groups.1, bind_group_layouts.1),
 
-            render_pipeline,
             clear_color: Color::RED,
             shader_handle: base_shader_handle,
 
