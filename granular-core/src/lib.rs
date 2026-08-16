@@ -129,6 +129,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
         &mut self.ctx
     }
 
+    #[profiling::skip]
     pub fn run(mut self) {
         #[cfg(feature = "trace")]
         tracy_client::Client::start();

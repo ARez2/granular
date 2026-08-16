@@ -101,19 +101,17 @@ impl GraphicsSystem {
                 .await
                 .expect("Failed to find an appropriate adapter");
 
-            #[cfg(not(feature = "trace"))]
-            let device_required_features = wgpu::Features::empty()
+            let mut features = wgpu::Features::empty()
                 | wgpu::Features::TEXTURE_BINDING_ARRAY
                 | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
             #[cfg(feature = "trace")]
-            let device_required_features =
-                adapter.features() & GpuProfiler::ALL_WGPU_TIMER_FEATURES;
+            let features = features | GpuProfiler::ALL_WGPU_TIMER_FEATURES;
 
             // Create the logical device and command queue
             let (device, queue) = adapter
                 .request_device(&wgpu::DeviceDescriptor {
                     label: Some("wgpu device"),
-                    required_features: device_required_features,
+                    required_features: features,
                     // Make sure we use the texture resolution limits from the adapter,
                     // so we can support images the size of the swapchain.
                     required_limits: adapter.limits(),
