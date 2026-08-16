@@ -3,17 +3,18 @@
 use bytemuck_derive::{Pod, Zeroable};
 use glam::{IVec2, Vec2};
 use wgpu::{
-    naga::back, Adapter, CommandEncoder, CommandEncoderDescriptor, CurrentSurfaceTexture, Device,
-    Instance, Queue, Surface, SurfaceConfiguration, SurfaceTexture, TextureView,
-    TextureViewDescriptor,
+    Adapter, CommandEncoder, CommandEncoderDescriptor, CurrentSurfaceTexture, Device, Instance,
+    Queue, Surface, SurfaceConfiguration, SurfaceTexture, TextureView, TextureViewDescriptor,
 };
+#[cfg(feature = "trace")]
+use wgpu_profiler::{GpuProfiler, GpuProfilerSettings, GpuTimerQueryResult};
 use winit::{
     dpi::PhysicalSize,
     event_loop::{ActiveEventLoop, EventLoopProxy},
 };
 
 use super::WindowSystem;
-use crate::{utils::*, CustomWinitEvent};
+use crate::{CustomWinitEvent, utils::*};
 
 pub type FrameData = (
     SurfaceTexture,
@@ -54,6 +55,7 @@ pub struct GraphicsState {
     queue: Queue,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum GraphicsSystemState {
     Uninitialized,
     Loading,
@@ -64,6 +66,7 @@ pub struct GraphicsSystem {
     ctx: GeeseContextHandle<Self>,
     state: GraphicsSystemState,
 }
+#[profiling::all_functions]
 impl GraphicsSystem {
     pub fn init(&mut self, event_loop: &ActiveEventLoop, proxy: EventLoopProxy<CustomWinitEvent>) {
         if !matches!(self.state, GraphicsSystemState::Uninitialized) {
@@ -150,9 +153,6 @@ impl GraphicsSystem {
     }
 
     pub fn request_redraw(&self) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GraphicsSystem::request_redraw").entered();
-
         self.ctx
             .get::<WindowSystem>()
             .window_handle()
@@ -160,8 +160,6 @@ impl GraphicsSystem {
     }
 
     pub fn resize_surface(&mut self, new_size: PhysicalSize<u32>) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GraphicsSystem::resize_surface").entered();
         let GraphicsSystemState::Ready(state) = &mut self.state else {
             return;
         };
@@ -174,9 +172,6 @@ impl GraphicsSystem {
     }
 
     pub fn begin_frame(&mut self) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GraphicsSystem::begin_frame").entered();
-
         let GraphicsSystemState::Ready(state) = &mut self.state else {
             return;
         };
@@ -258,8 +253,6 @@ impl GraphicsSystem {
     }
 
     pub fn present_frame(&mut self) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GraphicsSystem::present_frame").entered();
         let GraphicsSystemState::Ready(state) = &mut self.state else {
             return;
         };
@@ -281,13 +274,11 @@ impl GraphicsSystem {
         panic!("GraphicsSystem is not ready!");
     }
 }
+#[profiling::all_functions]
 impl GeeseSystem for GraphicsSystem {
     const DEPENDENCIES: Dependencies = dependencies().with::<WindowSystem>();
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GraphicsSystem::new").entered();
-
         Self {
             ctx,
             state: GraphicsSystemState::Uninitialized,

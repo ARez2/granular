@@ -1,7 +1,6 @@
+use crate::utils::*;
 use notify::{RecommendedWatcher, Watcher};
 use std::sync::mpsc::Receiver;
-
-use crate::utils::*;
 
 pub mod events {
     pub struct FilesChanged {

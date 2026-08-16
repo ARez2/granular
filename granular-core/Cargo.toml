@@ -1,9 +1,17 @@
 [package]
 name = "granular-core"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = []
+trace = [
+    "dep:tracy-client",
+    "dep:wgpu-profiler",
+    "profiling/profile-with-tracy",
+]
 
 [dependencies]
 geese.workspace = true
@@ -11,7 +19,7 @@ wgpu = "30.0.0"
 winit.workspace = true
 log.workspace = true
 palette.workspace = true
-notify = "6.1.1"
+web-time.workspace = true
 bytemuck = "1.14.0"
 bytemuck_derive = "1.5.0"
 image = "0.24.8"
@@ -20,17 +28,24 @@ anyhow = "1.0.79"
 glam = { version = "0.25.0", features = ["approx", "bytemuck"] }
 pollster = "0.3.0"
 rayon = "1.11"
-tracing = "0.1.44"
+# Profiling
+profiling.workspace = true
 
-tracing-subscriber = { version = "0.3.22", optional = true, features = [
-    "env-filter",
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+notify = "6.1.1"
+# Profiling
+wgpu-profiler = { workspace = true, optional = true }
+tracy-client = { workspace = true, optional = true }
+
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.123"
+wasm-bindgen-futures = "0.4.73"
+web-sys = { version = "0.3.100", features = [
+    "console",
+    "Document",
+    "Element",
+    "HtmlCanvasElement",
+    "Location",
+    "Window",
 ] }
-tracing-tracy = { version = "0.11.4", optional = true }
-# ==== Tracy 13.1 ====
-# tracy-client = { version = "0.18.4", optional = true }
-#tracy-client-sys = { version = "0.28.0", optional = true }
-
-
-[features]
-default = []
-trace = ["dep:tracing-tracy", "dep:tracing-subscriber"]

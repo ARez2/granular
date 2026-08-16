@@ -30,12 +30,10 @@ pub struct SimulationRenderer {
     // in the Simulation.chunks array (both arrays have same length)
     chunk_textures: [AssetHandle<TextureAsset>; NUM_CHUNKS_TOTAL],
 }
+#[profiling::all_functions]
 impl SimulationRenderer {
     /// Writes the chunks textures and then renders them using the [`BatchRenderer`].
     pub fn on_draw(&mut self, _: &crate::events::Draw) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("SimulationRenderer::on_draw").entered();
-
         let sim = self.ctx.get::<Simulation>();
         let graphics_sys = self.ctx.get::<GraphicsSystem>();
         let asset_sys = self.ctx.get::<AssetSystem>();
@@ -51,32 +49,29 @@ impl SimulationRenderer {
             NUM_CHUNKS_TOTAL
         ];
 
-        #[cfg(feature = "trace")]
-        let span_write_chunks = info_span!("SimulationRenderer write chunk textures");
-        #[cfg(feature = "trace")]
-        let span_guard = span_write_chunks.enter();
-        for (idx, chunk) in sim.get_chunks().iter().enumerate() {
-            chunk_render_data[idx].position = chunk.position;
-            chunk_render_data[idx].chunk_update_this_tick =
-                chunk.should_update(((sim_tick / 16) % 4) as u8);
-            chunk_render_data[idx].chunk_texture_data_changed = chunk.is_texture_data_dirty();
+        {
+            
+            for (idx, chunk) in sim.get_chunks().iter().enumerate() {
+                chunk_render_data[idx].position = chunk.position;
+                chunk_render_data[idx].chunk_update_this_tick =
+                    chunk.should_update(((sim_tick / 16) % 4) as u8);
+                chunk_render_data[idx].chunk_texture_data_changed = chunk.is_texture_data_dirty();
 
-            // Write the chunk texture only if it has changed
-            if chunk.is_texture_data_dirty() {
-                // Get the texture for this chunk from ourself
-                let sim_texture = asset_sys
-                    .get::<TextureAsset>(&self.chunk_textures[idx])
-                    .texture();
-                graphics_sys.queue().write_texture(
-                    sim_texture.texture().as_image_copy(),
-                    chunk.get_texture_data(),
-                    sim_texture.data_layout(),
-                    sim_texture.extent(),
-                );
+                // Write the chunk texture only if it has changed
+                if chunk.is_texture_data_dirty() {
+                    // Get the texture for this chunk from ourself
+                    let sim_texture = asset_sys
+                        .get::<TextureAsset>(&self.chunk_textures[idx])
+                        .texture();
+                    graphics_sys.queue().write_texture(
+                        sim_texture.texture().as_image_copy(),
+                        chunk.get_texture_data(),
+                        sim_texture.data_layout(),
+                        sim_texture.extent(),
+                    );
+                }
             }
         }
-        #[cfg(feature = "trace")]
-        drop(span_guard);
         drop(graphics_sys);
         drop(asset_sys);
         drop(sim);
@@ -134,8 +129,7 @@ impl GeeseSystem for SimulationRenderer {
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers().with(Self::on_draw);
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("SimulationRenderer::new").entered();
+        
 
         let chunk_textures: [AssetHandle<TextureAsset>; NUM_CHUNKS_TOTAL] =
             core::array::from_fn(|i| {

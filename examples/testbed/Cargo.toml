@@ -1,26 +1,32 @@
 [package]
 name = "testbed"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 granular = { path = "../.." }
-log = "0.4.20"
-env_logger = "0.10.1"
+
+log.workspace = true
+geese.workspace = true
+palette.workspace = true
+web-time.workspace = true
+winit.workspace = true
+
+fern = { version = "0.7.1", features = ["colored"] }
 regex = "1.10.3"
-geese = "0.3.7"
-winit = { version = "0.30.*" }
 glam = { version = "0.25.0", features = ["approx"] }
-palette = "0.7.5"
-tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.22", features = [
-    "env-filter",
-    "local-time",
-] }
-
-
-tracing-tracy = { version = "0.11.4", optional = true }
-time = { version = "0.3.47", features = ["macros"] }
 
 [features]
-trace = ["dep:tracing-tracy"]
+trace = ["granular/trace"]
+
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_log = "1.0"
+wasm-bindgen = "0.2.123"
+console_error_panic_hook = "0.1.5"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+humantime = "2.4.0"

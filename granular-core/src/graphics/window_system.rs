@@ -27,10 +27,7 @@ impl WindowSystem {
     }
 
     pub fn init(&mut self, event_loop: &ActiveEventLoop) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("WindowSystem::init").entered();
-
-        let window_attributes = WindowAttributes::default()
+        let mut window_attributes = WindowAttributes::default()
             .with_title("Default Granular Window")
             .with_visible(false)
             .with_resizable(true)
@@ -49,7 +46,7 @@ impl WindowSystem {
                 .unwrap()
                 .dyn_into::<web_sys::HtmlCanvasElement>()
                 .unwrap();
-            attributes = attributes.with_canvas(Some(canvas));
+            window_attributes = window_attributes.with_canvas(Some(canvas));
         }
 
         let result = event_loop.create_window(window_attributes);

@@ -63,6 +63,7 @@ pub struct AssetSystem {
     path_to_id: HashMap<PathBuf, u64>,
     base_path: PathBuf,
 }
+#[profiling::all_functions]
 impl AssetSystem {
     pub fn get<T: Asset>(&self, handle: &AssetHandle<T>) -> &T {
         self.assets
@@ -86,9 +87,6 @@ impl AssetSystem {
         path: impl TryInto<PathBuf>,
         hot_reload: bool,
     ) -> AssetHandle<T> {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("AssetSystem::load").entered();
-
         let path = self.add_basepath(path);
 
         let id = self.assets.len() as u64;
@@ -113,9 +111,6 @@ impl AssetSystem {
     }
 
     pub fn register<T: Asset>(&mut self, asset: T) -> AssetHandle<T> {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("AssetSystem::register").entered();
-
         let id = self.assets.len() as u64;
         self.assets
             .insert(Arc::new(id), Box::new(TypedAssetHolder::new(asset)));
@@ -128,9 +123,6 @@ impl AssetSystem {
     }
 
     fn reload(&mut self, event: &crate::filewatcher::events::FilesChanged) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("AssetSystem::reload").entered();
-
         for path in event.paths.iter() {
             let id = self.path_to_id.get(path);
             if let Some(id) = id {
@@ -151,15 +143,13 @@ impl AssetSystem {
         }
     }
 
+    #[profiling::skip]
     pub fn add_basepath(&self, to_path: impl TryInto<PathBuf>) -> PathBuf {
         let path: PathBuf = to_path.try_into().ok().expect("Could not add base path");
         self.base_path.join(path)
     }
 
     pub fn drop_unused_assets(&mut self, _: &crate::events::timing::FixedTick<2500>) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("AssetSystem::drop_unused_assets").entered();
-
         let mut removed_usizes = vec![];
         self.assets.retain(|arc, _| {
             if Arc::strong_count(arc) <= 1 {
@@ -178,6 +168,7 @@ impl AssetSystem {
         });
     }
 }
+#[profiling::all_functions]
 impl GeeseSystem for AssetSystem {
     const DEPENDENCIES: geese::Dependencies = dependencies()
         .with::<Mut<FileWatcher>>()
@@ -187,15 +178,19 @@ impl GeeseSystem for AssetSystem {
         .with(Self::drop_unused_assets);
 
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
-        let cur = std::env::current_exe().unwrap();
-        let base_path = cur
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf();
+        let base_path;
+        if let Ok(cur) = std::env::current_exe() {
+            base_path = cur
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf();
+        } else {
+            base_path = PathBuf::default();
+        }
 
         Self {
             ctx,

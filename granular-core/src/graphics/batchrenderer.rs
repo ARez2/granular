@@ -116,8 +116,6 @@ impl BatchRenderer {
     const MAX_INDEX_COUNT: usize = BatchRenderer::MAX_QUAD_COUNT * 6;
 
     pub(super) fn end_frame(&mut self) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("BatchRenderer::end_frame").entered();
         self.batches.clear();
         self.quads_to_draw.clear();
         self.vertices_to_draw.clear();
@@ -125,9 +123,6 @@ impl BatchRenderer {
 
     /// Handles batching and issuing draw calls accordingly
     pub(super) fn create_batches(&mut self) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("BatchRenderer::create_batches").entered();
-
         let cam = self.ctx.get::<Camera>();
         let shaderglobals = cam.canvas_transform_buffer();
 
@@ -357,9 +352,6 @@ impl BatchRenderer {
     }
 
     pub(super) fn prepare_to_render(&mut self) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("BatchRenderer::prepare_to_render").entered();
-
         // Write the data from vertices to the vertex buffer
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         graphics_sys.queue().write_buffer(
@@ -370,9 +362,6 @@ impl BatchRenderer {
     }
 
     pub(super) fn render_batch_layers(&mut self, layer_range: Range<i32>, clear: bool) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("BatchRenderer::render_batch_layers").entered();
-
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         let framedata = graphics_sys.frame_data_mut();
         if framedata.is_none() {
@@ -452,9 +441,6 @@ impl BatchRenderer {
         shader: &ShaderModule,
         color_state: Option<ColorTargetState>,
     ) -> RenderPipeline {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("BatchRenderer::create_render_pipeline").entered();
-
         // IDEA: Create pipelines with different bind group layouts beforehand
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("main"),
@@ -497,9 +483,6 @@ impl BatchRenderer {
         num_views: u32,
         num_samplers: u32,
     ) -> (BindGroupLayout, BindGroupLayout) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("BatchRenderer::create_bind_group_layout").entered();
-
         let globals_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Globals bind group layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -550,9 +533,6 @@ impl BatchRenderer {
         views: &Vec<&TextureView>,
         samplers: &Vec<&Sampler>,
     ) -> (BindGroup, BindGroup) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("BatchRenderer::create_bind_group").entered();
-
         let globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -585,9 +565,6 @@ impl BatchRenderer {
 
     /// Creates an array of indices, following the typical quad indexing method (0-1-2, 2-3-0)
     fn create_indices() -> [u16; BatchRenderer::MAX_INDEX_COUNT] {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("BatchRenderer::create_indices").entered();
-
         let mut indices: [u16; BatchRenderer::MAX_INDEX_COUNT] =
             [0; BatchRenderer::MAX_INDEX_COUNT];
         let mut offset = 0;
@@ -617,9 +594,6 @@ impl GeeseSystem for BatchRenderer {
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers().with(Self::on_assetchange);
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("BatchRenderer::new").entered();
-
         let mut asset_sys = ctx.get_mut::<AssetSystem>();
         let base_shader_handle = asset_sys.load::<ShaderAsset>("shaders/batch_renderer.wgsl", true);
         // Drop the mutable reference, from now on we only need it immutably

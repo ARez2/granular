@@ -28,11 +28,9 @@ pub struct Simulation {
     center_chunk_pos: IVec2,
     pub tick: usize,
 }
+#[profiling::all_functions]
 impl Simulation {
     pub fn setup(&mut self, _: &crate::events::Initialized) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("Simulation::setup").entered();
-
         for chunk_idx in 0..self.chunks.len() {
             let chunk_pos = self.chunks[chunk_idx].position;
             // Calculate the halo for each chunk. We need to do this here, because if we were to do
@@ -128,9 +126,6 @@ impl Simulation {
 
     pub const DEBUG_UPDATE: bool = false;
     pub fn update(&mut self, _: &crate::events::timing::FixedTick<16>) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("Simulation::update").entered();
-
         self.tick += 1;
         if Self::DEBUG_UPDATE {
             let phase = (self.tick / 16) % 4;
@@ -144,8 +139,7 @@ impl Simulation {
             #[allow(clippy::collapsible_else_if)]
             if self.tick > 60 {
                 for phase in 0..4u8 {
-                    #[cfg(feature = "trace")]
-                    let _phase_span = span!(Level::INFO, "update phase: ", phase).entered();
+                    
                     self.chunks.par_iter_mut().for_each(|chunk| {
                         let should_update = chunk.should_update(phase);
                         if should_update {
@@ -157,14 +151,12 @@ impl Simulation {
         }
     }
 }
+#[profiling::all_functions]
 impl GeeseSystem for Simulation {
     const EVENT_HANDLERS: EventHandlers<Self> =
         event_handlers().with(Self::update).with(Self::setup);
 
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("Simulation::new").entered();
-
         let mut chunks: [Chunk; NUM_CHUNKS_TOTAL] = core::array::from_fn(|i| Chunk {
             grid: UnsafeCell::new(CellGrid::empty()),
             position: IVec2::ZERO,

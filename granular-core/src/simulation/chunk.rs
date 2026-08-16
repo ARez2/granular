@@ -48,8 +48,7 @@ impl Chunk {
 
     /// Updates all cells inside this chunk.
     pub fn update(&mut self, tick: usize) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("Chunk::update").entered();
+
 
         let own_grid = self.get_grid_mut();
         for y in self.update_range(0..CHUNK_SIZE as i16, tick.is_multiple_of(2)) {

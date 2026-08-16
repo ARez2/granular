@@ -1,9 +1,6 @@
 use rustc_hash::FxHashMap as HashMap;
-use std::{
-    future::Future,
-    marker::PhantomData,
-    time::{Duration, Instant},
-};
+use std::{future::Future, marker::PhantomData};
+use web_time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, DeviceId, WindowEvent},
@@ -16,9 +13,6 @@ use wasm_bindgen::prelude::*;
 
 pub mod utils;
 use utils::*;
-
-#[cfg(feature = "trace")]
-use tracing_tracy::client::frame_mark;
 
 pub mod assets;
 pub use assets::AssetSystem;
@@ -97,11 +91,9 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> Default for GranularEngine<AppSys
         Self::new()
     }
 }
+#[profiling::all_functions]
 impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
     pub fn new() -> Self {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GranularEngine::new").entered();
-
         let now = Instant::now();
         let mut last_ticks = HashMap::default();
         for fixed_tick in events::timing::FIXED_TICKS {
@@ -132,11 +124,15 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
         }
     }
 
+    #[profiling::skip]
     pub fn get_ctx(&mut self) -> &mut GeeseContext {
         &mut self.ctx
     }
 
-    pub fn run(&mut self) {
+    pub fn run(mut self) {
+        #[cfg(feature = "trace")]
+        tracy_client::Client::start();
+
         let event_loop = self
             .event_loop
             .take()
@@ -147,17 +143,12 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
             event_loop.spawn_app(self);
         }
         #[cfg(not(target_arch = "wasm32"))]
-        event_loop.run_app(self).unwrap();
+        event_loop.run_app(&mut self).unwrap();
     }
 
-    pub fn update(&mut self) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GranularEngine::update").entered();
-    }
+    pub fn update(&mut self) {}
 
     pub fn handle_scheduling(&mut self) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GranularEngine::handle_scheduling").entered();
         let mut buffer = geese::EventBuffer::default().with(events::timing::Tick::<1>);
 
         let now = Instant::now();
@@ -200,14 +191,12 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
         self.ctx.flush().with_buffer(buffer);
     }
 }
+#[profiling::all_functions]
 // Implement the winit::ApplicationHandler trait
 impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEvent>
     for GranularEngine<AppSystem>
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GranularEngine::resumed").entered();
-
         self.state = EngineState::Preparing;
 
         {
@@ -247,8 +236,6 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GranularEngine::exiting").entered();
         info!("Exiting...");
     }
 
@@ -256,8 +243,6 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
         if self.state != EngineState::Running {
             return;
         }
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GranularEngine::new_events").entered();
         {
             let mut input = self.ctx.get_mut::<InputSystem>();
             input.reset_just_pressed();
@@ -277,30 +262,21 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
             return;
         }
 
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GranularEngine::window_event").entered();
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {
-                #[cfg(feature = "trace")]
-                let _span = info_span!("WindowEvent::Resized").entered();
                 let mut renderer = self.ctx.get_mut::<Renderer>();
                 renderer.resize(new_size);
                 #[cfg(target_os = "macos")]
                 graphics.request_redraw();
             }
             WindowEvent::ModifiersChanged(modifiers) => {
-                #[cfg(feature = "trace")]
-                let _span = info_span!("WindowEvent::ModifiersChanged").entered();
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.update_modifiers(&modifiers);
             }
             WindowEvent::RedrawRequested => {
-                #[cfg(feature = "trace")]
-                let _span = info_span!("WindowEvent::RedrawRequested").entered();
-
                 self.ctx.flush().with(events::Draw);
                 let mut renderer = self.ctx.get_mut::<Renderer>();
                 renderer.start_frame();
@@ -308,28 +284,21 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
                 renderer.end_frame();
                 renderer.request_redraw();
 
-                #[cfg(feature = "trace")]
-                frame_mark();
+                profiling::finish_frame!();
             }
             WindowEvent::KeyboardInput {
                 event,
                 is_synthetic: false,
                 ..
             } => {
-                #[cfg(feature = "trace")]
-                let _span = info_span!("WindowEvent::KeyboardInput").entered();
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.handle_keyevent(&event);
             }
             WindowEvent::CursorMoved { position, .. } => {
-                #[cfg(feature = "trace")]
-                let _span = info_span!("WindowEvent::CursorMoved").entered();
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.handle_cursor_movement(position);
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                #[cfg(feature = "trace")]
-                let _span = info_span!("WindowEvent::MouseInput").entered();
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.handle_mouse_input(button, state);
             }
@@ -362,13 +331,12 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
             | WindowEvent::Focused(_)
             | WindowEvent::ScaleFactorChanged { .. }
             | WindowEvent::ThemeChanged(_) => {
-                #[cfg(feature = "trace")]
-                let _span = info_span!("Other WindowEvent").entered();
                 self.ctx.flush().with(event);
             }
         };
     }
 
+    #[profiling::skip]
     fn device_event(
         &mut self,
         _event_loop: &ActiveEventLoop,

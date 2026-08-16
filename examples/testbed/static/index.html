@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en" style="background-color: black;">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Learn WGPU</title>
+    <style>
+        canvas {
+            background-color: black;
+        }
+
+        .centering {
+            display: flex;
+            justify-content: center;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="centering">
+        <canvas id="canvas"></canvas>
+    </div>
+    <script type="module">
+        import init from "../pkg/testbed.js";
+        init().then(() => {
+            console.log("WASM Loaded");
+        });
+    </script>
+</body>
+
+</html>
