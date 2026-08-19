@@ -168,7 +168,7 @@ fn set_up_logging() {
         // parameter:
         // `info!(target="special_target", "This log message is about special_target");`
         .level_for("wgpu", log::LevelFilter::Error)
-        .level_for("granular", log::LevelFilter::Debug)
+        .level_for("granular_core", log::LevelFilter::Debug)
         .level_for("testbed", log::LevelFilter::Trace);
     #[cfg(target_arch = "wasm32")]
     {

@@ -1,9 +1,9 @@
-use std::{borrow::Cow, path::Path};
+use std::borrow::Cow;
 use wgpu::{ShaderModule, ShaderModuleDescriptor};
 
 use crate::{graphics::GraphicsSystem, utils::*};
 
-use super::Asset;
+use super::{Asset, AssetSystem};
 
 #[derive(Debug)]
 pub struct ShaderAsset {
@@ -15,23 +15,16 @@ impl ShaderAsset {
     }
 }
 impl Asset for ShaderAsset {
-    fn from_path(ctx: &geese::GeeseContextHandle<super::AssetSystem>, path: &Path) -> Self {
+    fn from_bytes(ctx: &GeeseContextHandle<AssetSystem>, bytes: &[u8]) -> anyhow::Result<Self> {
         let graphics_sys = ctx.get::<GraphicsSystem>();
         let device = graphics_sys.device();
 
-        let shader_contents = std::fs::read_to_string(path);
-        let shader_src = match shader_contents {
-            Ok(data) => data,
-            Err(e) => {
-                error!("Error while reading shader: {:?}", e);
-                String::new()
-            }
-        };
+        let shader_src = str::from_utf8(bytes)?;
         let module = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some(path.to_str().unwrap()),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(&shader_src)),
+            label: None,
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(shader_src)),
         });
 
-        Self { module }
+        Ok(Self { module })
     }
 }

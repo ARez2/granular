@@ -3,7 +3,7 @@
 use std::path::Path;
 use wgpu::{Extent3d, Sampler, Texture, TextureView};
 
-use super::{Asset, AssetSystem};
+use super::{Asset, AssetPath, AssetSystem};
 use crate::{
     graphics::{GraphicsSystem, TextureBundle},
     utils::*,
@@ -24,20 +24,20 @@ impl From<TextureBundle> for TextureAsset {
     }
 }
 impl Asset for TextureAsset {
-    fn from_path(ctx: &GeeseContextHandle<AssetSystem>, path: &Path) -> Self {
+    fn from_bytes(ctx: &GeeseContextHandle<AssetSystem>, bytes: &[u8]) -> anyhow::Result<Self> {
         let sys = ctx.get::<GraphicsSystem>();
         let device = sys.device();
         let queue = sys.queue();
 
-        let img = image::open(path).unwrap().to_rgba8();
+        let img = image::load_from_memory(bytes)?.to_rgba8();
         let extent = Extent3d {
             width: img.width(),
             height: img.height(),
             depth_or_array_layers: 1,
         };
 
-        Self {
+        Ok(Self {
             texture: TextureBundle::default(device, queue, extent, &img),
-        }
+        })
     }
 }

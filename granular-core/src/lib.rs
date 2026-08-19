@@ -11,6 +11,8 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
+pub mod future_executor;
+
 pub mod utils;
 use utils::*;
 
@@ -33,19 +35,19 @@ pub use simulation::*;
 
 use crate::graphics::GraphicsSystem;
 
-/// Runs a future to completion. On native this blocks synchronously via pollster.
-/// On wasm this spawns a local task so control returns to the browser immediately.
-#[cfg(not(target_arch = "wasm32"))]
-fn spawn(f: impl Future<Output = ()> + 'static) {
-    pollster::block_on(f);
-}
+// /// Runs a future to completion. On native this blocks synchronously via pollster.
+// /// On wasm this spawns a local task so control returns to the browser immediately.
+// #[cfg(not(target_arch = "wasm32"))]
+// fn spawn(f: impl Future<Output = ()> + 'static) {
+//     pollster::block_on(f);
+// }
 
-/// Runs a future to completion. On native this blocks synchronously via pollster.
-/// On wasm this spawns a local task so control returns to the browser immediately.
-#[cfg(target_arch = "wasm32")]
-fn spawn(f: impl Future<Output = ()> + 'static) {
-    wasm_bindgen_futures::spawn_local(f);
-}
+// /// Runs a future to completion. On native this blocks synchronously via pollster.
+// /// On wasm this spawns a local task so control returns to the browser immediately.
+// #[cfg(target_arch = "wasm32")]
+// fn spawn(f: impl Future<Output = ()> + 'static) {
+//     wasm_bindgen_futures::spawn_local(f);
+// }
 
 pub mod events {
     pub struct Initialized {}
@@ -56,7 +58,7 @@ pub mod events {
 
         /// Gets sent out every T milliseconds
         pub struct FixedTick<const N: u64>;
-        pub const FIXED_TICKS: [u64; 4] = [5000, 2500, 1000, 16];
+        pub const FIXED_TICKS: [u64; 5] = [5000, 2500, 1000, 16, 1];
     }
 
     pub struct Draw;
@@ -104,6 +106,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
         ctx.flush()
             .with(geese::notify::add_system::<WindowSystem>())
             .with(geese::notify::add_system::<GraphicsSystem>())
+            .with(geese::notify::add_system::<FutureExecutor>())
             .with(geese::notify::add_system::<FileWatcher>())
             .with(geese::notify::add_system::<InputSystem>());
 
@@ -158,6 +161,9 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
                 *last = now;
                 let tickrate_millis = tickrate.as_millis() as u64;
                 match tickrate_millis {
+                    1 => {
+                        self.ctx.flush().with(events::timing::FixedTick::<1>);
+                    }
                     16 => {
                         self.ctx.flush().with(events::timing::FixedTick::<16>);
                     }
@@ -242,6 +248,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
 
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: winit::event::StartCause) {
         if self.state != EngineState::Running {
+            self.handle_scheduling();
             return;
         }
         {

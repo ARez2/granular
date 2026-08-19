@@ -4,6 +4,8 @@
 pub use log::{debug, error, info, trace, warn};
 
 pub use geese::{
-    dependencies, event_handlers, Dependencies, EventHandlers, EventQueue, GeeseContext,
-    GeeseContextHandle, GeeseSystem, Mut,
+    Dependencies, EventHandlers, EventQueue, GeeseContext, GeeseContextHandle, GeeseSystem, Mut,
+    dependencies, event_handlers,
 };
+
+pub use crate::future_executor::{self, FutureExecutor};

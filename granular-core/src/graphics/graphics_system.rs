@@ -83,7 +83,8 @@ impl GraphicsSystem {
         size.width = size.width.max(1);
         size.height = size.height.max(1);
 
-        crate::spawn(async move {
+        let mut executor = self.ctx.get_mut::<FutureExecutor>();
+        executor.spawn_oneshot(async move {
             let mut inst_desc = wgpu::InstanceDescriptor::new_with_display_handle_from_env(
                 Box::new(display_handle),
             );
@@ -274,7 +275,9 @@ impl GraphicsSystem {
 }
 #[profiling::all_functions]
 impl GeeseSystem for GraphicsSystem {
-    const DEPENDENCIES: Dependencies = dependencies().with::<WindowSystem>();
+    const DEPENDENCIES: Dependencies = dependencies()
+        .with::<Mut<FutureExecutor>>()
+        .with::<WindowSystem>();
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         Self {

@@ -7,11 +7,11 @@ use wgpu::{
 
 use super::{GraphicsSystem, TextureBundle};
 use crate::{
+    AssetSystem, BatchRenderer, Camera, NUM_CHUNKS_TOTAL, Simulation,
     assets::{AssetHandle, TextureAsset},
     chunk::{CHUNK_SIZE, NUM_CELLS_IN_CHUNK},
     graphics,
     utils::*,
-    AssetSystem, BatchRenderer, Camera, Simulation, NUM_CHUNKS_TOTAL,
 };
 
 #[derive(Debug, Clone)]
@@ -50,7 +50,6 @@ impl SimulationRenderer {
         ];
 
         {
-            
             for (idx, chunk) in sim.get_chunks().iter().enumerate() {
                 chunk_render_data[idx].position = chunk.position;
                 chunk_render_data[idx].chunk_update_this_tick =
@@ -62,6 +61,7 @@ impl SimulationRenderer {
                     // Get the texture for this chunk from ourself
                     let sim_texture = asset_sys
                         .get::<TextureAsset>(&self.chunk_textures[idx])
+                        .unwrap()
                         .texture();
                     graphics_sys.queue().write_texture(
                         sim_texture.texture().as_image_copy(),
@@ -129,8 +129,6 @@ impl GeeseSystem for SimulationRenderer {
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers().with(Self::on_draw);
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
-        
-
         let chunk_textures: [AssetHandle<TextureAsset>; NUM_CHUNKS_TOTAL] =
             core::array::from_fn(|i| {
                 let tex_extent = Extent3d {
@@ -178,7 +176,10 @@ impl GeeseSystem for SimulationRenderer {
                 );
                 drop(graphics_sys);
                 let mut asset_sys = ctx.get_mut::<AssetSystem>();
-                asset_sys.register::<TextureAsset>(TextureAsset::from(chunk_texture))
+                asset_sys.register::<TextureAsset>(
+                    TextureAsset::from(chunk_texture),
+                    Some("chunk_texture"),
+                )
             });
 
         Self {

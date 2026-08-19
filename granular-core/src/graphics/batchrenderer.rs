@@ -8,8 +8,8 @@ use std::ops::Range;
 use bytemuck_derive::{Pod, Zeroable};
 use glam::f32::Mat4;
 use glam::{IVec2, Vec2};
-use palette::cast::ComponentsInto;
 use palette::Srgba;
+use palette::cast::ComponentsInto;
 use rustc_hash::FxHashMap as HashMap;
 use wgpu::util::DeviceExt;
 use wgpu::{
@@ -19,10 +19,10 @@ use wgpu::{
 };
 use winit::dpi::PhysicalSize;
 
-use super::graphics_system::{GraphicsSystem, Vertex, VERTEX_SIZE};
+use super::graphics_system::{GraphicsSystem, VERTEX_SIZE, Vertex};
 use super::{Camera, TextureBundle};
 use crate::{
-    assets::{AssetHandle, AssetSystem, ShaderAsset, TextureAsset},
+    assets::{AssetHandle, AssetStatus, AssetSystem, ShaderAsset, TextureAsset},
     utils::*,
 };
 
@@ -89,6 +89,9 @@ struct BatchHelper {
 pub struct BatchRenderer {
     ctx: GeeseContextHandle<Self>,
 
+    // Used to wait for the shader to get loaded
+    ready_to_render: bool,
+
     vertex_buffer: Buffer,
     index_buffer: Buffer,
     index_format: IndexFormat,
@@ -116,6 +119,9 @@ impl BatchRenderer {
     const MAX_INDEX_COUNT: usize = BatchRenderer::MAX_QUAD_COUNT * 6;
 
     pub(super) fn end_frame(&mut self) {
+        if !self.ready_to_render {
+            return;
+        }
         self.batches.clear();
         self.quads_to_draw.clear();
         self.vertices_to_draw.clear();
@@ -123,6 +129,10 @@ impl BatchRenderer {
 
     /// Handles batching and issuing draw calls accordingly
     pub(super) fn create_batches(&mut self) {
+        if !self.ready_to_render {
+            return;
+        }
+
         let cam = self.ctx.get::<Camera>();
         let shaderglobals = cam.canvas_transform_buffer();
 
@@ -146,7 +156,7 @@ impl BatchRenderer {
                         samplers.push(self.white_pixel.sampler());
                     }
                     Some(tex_handle) => {
-                        let asset = asset_sys.get(tex_handle);
+                        let asset = asset_sys.get(tex_handle).unwrap();
                         views.push(asset.texture().view());
                         samplers.push(asset.texture().sampler());
                     }
@@ -178,7 +188,7 @@ impl BatchRenderer {
                     views.len() as u32,
                     samplers.len() as u32,
                 );
-                let shader = asset_sys.get(&self.shader_handle);
+                let shader = asset_sys.get(&self.shader_handle).unwrap();
                 let color_state = Some(wgpu::ColorTargetState {
                     format: graphics_sys.surface_config().format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -273,10 +283,10 @@ impl BatchRenderer {
                         }
                     }
                     Some(quad_tex_handle) => {
-                        if let Some(tex_handle) = tex {
-                            if **tex_handle.id() == **quad_tex_handle.id() {
-                                texture_in_batch = true;
-                            }
+                        if let Some(tex_handle) = tex
+                            && **tex_handle.id() == **quad_tex_handle.id()
+                        {
+                            texture_in_batch = true;
                         };
                     }
                 }
@@ -352,6 +362,9 @@ impl BatchRenderer {
     }
 
     pub(super) fn prepare_to_render(&mut self) {
+        if !self.ready_to_render {
+            return;
+        }
         // Write the data from vertices to the vertex buffer
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         graphics_sys.queue().write_buffer(
@@ -362,6 +375,10 @@ impl BatchRenderer {
     }
 
     pub(super) fn render_batch_layers(&mut self, layer_range: Range<i32>, clear: bool) {
+        if !self.ready_to_render {
+            return;
+        }
+
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         let framedata = graphics_sys.frame_data_mut();
         if framedata.is_none() {
@@ -419,6 +436,40 @@ impl BatchRenderer {
 
     /// Records a new quad that needs to be drawn this frame (low performance cost, even though quad gets cloned)
     pub fn draw_quad(&mut self, quad: &Quad, layer: i32) {
+        if let Some(handle) = &quad.texture {
+            let asset_sys = self.ctx.get::<AssetSystem>();
+            let status = asset_sys.status(handle);
+            if status != AssetStatus::Ready {
+                let path = asset_sys.path(handle);
+                let path = if path.is_some() {
+                    path.as_ref().unwrap().as_str().to_owned()
+                } else {
+                    String::from("None")
+                };
+                match status {
+                    AssetStatus::Loading => {
+                        warn!(
+                            "Requested to draw a quad where the texture at AssetPath '{:?}' is still loading...",
+                            path
+                        );
+                    }
+                    AssetStatus::Failed(e) => {
+                        warn!(
+                            "Requested to draw a quad where the texture at AssetPath '{:?}' failed to load: {}",
+                            path, e
+                        );
+                    }
+                    AssetStatus::NotFound => {
+                        warn!(
+                            "Requested to draw a quad where the texture was not found in the AssetSystem."
+                        );
+                    }
+                    _ => (),
+                }
+
+                return;
+            }
+        }
         self.quads_to_draw.push(std::cmp::Reverse(BatchQuadEntry {
             layer,
             quad: quad.clone(),
@@ -426,11 +477,12 @@ impl BatchRenderer {
     }
 
     /// Reloads parts of the renderer depending on what asset changed
-    fn on_assetchange(&mut self, event: &crate::assets::events::AssetReload) {
+    fn on_assetchange(&mut self, event: &crate::assets::events::AssetLoaded) {
         if event.asset_id == **self.shader_handle.id() {
             // since we store the pipelines inside of batch_helpers, we just need
             // to clear those and they will create new pipelines automatically
             self.batch_helpers.clear();
+            self.ready_to_render = true;
         }
     }
 
@@ -668,6 +720,8 @@ impl GeeseSystem for BatchRenderer {
 
         Self {
             ctx,
+
+            ready_to_render: false,
 
             vertex_buffer,
             index_buffer,
