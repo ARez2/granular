@@ -11,7 +11,7 @@ pub mod events {
 }
 
 /// A future that takes a Context (needed for polling), the FutureExecutor (needed to use ctx.raise_event) and returns true if the future is completed
-type Task = Box<dyn FnMut(&mut Context<'_>, &mut FutureExecutor) -> bool + Send>;
+type Task = Box<dyn FnMut(&mut Context<'_>, &mut FutureExecutor) -> bool>;
 
 pub struct FutureExecutor {
     ctx: GeeseContextHandle<Self>,
@@ -19,7 +19,7 @@ pub struct FutureExecutor {
 }
 impl FutureExecutor {
     /// Spawns the `future` (which shouldn't return anything) and then polls for it to complete.
-    pub fn spawn_oneshot(&mut self, future: impl Future<Output = ()> + Send + 'static) {
+    pub fn spawn_oneshot(&mut self, future: impl Future<Output = ()> + 'static) {
         let mut future = Box::pin(future);
 
         self.tasks
