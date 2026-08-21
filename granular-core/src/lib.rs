@@ -132,6 +132,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
         &mut self.ctx
     }
 
+    /// Invokes the main loop
     #[profiling::skip]
     pub fn run(mut self) {
         #[cfg(feature = "trace")]
@@ -152,6 +153,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
 
     pub fn update(&mut self) {}
 
+    /// Responsible for emitting the right `events::timing::Tick` or `events::timing::FixedTick`
     pub fn handle_scheduling(&mut self) {
         let mut buffer = geese::EventBuffer::default().with(events::timing::Tick::<1>);
 
@@ -247,6 +249,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
     }
 
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: winit::event::StartCause) {
+        // We still need the scheduling to drive for example the FutureExecutor
         if self.state != EngineState::Running {
             self.handle_scheduling();
             return;

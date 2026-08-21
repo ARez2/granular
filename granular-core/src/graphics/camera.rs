@@ -1,6 +1,6 @@
 #![allow(unused)]
 use glam::{Affine2, IVec2, Mat2, Mat4, Quat, Vec2, Vec3};
-use wgpu::{util::DeviceExt, Buffer, BufferUsages};
+use wgpu::{Buffer, BufferUsages, util::DeviceExt};
 
 use super::GraphicsSystem;
 use crate::utils::*;
@@ -42,10 +42,13 @@ impl Camera {
         self.position = position;
         self.recalc_view();
     }
+
+    /// Gets the position
     pub fn position(&self) -> IVec2 {
         self.position
     }
 
+    /// Translates the cameras position by offset.
     pub fn translate(&mut self, offset: IVec2) {
         self.set_position(self.position + offset);
     }
@@ -55,6 +58,8 @@ impl Camera {
         self.angle = rotation;
         self.recalc_view();
     }
+
+    /// Gets the rotation
     pub fn rotation(&self) -> f32 {
         self.angle
     }
@@ -78,6 +83,7 @@ impl Camera {
         self.recalc_view();
     }
 
+    /// Gets the canvas transform
     pub fn canvas_transform(&self) -> Mat4 {
         self.canvas_transform
     }

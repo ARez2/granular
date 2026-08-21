@@ -21,6 +21,7 @@ pub struct FileWatcher {
     rx: Receiver<notify::Result<notify::Event>>,
 }
 impl FileWatcher {
+    /// Registers a new path to be watched. FileWatcher will emit an `event::FilesChanged` when the resource at this path changes.
     pub fn watch<P: AsRef<std::path::Path>>(&mut self, path: P, recursive: bool) {
         let rec = match recursive {
             true => notify::RecursiveMode::Recursive,
@@ -32,7 +33,7 @@ impl FileWatcher {
         info!("Watching {}", path.as_ref().display());
     }
 
-    pub fn poll(&mut self, _event: &crate::events::timing::Tick<30>) {
+    fn poll(&mut self, _event: &crate::events::timing::Tick<30>) {
         if let Ok(event) = self.rx.try_recv() {
             match event {
                 Ok(event) => {

@@ -13,6 +13,7 @@ pub mod events {
 /// A future that takes a Context (needed for polling), the FutureExecutor (needed to use ctx.raise_event) and returns true if the future is completed
 type Task = Box<dyn FnMut(&mut Context<'_>, &mut FutureExecutor) -> bool>;
 
+/// Little helper to run futures natively and on WASM.
 pub struct FutureExecutor {
     ctx: GeeseContextHandle<Self>,
     tasks: Vec<Task>,

@@ -7,7 +7,8 @@ pub struct AssetHandle<T: Asset> {
     marker: std::marker::PhantomData<T>,
 }
 impl<T: Asset> AssetHandle<T> {
-    pub fn new(id: Arc<u64>) -> Self {
+    /// Creates a new AssetHandle for the asset stores at `id`
+    pub(super) fn new(id: Arc<u64>) -> Self {
         Self {
             id,
             marker: PhantomData,

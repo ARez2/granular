@@ -27,12 +27,14 @@ pub mod events {
     }
 }
 
+/// The main Asset trait. All other assets need to implement this.
 pub trait Asset: 'static {
     fn from_bytes(ctx: &GeeseContextHandle<AssetSystem>, bytes: &[u8]) -> anyhow::Result<Self>
     where
         Self: std::marker::Sized;
 }
 
+/// The AssetSystem is responsible for keeping track of assets, loading/ unloading them, providing handles and handling hot-reloads of assets.
 pub struct AssetSystem {
     ctx: GeeseContextHandle<Self>,
     asset_source: Arc<dyn AssetSource>,
@@ -42,6 +44,7 @@ pub struct AssetSystem {
 }
 #[profiling::all_functions]
 impl AssetSystem {
+    /// Fetches an asset by its AssetHandle. Returns None if it wasnt found
     pub fn get<T: Asset>(&self, handle: &AssetHandle<T>) -> Option<&T> {
         self.assets
             .get(handle.id())
@@ -49,6 +52,7 @@ impl AssetSystem {
             .and_then(|value| value.downcast_ref::<T>())
     }
 
+    /// Returns the status of the asset behind the AssetHandle
     pub fn status<T: Asset>(&self, handle: &AssetHandle<T>) -> AssetStatus {
         let asset = self.assets.get(handle.id());
         if let Some(asset) = asset {
@@ -58,6 +62,7 @@ impl AssetSystem {
         }
     }
 
+    /// Returns the AssetPath behind the AssetHandle. This path is optional (as assets can also be `register`ed in the AssetSystem without a path).
     pub fn path<T: Asset>(&self, handle: &AssetHandle<T>) -> &Option<AssetPath> {
         let asset = self.assets.get(handle.id());
         if let Some(asset) = asset {
@@ -123,6 +128,7 @@ impl AssetSystem {
         AssetHandle::new(key)
     }
 
+    /// Reacts to the Filewatcher event to reload assets
     #[cfg(not(target_arch = "wasm32"))]
     fn reload(&mut self, event: &crate::filewatcher::events::FilesChanged) {
         for path in &event.paths {
@@ -148,7 +154,8 @@ impl AssetSystem {
     //     self.base_path.join(path)
     // }
 
-    pub fn drop_unused_assets(&mut self, _: &crate::events::timing::FixedTick<2500>) {
+    /// Removes assets which are no longer used. Gets called every 2.5 seconds.
+    fn drop_unused_assets(&mut self, _: &crate::events::timing::FixedTick<2500>) {
         let mut removed_usizes = vec![];
         self.assets.retain(|arc, _| {
             if Arc::strong_count(arc) <= 1 {

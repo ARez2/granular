@@ -3,6 +3,7 @@ use std::{any::Any, sync::Arc};
 use super::{Asset, AssetSystem};
 use crate::{assets::AssetPath, utils::*};
 
+/// Represents the status of a single asset.
 #[derive(Debug, Clone)]
 pub enum AssetStatus {
     Loading,
@@ -25,6 +26,7 @@ impl PartialEq for AssetStatus {
 }
 impl Eq for AssetStatus {}
 
+/// Helper trait to be able to store TypedAssetHolder's of different generic types (for the different types of assets) inside one list.
 pub(super) trait AssetHolder {
     fn as_any(&self) -> Option<&dyn Any>;
     fn status(&self) -> AssetStatus;
@@ -37,6 +39,7 @@ pub(super) trait AssetHolder {
     fn fail(&mut self, error: Arc<anyhow::Error>);
 }
 
+/// This encapsulates an asset and holds an error if the asset failed to load.
 pub(super) struct TypedAssetHolder<T: Asset> {
     value: Option<T>,
     path: Option<AssetPath>,
@@ -45,7 +48,8 @@ pub(super) struct TypedAssetHolder<T: Asset> {
 }
 // Main impl
 impl<T: Asset> TypedAssetHolder<T> {
-    pub fn loading(path: AssetPath) -> Self {
+    /// Creates a new `TypedAssetHolder` with its asset being set to be loading.
+    pub(super) fn loading(path: AssetPath) -> Self {
         Self {
             value: None,
             path: Some(path),
@@ -54,7 +58,8 @@ impl<T: Asset> TypedAssetHolder<T> {
         }
     }
 
-    pub fn ready(value: T, path: Option<AssetPath>) -> Self {
+    /// Creates a new `TypedAssetHolder` with its asset being set to be ready.
+    pub(super) fn ready(value: T, path: Option<AssetPath>) -> Self {
         Self {
             value: Some(value),
             path,
@@ -63,22 +68,25 @@ impl<T: Asset> TypedAssetHolder<T> {
         }
     }
 
+    /// Returns the asset being held inside of this `TypedAssetHolder`
     #[allow(dead_code)]
-    pub fn get(&self) -> Option<&T> {
+    pub(super) fn get(&self) -> Option<&T> {
         self.value.as_ref()
     }
 
+    /// Returns the error (if any)
     #[allow(dead_code)]
-    pub fn error(&self) -> Option<&anyhow::Error> {
+    pub(super) fn error(&self) -> Option<&anyhow::Error> {
         self.error.as_deref()
     }
 
     #[allow(dead_code)]
-    pub fn is_loading(&self) -> bool {
+    pub(super) fn is_loading(&self) -> bool {
         self.loading
     }
 
-    pub fn status(&self) -> AssetStatus {
+    /// Fetches the status of the asset(holder)
+    pub(super) fn status(&self) -> AssetStatus {
         if self.loading {
             AssetStatus::Loading
         } else if self.value.is_some() {
@@ -88,7 +96,8 @@ impl<T: Asset> TypedAssetHolder<T> {
         }
     }
 
-    pub fn path(&self) -> &Option<AssetPath> {
+    /// Stores the AssetPath which was used to load the asset
+    pub(super) fn path(&self) -> &Option<AssetPath> {
         &self.path
     }
 }

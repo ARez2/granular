@@ -9,6 +9,7 @@ use crate::{
     utils::*,
 };
 
+/// Asset which holds a TextureBundle
 #[derive(Debug, PartialEq)]
 pub struct TextureAsset {
     texture: TextureBundle,

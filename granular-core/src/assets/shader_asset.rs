@@ -5,6 +5,7 @@ use crate::{graphics::GraphicsSystem, utils::*};
 
 use super::{Asset, AssetSystem};
 
+/// Asset to hold a wgpu::ShaderModule
 #[derive(Debug)]
 pub struct ShaderAsset {
     module: ShaderModule,

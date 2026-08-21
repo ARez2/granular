@@ -3,16 +3,17 @@ use std::{path::PathBuf, pin::Pin, sync::Arc};
 
 use super::AssetPath;
 
-pub type AssetLoadResult = (u64, anyhow::Result<Vec<u8>, Arc<anyhow::Error>>);
-pub type AssetFuture<'a> = Pin<Box<dyn Future<Output = AssetLoadResult> + 'a + Send>>;
+pub(super) type AssetLoadResult = (u64, anyhow::Result<Vec<u8>, Arc<anyhow::Error>>);
+pub(super) type AssetFuture<'a> = Pin<Box<dyn Future<Output = AssetLoadResult> + 'a + Send>>;
 
-pub trait AssetSource: Send + Sync {
+pub(super) trait AssetSource: Send + Sync {
     fn load<'a>(&'a self, asset_id: u64, path: &'a AssetPath) -> AssetFuture<'a>;
 
     fn make_assetpath_absolute(&self, path: &AssetPath) -> AssetPath;
 }
 
-pub struct FsAssetSource {
+/// Uses the native filesystem (PathBuf) to load assets
+pub(super) struct FsAssetSource {
     pub base_path: PathBuf,
 }
 
@@ -30,26 +31,27 @@ impl AssetSource for FsAssetSource {
     }
 }
 
-pub struct WebAssetSource {
-    pub base_url: String,
-}
+// Example implementation for loading assets via URLs
+// pub struct WebAssetSource {
+//     pub base_url: String,
+// }
 
-impl AssetSource for WebAssetSource {
-    fn load<'a>(&'a self, asset_id: u64, path: &'a AssetPath) -> AssetFuture<'a> {
-        Box::pin(async move {
-            let url = format!("{}/{}", self.base_url, path.as_str());
+// impl AssetSource for WebAssetSource {
+//     fn load<'a>(&'a self, asset_id: u64, path: &'a AssetPath) -> AssetFuture<'a> {
+//         Box::pin(async move {
+//             let url = format!("{}/{}", self.base_url, path.as_str());
 
-            // let response = reqwest::get(url).await?;
-            // let bytes = response.bytes().await?;
-            todo!();
+//             // let response = reqwest::get(url).await?;
+//             // let bytes = response.bytes().await?;
+//             todo!();
 
-            // Ok(bytes.to_vec())
-        })
-    }
+//             // Ok(bytes.to_vec())
+//         })
+//     }
 
-    fn make_assetpath_absolute(&self, path: &AssetPath) -> AssetPath {
-        let mut p = self.base_url.clone();
-        p.push_str(path.as_str());
-        AssetPath::new(p)
-    }
-}
+//     fn make_assetpath_absolute(&self, path: &AssetPath) -> AssetPath {
+//         let mut p = self.base_url.clone();
+//         p.push_str(path.as_str());
+//         AssetPath::new(p)
+//     }
+// }

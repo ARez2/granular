@@ -11,6 +11,7 @@ pub mod events {
     use std::sync::Arc;
     use winit::window::Window;
 
+    #[allow(unused)]
     pub struct WindowCreated(pub Arc<Window>);
 }
 
@@ -27,6 +28,7 @@ impl WindowSystem {
     }
 
     pub fn init(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
         let mut window_attributes = WindowAttributes::default()
             .with_title("Default Granular Window")
             .with_visible(false)

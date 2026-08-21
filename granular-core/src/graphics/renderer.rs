@@ -1,8 +1,9 @@
 use winit::dpi::PhysicalSize;
 
 use super::{GraphicsSystem, SimulationRenderer};
-use crate::{utils::*, BatchRenderer, Camera};
+use crate::{BatchRenderer, Camera, utils::*};
 
+/// The main renderer which orchestrates the other renderers.
 pub struct Renderer {
     ctx: GeeseContextHandle<Self>,
 }
@@ -13,6 +14,7 @@ impl Renderer {
         graphics_sys.begin_frame();
     }
 
+    /// Presents and ends the frame
     pub fn end_frame(&mut self) {
         {
             let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
@@ -42,6 +44,7 @@ impl Renderer {
         graphics_sys.request_redraw();
     }
 
+    /// Does the actual rendering
     pub fn render(&mut self) {
         {
             let camera = self.ctx.get::<Camera>();

@@ -1,3 +1,4 @@
+/// Just a wrapper around String to be flexible on where we load assets from
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct AssetPath(String);
 

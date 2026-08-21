@@ -44,6 +44,7 @@ impl Vertex {
 }
 pub const VERTEX_SIZE: usize = std::mem::size_of::<Vertex>();
 
+/// This holds the main information for the GraphicsBackend. It is being sent out as an event after the async initialization
 #[derive(Debug)]
 pub struct GraphicsState {
     instance: Instance,
