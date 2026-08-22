@@ -17,7 +17,7 @@ mod asset_source;
 use asset_source::AssetSource;
 
 mod texture_asset;
-pub use texture_asset::TextureAsset;
+pub use texture_asset::{TextureAsset, TextureAssetImportSettings};
 mod shader_asset;
 pub use shader_asset::ShaderAsset;
 
@@ -29,9 +29,23 @@ pub mod events {
 
 /// The main Asset trait. All other assets need to implement this.
 pub trait Asset: 'static {
-    fn from_bytes(ctx: &GeeseContextHandle<AssetSystem>, bytes: &[u8]) -> anyhow::Result<Self>
+    // When updating: also change `AssetHolder::ImportSettings`
+    type ImportSettings: Default + 'static + PartialEq + Eq;
+
+    fn create_from_bytes(
+        ctx: &mut GeeseContextHandle<AssetSystem>,
+        bytes: &[u8],
+        import_settings: &Self::ImportSettings,
+    ) -> anyhow::Result<Self>
     where
         Self: std::marker::Sized;
+
+    fn update_from_bytes(
+        &mut self,
+        ctx: &mut GeeseContextHandle<AssetSystem>,
+        bytes: &[u8],
+        import_settings: &Self::ImportSettings,
+    ) -> anyhow::Result<()>;
 }
 
 /// The AssetSystem is responsible for keeping track of assets, loading/ unloading them, providing handles and handling hot-reloads of assets.
@@ -48,8 +62,16 @@ impl AssetSystem {
     pub fn get<T: Asset>(&self, handle: &AssetHandle<T>) -> Option<&T> {
         self.assets
             .get(handle.id())
-            .and_then(|holder| holder.as_any())
+            .and_then(|holder| holder.inner_any())
             .and_then(|value| value.downcast_ref::<T>())
+    }
+
+    /// Fetches an asset by its AssetHandle. Returns None if it wasnt found
+    pub fn get_mut<T: Asset>(&mut self, handle: &AssetHandle<T>) -> Option<&mut T> {
+        self.assets
+            .get_mut(handle.id())
+            .and_then(|holder| holder.inner_any_mut())
+            .and_then(|value| value.downcast_mut::<T>())
     }
 
     /// Returns the status of the asset behind the AssetHandle
@@ -77,6 +99,7 @@ impl AssetSystem {
         &mut self,
         path: impl Into<AssetPath>,
         hot_reload: bool,
+        import_settings: T::ImportSettings,
     ) -> AssetHandle<T> {
         // let path = self.add_basepath(path);
         let path = path.into();
@@ -93,7 +116,10 @@ impl AssetSystem {
 
             self.assets.insert(
                 key.clone(),
-                Box::new(TypedAssetHolder::<T>::loading(path.clone())),
+                Box::new(TypedAssetHolder::<T>::loading(
+                    path.clone(),
+                    import_settings,
+                )),
             );
 
             AssetHandle::new(key)
@@ -114,7 +140,12 @@ impl AssetSystem {
     }
 
     /// Registers an asset where the data of the asset is already present outside and does not need to be loaded first. The `assetname` helps identify the asset in error logs etc.
-    pub fn register<T: Asset>(&mut self, asset: T, assetname: Option<&str>) -> AssetHandle<T> {
+    pub fn register<T: Asset>(
+        &mut self,
+        asset: T,
+        assetname: Option<&str>,
+        import_settings: T::ImportSettings,
+    ) -> AssetHandle<T> {
         let id = self.get_next_id();
         let key = Arc::new(id);
         self.assets.insert(
@@ -122,6 +153,7 @@ impl AssetSystem {
             Box::new(TypedAssetHolder::ready(
                 asset,
                 assetname.map(AssetPath::new),
+                import_settings,
             )),
         );
 
@@ -199,7 +231,7 @@ impl AssetSystem {
 
         match bytes {
             Ok(bytes) => {
-                holder.update_from_bytes(&self.ctx, bytes);
+                holder.update_from_bytes(&mut self.ctx, bytes);
 
                 self.ctx.raise_event(events::AssetLoaded {
                     asset_id: *asset_id,
@@ -218,12 +250,12 @@ impl GeeseSystem for AssetSystem {
     const DEPENDENCIES: geese::Dependencies = dependencies()
         .with::<Mut<FileWatcher>>()
         .with::<Mut<FutureExecutor>>()
-        .with::<GraphicsSystem>();
+        .with::<Mut<GraphicsSystem>>();
 
     #[cfg(target_arch = "wasm32")]
     const DEPENDENCIES: geese::Dependencies = dependencies()
         .with::<Mut<FutureExecutor>>()
-        .with::<GraphicsSystem>();
+        .with::<Mut<GraphicsSystem>>();
 
     #[cfg(not(target_arch = "wasm32"))]
     const EVENT_HANDLERS: geese::EventHandlers<Self> = event_handlers()

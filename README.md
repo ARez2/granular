@@ -20,5 +20,6 @@ cargo run -p testbed
 - Fix `BatchRenderer` on WASM (`BINDING_INDEXING` not supported on WASM)
 - Integrate new compute shader based simulation into granular
 - Integrate `wgpu_profiler` into rendering
+- Integrate `include-wgsl-oil` (also for `Vertex`)
 - Low priority: Input system: What about touch gestures?
 

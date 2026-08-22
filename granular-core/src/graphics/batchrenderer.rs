@@ -4,6 +4,7 @@
 use std::collections::BinaryHeap;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::ops::Range;
+use std::sync::Arc;
 
 use bytemuck_derive::{Pod, Zeroable};
 use glam::f32::Mat4;
@@ -21,8 +22,10 @@ use winit::dpi::PhysicalSize;
 
 use super::graphics_system::{GraphicsSystem, VERTEX_SIZE, Vertex};
 use super::{Camera, TextureBundle};
+use crate::graphics::Texture2D;
+use crate::graphics::texture::TextureHandle;
 use crate::{
-    assets::{AssetHandle, AssetStatus, AssetSystem, ShaderAsset, TextureAsset},
+    assets::{Asset, AssetHandle, AssetStatus, AssetSystem, ShaderAsset},
     utils::*,
 };
 
@@ -36,21 +39,15 @@ struct Batch {
     layer: i32,
 }
 
+pub type QuadTexture = Option<TextureHandle>;
+
 #[derive(Debug, Clone)]
 pub struct Quad {
     pub center: IVec2,
     pub size: IVec2,
     /// If there is a texture set, this tints the texture
     pub color: Srgba,
-    pub texture: Option<AssetHandle<TextureAsset>>,
-}
-impl Quad {
-    pub(crate) fn get_texture_index(&self) -> u64 {
-        match &self.texture {
-            None => 0,
-            Some(tex_handle) => **tex_handle.id(),
-        }
-    }
+    pub texture: QuadTexture,
 }
 impl PartialEq for Quad {
     fn eq(&self, other: &Self) -> bool {
@@ -95,9 +92,6 @@ pub struct BatchRenderer {
     vertex_buffer: Buffer,
     index_buffer: Buffer,
     index_format: IndexFormat,
-    // Links the asset id (1st u64) of a texture to its position in the internal
-    // texture array (2nd u64) (and its handle, for easier access)
-    texture_slots: HashMap<u64, (u64, AssetHandle<TextureAsset>)>,
 
     quads_to_draw: BinaryHeap<std::cmp::Reverse<BatchQuadEntry>>,
     batches: Vec<Batch>,
@@ -139,11 +133,11 @@ impl BatchRenderer {
         /// Creates a new Batch object from the given parameters, uses the 1x1 white pixel when a texture is None
         /// automatically creates a new bind group for each batch and only a new bindgroup layout/ render pipeline,
         /// when the amount of textures inside the bind group has changed (reuses existing ones if not)
-        let mut create_new_batch = |textures: &Vec<Option<AssetHandle<TextureAsset>>>,
+        let mut create_new_batch = |textures: &Vec<QuadTexture>,
                                     vertices_range: Range<u64>,
                                     indices_end: u32,
                                     batch_layer: i32| {
-            let asset_sys = self.ctx.get::<AssetSystem>();
+            let graphics_sys = self.ctx.get::<GraphicsSystem>();
             let mut views = vec![];
             let mut samplers = vec![];
 
@@ -155,10 +149,10 @@ impl BatchRenderer {
                         views.push(self.white_pixel.view());
                         samplers.push(self.white_pixel.sampler());
                     }
-                    Some(tex_handle) => {
-                        let asset = asset_sys.get(tex_handle).unwrap();
-                        views.push(asset.texture().view());
-                        samplers.push(asset.texture().sampler());
+                    Some(handle) => {
+                        let tex = graphics_sys.get_texture(handle).unwrap();
+                        views.push(tex.view());
+                        samplers.push(tex.sampler());
                     }
                 };
             });
@@ -188,6 +182,7 @@ impl BatchRenderer {
                     views.len() as u32,
                     samplers.len() as u32,
                 );
+                let asset_sys = self.ctx.get::<AssetSystem>();
                 let shader = asset_sys.get(&self.shader_handle).unwrap();
                 let color_state = Some(wgpu::ColorTargetState {
                     format: graphics_sys.surface_config().format,
@@ -235,7 +230,7 @@ impl BatchRenderer {
         let total_quads_to_draw = self.quads_to_draw.len();
 
         let mut last_batch_end_quad_idx: u64 = 0;
-        let mut textures_in_batch: Vec<Option<AssetHandle<TextureAsset>>> = vec![];
+        let mut textures_in_batch: Vec<QuadTexture> = vec![];
         let mut previous_layer = 0;
         let mut first_iteration = true;
         let mut num_quads_in_batch = 0;
@@ -282,9 +277,9 @@ impl BatchRenderer {
                             texture_in_batch = true;
                         }
                     }
-                    Some(quad_tex_handle) => {
-                        if let Some(tex_handle) = tex
-                            && **tex_handle.id() == **quad_tex_handle.id()
+                    Some(quad_texture) => {
+                        if let Some(texture) = tex
+                            && texture == quad_texture
                         {
                             texture_in_batch = true;
                         };
@@ -313,7 +308,7 @@ impl BatchRenderer {
             };
 
             if !texture_in_batch {
-                textures_in_batch.push(quad.texture.clone());
+                textures_in_batch.push(quad.texture);
             };
             let tex_index = textures_in_batch.len() as u64 - 1;
 
@@ -436,40 +431,6 @@ impl BatchRenderer {
 
     /// Records a new quad that needs to be drawn this frame (low performance cost, even though quad gets cloned)
     pub fn draw_quad(&mut self, quad: &Quad, layer: i32) {
-        if let Some(handle) = &quad.texture {
-            let asset_sys = self.ctx.get::<AssetSystem>();
-            let status = asset_sys.status(handle);
-            if status != AssetStatus::Ready {
-                let path = asset_sys.path(handle);
-                let path = if path.is_some() {
-                    path.as_ref().unwrap().as_str().to_owned()
-                } else {
-                    String::from("None")
-                };
-                match status {
-                    AssetStatus::Loading => {
-                        warn!(
-                            "Requested to draw a quad where the texture at AssetPath '{:?}' is still loading...",
-                            path
-                        );
-                    }
-                    AssetStatus::Failed(e) => {
-                        warn!(
-                            "Requested to draw a quad where the texture at AssetPath '{:?}' failed to load: {}",
-                            path, e
-                        );
-                    }
-                    AssetStatus::NotFound => {
-                        warn!(
-                            "Requested to draw a quad where the texture was not found in the AssetSystem."
-                        );
-                    }
-                    _ => (),
-                }
-
-                return;
-            }
-        }
         self.quads_to_draw.push(std::cmp::Reverse(BatchQuadEntry {
             layer,
             quad: quad.clone(),
@@ -647,7 +608,8 @@ impl GeeseSystem for BatchRenderer {
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
         let mut asset_sys = ctx.get_mut::<AssetSystem>();
-        let base_shader_handle = asset_sys.load::<ShaderAsset>("shaders/batch_renderer.wgsl", true);
+        let base_shader_handle =
+            asset_sys.load::<ShaderAsset>("shaders/batch_renderer.wgsl", true, ());
         // Drop the mutable reference, from now on we only need it immutably
         drop(asset_sys);
 
@@ -673,7 +635,6 @@ impl GeeseSystem for BatchRenderer {
             device,
             queue,
             "White pixel texture",
-            wgpu::Extent3d::default(),
             wgpu::TextureDescriptor {
                 size: wgpu::Extent3d::default(),
                 mip_level_count: 1,
@@ -726,7 +687,6 @@ impl GeeseSystem for BatchRenderer {
             vertex_buffer,
             index_buffer,
             index_format: wgpu::IndexFormat::Uint16,
-            texture_slots: HashMap::default(),
 
             quads_to_draw: BinaryHeap::new(),
             batches: vec![],

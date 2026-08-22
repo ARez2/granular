@@ -1,14 +1,12 @@
 use fern::colors::{Color, ColoredLevelConfig};
 use glam::IVec2;
-use granular::prelude::*;
+use granular::prelude::{graphics::TextureHandle, *};
 use palette::{Srgba, WithAlpha};
 use web_time::SystemTime;
 use winit::keyboard::{KeyCode, ModifiersState};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
-
-mod utils;
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
@@ -21,7 +19,7 @@ pub fn run_wasm() -> Result<(), wasm_bindgen::JsValue> {
 
 pub fn run() {
     set_up_logging();
-    let mut engine = GranularEngine::<Game>::new();
+    let engine = GranularEngine::<Game>::new();
     engine.run();
 }
 
@@ -29,7 +27,8 @@ pub fn run() {
 struct Game {
     ctx: GeeseContextHandle<Self>,
 
-    texture: AssetHandle<TextureAsset>,
+    asset: AssetHandle<TextureAsset>,
+    texture: Option<TextureHandle>,
 }
 impl Game {
     fn init(&mut self, _event: &events::Initialized) {
@@ -51,13 +50,18 @@ impl Game {
     }
 
     fn on_draw(&mut self, _: &events::Draw) {
+        let mut asset_sys = self.ctx.get_mut::<AssetSystem>();
+        if asset_sys.status(&self.asset) == AssetStatus::Ready {
+            self.texture = Some(asset_sys.get_mut(&self.asset).unwrap().handle().clone());
+        }
+        drop(asset_sys);
         let mut renderer = self.ctx.get_mut::<BatchRenderer>();
         renderer.draw_quad(
             &graphics::Quad {
                 center: IVec2::new(500, 300),
                 size: IVec2::new(200, 200),
                 color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
-                texture: Some(self.texture.clone()),
+                texture: self.texture.clone(),
             },
             -1,
         );
@@ -108,10 +112,26 @@ impl GeeseSystem for Game {
         drop(input);
 
         let mut asset_sys = ctx.get_mut::<AssetSystem>();
-        let texture = asset_sys.load::<TextureAsset>("assets/cat2.jpg", true);
+        let asset = asset_sys.load::<TextureAsset>(
+            "assets/cat2.jpg",
+            true,
+            TextureAssetImportSettings {
+                size: Extent3d {
+                    width: 563,
+                    height: 565,
+                    depth_or_array_layers: 1,
+                },
+                ..Default::default()
+            },
+        );
+
         drop(asset_sys);
 
-        Self { ctx, texture }
+        Self {
+            ctx,
+            texture: None,
+            asset,
+        }
     }
 }
 
@@ -168,7 +188,7 @@ fn set_up_logging() {
         // parameter:
         // `info!(target="special_target", "This log message is about special_target");`
         .level_for("wgpu", log::LevelFilter::Error)
-        .level_for("granular_core", log::LevelFilter::Debug)
+        .level_for("granular_core", log::LevelFilter::Trace)
         .level_for("testbed", log::LevelFilter::Trace);
     #[cfg(target_arch = "wasm32")]
     {

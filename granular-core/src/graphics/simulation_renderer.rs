@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use glam::IVec2;
 use palette::{Srgba, WithAlpha};
 use wgpu::{
@@ -8,9 +10,8 @@ use wgpu::{
 use super::{GraphicsSystem, TextureBundle};
 use crate::{
     AssetSystem, BatchRenderer, Camera, NUM_CHUNKS_TOTAL, Simulation,
-    assets::{AssetHandle, TextureAsset},
     chunk::{CHUNK_SIZE, NUM_CELLS_IN_CHUNK},
-    graphics,
+    graphics::{self, TextureHandle},
     utils::*,
 };
 
@@ -28,7 +29,7 @@ pub struct SimulationRenderer {
     display_scale: i32,
     // Each element here corresponds to the element with the same index
     // in the Simulation.chunks array (both arrays have same length)
-    chunk_textures: [AssetHandle<TextureAsset>; NUM_CHUNKS_TOTAL],
+    chunk_textures: [TextureHandle; NUM_CHUNKS_TOTAL],
 }
 #[profiling::all_functions]
 impl SimulationRenderer {
@@ -59,16 +60,25 @@ impl SimulationRenderer {
                 // Write the chunk texture only if it has changed
                 if chunk.is_texture_data_dirty() {
                     // Get the texture for this chunk from ourself
-                    let sim_texture = asset_sys
-                        .get::<TextureAsset>(&self.chunk_textures[idx])
-                        .unwrap()
-                        .texture();
-                    graphics_sys.queue().write_texture(
-                        sim_texture.texture().as_image_copy(),
-                        chunk.get_texture_data(),
-                        sim_texture.data_layout(),
-                        sim_texture.extent(),
-                    );
+                    let handle = &self.chunk_textures[idx];
+                    if let Some(sim_texture) = graphics_sys.get_texture(handle) {
+                        graphics_sys.queue().write_texture(
+                            sim_texture.texture().as_image_copy(),
+                            chunk.get_texture_data(),
+                            wgpu::TexelCopyBufferLayout {
+                                offset: 0,
+                                bytes_per_row: Some(
+                                    crate::graphics::bytes_per_pixel(
+                                        sim_texture.texture().format(),
+                                    )
+                                    .unwrap_or(4)
+                                        * sim_texture.texture().size().width,
+                                ),
+                                rows_per_image: Some(sim_texture.texture().size().height),
+                            },
+                            sim_texture.texture().size(),
+                        );
+                    };
                 }
             }
         }
@@ -120,7 +130,7 @@ impl SimulationRenderer {
 }
 impl GeeseSystem for SimulationRenderer {
     const DEPENDENCIES: geese::Dependencies = dependencies()
-        .with::<GraphicsSystem>()
+        .with::<Mut<GraphicsSystem>>()
         .with::<Mut<AssetSystem>>()
         .with::<Mut<BatchRenderer>>()
         .with::<Camera>()
@@ -129,58 +139,50 @@ impl GeeseSystem for SimulationRenderer {
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers().with(Self::on_draw);
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
-        let chunk_textures: [AssetHandle<TextureAsset>; NUM_CHUNKS_TOTAL] =
-            core::array::from_fn(|i| {
-                let tex_extent = Extent3d {
-                    width: CHUNK_SIZE as u32,
-                    height: CHUNK_SIZE as u32,
-                    depth_or_array_layers: 1,
-                };
-                let chunk_tex_data = [0u8; NUM_CELLS_IN_CHUNK * 4];
-                let graphics_sys = ctx.get::<GraphicsSystem>();
-                let device = graphics_sys.device();
-                let chunk_texture = TextureBundle::new(
-                    device,
-                    graphics_sys.queue(),
-                    &format!("SimulationRenderer Chunk {} bundle", i),
-                    tex_extent,
-                    TextureDescriptor {
-                        label: Some(&format!(
-                            "SimulationRenderer Chunk {} texture descriptor",
-                            i
-                        )),
-                        size: tex_extent,
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: TextureDimension::D2,
-                        format: TextureFormat::Rgba8UnormSrgb,
-                        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-                        view_formats: &[],
-                    },
-                    &TextureViewDescriptor::default(),
-                    &SamplerDescriptor {
-                        address_mode_u: wgpu::AddressMode::ClampToEdge,
-                        address_mode_v: wgpu::AddressMode::ClampToEdge,
-                        address_mode_w: wgpu::AddressMode::ClampToEdge,
-                        mag_filter: wgpu::FilterMode::Nearest,
-                        min_filter: wgpu::FilterMode::Nearest,
-                        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-                        ..Default::default()
-                    },
-                    &chunk_tex_data,
-                    TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(4 * tex_extent.width),
-                        rows_per_image: Some(tex_extent.height),
-                    },
-                );
-                drop(graphics_sys);
-                let mut asset_sys = ctx.get_mut::<AssetSystem>();
-                asset_sys.register::<TextureAsset>(
-                    TextureAsset::from(chunk_texture),
-                    Some("chunk_texture"),
-                )
-            });
+        let chunk_textures = core::array::from_fn(|i| {
+            let tex_extent = Extent3d {
+                width: CHUNK_SIZE as u32,
+                height: CHUNK_SIZE as u32,
+                depth_or_array_layers: 1,
+            };
+            let chunk_tex_data = [0u8; NUM_CELLS_IN_CHUNK * 4];
+            let mut graphics_sys = ctx.get_mut::<GraphicsSystem>();
+            let tex = Box::new(TextureBundle::new(
+                graphics_sys.device(),
+                graphics_sys.queue(),
+                &format!("SimulationRenderer Chunk {} bundle", i),
+                TextureDescriptor {
+                    label: Some(&format!(
+                        "SimulationRenderer Chunk {} texture descriptor",
+                        i
+                    )),
+                    size: tex_extent,
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: TextureDimension::D2,
+                    format: TextureFormat::Rgba8UnormSrgb,
+                    usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                    view_formats: &[],
+                },
+                &TextureViewDescriptor::default(),
+                &SamplerDescriptor {
+                    address_mode_u: wgpu::AddressMode::ClampToEdge,
+                    address_mode_v: wgpu::AddressMode::ClampToEdge,
+                    address_mode_w: wgpu::AddressMode::ClampToEdge,
+                    mag_filter: wgpu::FilterMode::Nearest,
+                    min_filter: wgpu::FilterMode::Nearest,
+                    mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                    ..Default::default()
+                },
+                &chunk_tex_data,
+                TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * tex_extent.width),
+                    rows_per_image: Some(tex_extent.height),
+                },
+            ));
+            graphics_sys.create_texture(tex)
+        });
 
         Self {
             ctx,

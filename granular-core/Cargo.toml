@@ -15,7 +15,7 @@ trace = [
 
 [dependencies]
 geese.workspace = true
-wgpu = "30.0.0"
+wgpu.workspace = true
 winit.workspace = true
 log.workspace = true
 palette.workspace = true
