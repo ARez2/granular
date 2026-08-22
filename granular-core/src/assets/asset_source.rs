@@ -3,6 +3,7 @@ use std::{path::PathBuf, pin::Pin, sync::Arc};
 
 use super::AssetPath;
 
+/// (Asset ID, Asset Bytes)
 pub(super) type AssetLoadResult = (u64, anyhow::Result<Vec<u8>, Arc<anyhow::Error>>);
 pub(super) type AssetFuture<'a> = Pin<Box<dyn Future<Output = AssetLoadResult> + 'a + Send>>;
 

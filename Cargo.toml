@@ -16,6 +16,7 @@ trace = ["granular-core/trace"]
 [dependencies]
 granular-core = { path = "granular-core" }
 palette.workspace = true
+wgpu.workspace = true
 
 
 [workspace.dependencies]
@@ -24,6 +25,7 @@ log = "0.4.33"
 winit = { version = "*" }
 palette = "0.7.5"
 web-time = "1.1.0"
+wgpu = "30.0.0"
 # Profiling:
 profiling = { version = "1.0.18" }
 wgpu-profiler = { version = "0.28.0", features = ["tracy"] }
