@@ -18,6 +18,7 @@ winit.workspace = true
 fern = { version = "0.7.1", features = ["colored"] }
 regex = "1.10.3"
 glam = { version = "0.25.0", features = ["approx"] }
+chrono = "0.4.45"
 
 [features]
 trace = ["granular/trace"]

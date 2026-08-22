@@ -1,3 +1,4 @@
+use chrono::Timelike;
 use fern::colors::{Color, ColoredLevelConfig};
 use glam::IVec2;
 use granular::prelude::{graphics::TextureHandle, *};
@@ -168,12 +169,14 @@ fn set_up_logging() {
     #[cfg(not(target_arch = "wasm32"))]
     let mut disp = fern::Dispatch::new().format(move |out, message, record| {
         out.finish(format_args!(
-            "{color_line}[{date} {level} {target} {color_line}] {message}\x1B[0m",
+            "{color_line}{bold}[{date} {level} {bold}{target} {color_line}]{reset} {message}\x1B[0m",
             color_line = format_args!(
                 "\x1B[{}m",
                 colors_line.get_color(&record.level()).to_fg_str()
             ),
-            date = humantime::format_rfc3339_micros(SystemTime::now()),
+            bold = "\x1B[1m",
+            reset = "\x1B[0m",
+            date = format_time(),
             target = record.target(),
             level = colors_level.color(record.level()),
             message = message,
@@ -189,6 +192,10 @@ fn set_up_logging() {
         // `info!(target="special_target", "This log message is about special_target");`
         .level_for("wgpu", log::LevelFilter::Error)
         .level_for("granular_core", log::LevelFilter::Trace)
+        .level_for(
+            "granular_core::graphics::batchrenderer",
+            log::LevelFilter::Debug,
+        )
         .level_for("testbed", log::LevelFilter::Trace);
     #[cfg(target_arch = "wasm32")]
     {
@@ -200,4 +207,16 @@ fn set_up_logging() {
         disp = disp.chain(std::io::stdout())
     }
     disp.apply().unwrap();
+}
+
+fn format_time() -> String {
+    let now = chrono::Local::now();
+
+    format!(
+        "{:02}:{:02}:{:02}.{:05}",
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.nanosecond() / 10_000,
+    )
 }
