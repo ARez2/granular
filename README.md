@@ -9,6 +9,11 @@ wasm-pack build examples/testbed --target web --dev
 
 Then open the `examples/testbed/static/index.html` with some web server.
 
+Cargo watch command:
+```
+cargo watch -s "wasm-pack build examples/testbed --target web --dev"
+```
+
 ## Running natively
 ```
 cargo run -p testbed
@@ -17,7 +22,8 @@ cargo run -p testbed
 
 ## Todo
 - ✅ Done: Fix `AssetSystem` for WASM
-- Fix `BatchRenderer` on WASM (`BINDING_INDEXING` not supported on WASM)
+- ✅ Done: Fix `BatchRenderer` on WASM (`BINDING_INDEXING` not supported on WASM)
+- Dynamically remove textures from `BatchRenderer` texture atlasses
 - Integrate new compute shader based simulation into granular
 - Integrate `wgpu_profiler` into rendering
 - Integrate `include-wgsl-oil` (also for `Vertex`)

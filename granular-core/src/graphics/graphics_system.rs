@@ -35,15 +35,13 @@ pub(crate) struct Vertex {
     _pos: IVec2,
     _col: [f32; 4],
     _tex_coord: Vec2,
-    _tex_idx: u64,
 }
 impl Vertex {
-    pub fn new(pos: IVec2, color: [f32; 4], tex_coord: Vec2, tex_index: u64) -> Self {
+    pub fn new(pos: IVec2, color: [f32; 4], tex_coord: Vec2) -> Self {
         Self {
             _pos: pos,
             _col: color,
             _tex_coord: tex_coord,
-            _tex_idx: tex_index,
         }
     }
 }
@@ -110,9 +108,7 @@ impl GraphicsSystem {
                 .await
                 .expect("Failed to find an appropriate adapter");
 
-            let mut features = wgpu::Features::empty()
-                | wgpu::Features::TEXTURE_BINDING_ARRAY
-                | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
+            let mut features = wgpu::Features::empty();
             #[cfg(feature = "trace")]
             let features = features | GpuProfiler::ALL_WGPU_TIMER_FEATURES;
 

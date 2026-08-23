@@ -8,7 +8,7 @@ use crate::{assets::AssetPath, utils::*};
 pub enum AssetStatus {
     Loading,
     Ready,
-    Failed(Arc<anyhow::Error>),
+    Failed(Option<Arc<anyhow::Error>>),
     NotFound,
 }
 impl PartialEq for AssetStatus {
@@ -18,7 +18,13 @@ impl PartialEq for AssetStatus {
             | (Self::Ready, Self::Ready)
             | (Self::NotFound, Self::NotFound) => true,
 
-            (Self::Failed(a), Self::Failed(b)) => Arc::ptr_eq(a, b),
+            (Self::Failed(a), Self::Failed(b)) => {
+                (a.is_none() && b.is_none())
+                    || std::sync::Arc::<anyhow::Error>::ptr_eq(
+                        &a.clone().unwrap(),
+                        &b.clone().unwrap(),
+                    )
+            }
 
             _ => false,
         }
@@ -109,7 +115,7 @@ impl<T: Asset> TypedAssetHolder<T> {
         } else if self.value.is_some() {
             AssetStatus::Ready
         } else {
-            AssetStatus::Failed(self.error.clone().unwrap())
+            AssetStatus::Failed(self.error.clone())
         }
     }
 

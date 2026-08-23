@@ -25,3 +25,6 @@ pub use batchrenderer::{BatchRenderer, Quad};
 
 mod simulation_renderer;
 pub use simulation_renderer::SimulationRenderer;
+
+mod texture_atlas;
+pub use texture_atlas::TextureAtlas;

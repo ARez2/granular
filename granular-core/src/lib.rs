@@ -35,20 +35,6 @@ pub use simulation::*;
 
 use crate::graphics::GraphicsSystem;
 
-// /// Runs a future to completion. On native this blocks synchronously via pollster.
-// /// On wasm this spawns a local task so control returns to the browser immediately.
-// #[cfg(not(target_arch = "wasm32"))]
-// fn spawn(f: impl Future<Output = ()> + 'static) {
-//     pollster::block_on(f);
-// }
-
-// /// Runs a future to completion. On native this blocks synchronously via pollster.
-// /// On wasm this spawns a local task so control returns to the browser immediately.
-// #[cfg(target_arch = "wasm32")]
-// fn spawn(f: impl Future<Output = ()> + 'static) {
-//     wasm_bindgen_futures::spawn_local(f);
-// }
-
 pub mod events {
     pub struct Initialized {}
 
@@ -229,7 +215,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
                     .flush()
                     .with(geese::notify::add_system::<Renderer>())
                     .with(geese::notify::add_system::<AssetSystem>())
-                    .with(geese::notify::add_system::<Simulation>())
+                    // .with(geese::notify::add_system::<Simulation>())
                     .with(geese::notify::add_system::<AppSystem>())
                     .with(events::Initialized {});
                 self.state = EngineState::Running;
