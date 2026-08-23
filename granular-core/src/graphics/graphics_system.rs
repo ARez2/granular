@@ -179,6 +179,7 @@ impl GraphicsSystem {
     }
 
     pub fn begin_frame(&mut self) {
+        self.device().poll(wgpu::wgt::PollType::Poll);
         let GraphicsSystemState::Ready(state) = &mut self.state else {
             return;
         };
