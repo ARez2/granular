@@ -78,7 +78,13 @@ impl TextureBundle {
         }
     }
 
-    pub fn default(device: &Device, queue: &Queue, extent: Extent3d, data: &[u8]) -> Self {
+    pub fn default(
+        device: &Device,
+        queue: &Queue,
+        extent: Extent3d,
+        filtering: wgpu::FilterMode,
+        data: &[u8],
+    ) -> Self {
         let tex_descriptor = wgpu::TextureDescriptor {
             size: extent,
             mip_level_count: 1,
@@ -96,7 +102,7 @@ impl TextureBundle {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
+            mag_filter: filtering,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
