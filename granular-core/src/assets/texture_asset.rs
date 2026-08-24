@@ -7,7 +7,7 @@ use crate::{
 };
 
 /// Settings you might want to set when loading a texture. Not complete
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct TextureAssetImportSettings {
     pub size: wgpu::Extent3d,
     pub format: wgpu::TextureFormat,

@@ -24,6 +24,7 @@ mod shader_asset;
 pub use shader_asset::ShaderAsset;
 
 pub mod events {
+    #[derive(Debug)]
     pub struct AssetLoaded {
         pub asset_id: u64,
     }
@@ -33,7 +34,7 @@ pub mod events {
 /// as a base trait for the InternalAsset trait which contains the functions to construct assets.
 pub trait Asset: 'static {
     // When updating: also change `AssetHolder::ImportSettings`
-    type ImportSettings: Default + 'static + PartialEq + Eq;
+    type ImportSettings: Default + 'static + PartialEq + Eq + Clone + Copy;
 }
 
 /// This private trait holds the methods for creating an asset from bytes.

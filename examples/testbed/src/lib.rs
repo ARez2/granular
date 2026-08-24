@@ -26,8 +26,10 @@ pub fn run() {
 struct Game {
     ctx: GeeseContextHandle<Self>,
 
-    asset: AssetHandle<TextureAsset>,
+    texture_handle: AssetHandle<TextureAsset>,
     texture: Option<TextureHandle>,
+    texture2_handle: AssetHandle<TextureAsset>,
+    texture2: Option<TextureHandle>,
 }
 impl Game {
     fn init(&mut self, _event: &events::Initialized) {
@@ -50,37 +52,69 @@ impl Game {
     }
 
     fn on_draw(&mut self, _: &events::Draw) {
-        let mut asset_sys = self.ctx.get_mut::<AssetSystem>();
-        if asset_sys.status(&self.asset) == AssetStatus::Ready {
-            self.texture = Some(asset_sys.get_mut(&self.asset).unwrap().handle().clone());
-        }
-        drop(asset_sys);
         let mut renderer = self.ctx.get_mut::<BatchRenderer>();
         renderer.draw_quad(
             &graphics::Quad {
-                center: IVec2::new(0, 0),
+                center: IVec2::new(50, 50),
                 size: IVec2::new(200, 200),
                 color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
                 texture: self.texture.clone(),
             },
-            -1,
+            -2,
         );
         renderer.draw_quad(
             &graphics::Quad {
-                center: IVec2::new(500, 300),
+                center: IVec2::new(200, 200),
                 size: IVec2::new(100, 100),
                 color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
                 texture: None,
             },
             1,
         );
+        renderer.draw_quad(
+            &graphics::Quad {
+                center: IVec2::new(40, 300),
+                size: IVec2::new(150, 150),
+                color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
+                texture: self.texture2.clone(),
+            },
+            0,
+        );
     }
-}
-impl GeeseSystem for Game {
-    const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn on_asset_loaded(&mut self, event: &assets::events::AssetLoaded) {
+        let mut asset_sys = self.ctx.get_mut::<AssetSystem>();
+        if event.asset_id == **self.texture_handle.id() {
+            self.texture = Some(
+                asset_sys
+                    .get_mut(&self.texture_handle)
+                    .unwrap()
+                    .handle()
+                    .clone(),
+            );
+        } else if event.asset_id == **self.texture2_handle.id() {
+            self.texture2 = Some(
+                asset_sys
+                    .get_mut(&self.texture2_handle)
+                    .unwrap()
+                    .handle()
+                    .clone(),
+            );
+        }
+    }
+
+    const EVENT_HANDLERS_SHARED: EventHandlers<Self> = event_handlers()
         .with(Self::init)
         .with(Self::on_update)
         .with(Self::on_draw);
+}
+impl GeeseSystem for Game {
+    #[cfg(target_arch = "wasm32")]
+    const EVENT_HANDLERS: EventHandlers<Self> = Self::EVENT_HANDLERS_SHARED;
+    #[cfg(not(target_arch = "wasm32"))]
+    const EVENT_HANDLERS: EventHandlers<Self> =
+        Self::EVENT_HANDLERS_SHARED.with(Self::on_asset_loaded);
 
     const DEPENDENCIES: Dependencies = dependencies()
         .with::<WindowSystem>()
@@ -121,26 +155,44 @@ impl GeeseSystem for Game {
         };
 
         #[cfg(not(target_arch = "wasm32"))]
-        let asset = {
+        let (texture_handle, texture, texture2_handle, texture2) = {
             let mut asset_sys = ctx.get_mut::<AssetSystem>();
-            asset_sys.load::<TextureAsset>("assets/cat2.jpg", true, cat_import_settings)
+            (
+                asset_sys.load::<TextureAsset>("assets/cat.jpg", true, cat_import_settings),
+                None,
+                asset_sys.load::<TextureAsset>("assets/cat2.jpg", true, cat_import_settings),
+                None,
+            )
         };
         #[cfg(target_arch = "wasm32")]
-        let asset = {
+        let (texture_handle, texture, texture2_handle, texture2) = {
             let mut asset_sys = ctx.get_mut::<AssetSystem>();
-            asset_sys
+            let h1 = asset_sys
                 .register::<TextureAsset>(
-                    include_bytes!("../../../assets/cat2.jpg"),
+                    include_bytes!("../../../assets/cat.jpg"),
                     Some("cat texture"),
                     cat_import_settings,
                 )
-                .unwrap()
+                .unwrap();
+            let t1 = asset_sys.get_mut(&h1).unwrap().handle().clone();
+            let h2 = asset_sys
+                .register::<TextureAsset>(
+                    include_bytes!("../../../assets/cat2.jpg"),
+                    Some("cat texture 2"),
+                    cat_import_settings,
+                )
+                .unwrap();
+            let t2 = asset_sys.get_mut(&h2).unwrap().handle().clone();
+            warn!("HELLO {:?} {:?}", t1, t2);
+            (h1, Some(t1), h2, Some(t2))
         };
 
         Self {
             ctx,
-            texture: None,
-            asset,
+            texture,
+            texture_handle,
+            texture2,
+            texture2_handle,
         }
     }
 }
