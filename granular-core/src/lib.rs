@@ -1,5 +1,5 @@
 use rustc_hash::FxHashMap as HashMap;
-use std::{future::Future, marker::PhantomData};
+use std::marker::PhantomData;
 use web_time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
@@ -7,9 +7,6 @@ use winit::{
     event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     window::WindowId,
 };
-
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
 
 pub mod future_executor;
 
@@ -30,8 +27,8 @@ use filewatcher::FileWatcher;
 pub mod input_system;
 pub use input_system::{InputAction, InputActionTrigger, InputSystem};
 
-pub mod simulation;
-pub use simulation::*;
+// pub mod simulation;
+// pub use simulation::*;
 
 use crate::graphics::GraphicsSystem;
 
@@ -222,9 +219,8 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
                 info!("Everything is initialized.");
 
                 {
-                    let window_size = self.ctx.get::<WindowSystem>().window_handle().inner_size();
-                    let mut renderer = self.ctx.get_mut::<Renderer>();
-                    renderer.resize(window_size);
+                    let win = self.ctx.get::<WindowSystem>().window_handle();
+                    self.ctx.get_mut::<Renderer>().resize(win.inner_size());
                 }
             }
         }

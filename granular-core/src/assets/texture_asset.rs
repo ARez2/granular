@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 
 use crate::{
-    assets::Asset,
+    assets::{Asset, InternalAsset},
     graphics::{GraphicsSystem, TextureBundle, TextureHandle},
     utils::*,
 };
@@ -86,9 +86,10 @@ impl TextureAsset {
 }
 impl Asset for TextureAsset {
     type ImportSettings = TextureAssetImportSettings;
-
-    fn create_from_bytes(
-        ctx: &mut GeeseContextHandle<super::AssetSystem>,
+}
+impl InternalAsset for TextureAsset {
+    fn create_from_bytes<S: GeeseSystem>(
+        ctx: &mut GeeseContextHandle<S>,
         bytes: &[u8],
         import_settings: &Self::ImportSettings,
     ) -> anyhow::Result<Self>
@@ -106,9 +107,9 @@ impl Asset for TextureAsset {
         Ok(Self { texture_handle })
     }
 
-    fn update_from_bytes(
+    fn update_from_bytes<S: GeeseSystem>(
         &mut self,
-        ctx: &mut GeeseContextHandle<super::AssetSystem>,
+        ctx: &mut GeeseContextHandle<S>,
         bytes: &[u8],
         import_settings: &Self::ImportSettings,
     ) -> anyhow::Result<()> {

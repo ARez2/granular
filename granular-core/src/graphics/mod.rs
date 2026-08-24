@@ -23,8 +23,23 @@ pub use renderer::Renderer;
 mod batchrenderer;
 pub use batchrenderer::{BatchRenderer, Quad};
 
-mod simulation_renderer;
-pub use simulation_renderer::SimulationRenderer;
+// mod simulation_renderer;
+// pub use simulation_renderer::SimulationRenderer;
 
 mod texture_atlas;
 pub use texture_atlas::TextureAtlas;
+
+#[cfg(target_arch = "wasm32")]
+pub fn get_canvas() -> web_sys::HtmlCanvasElement {
+    use crate::utils::*;
+    use wasm_bindgen::JsCast;
+    let canvas = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .get_element_by_id("canvas")
+        .unwrap()
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .unwrap();
+    canvas
+}

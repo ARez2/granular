@@ -1,7 +1,9 @@
 use rustc_hash::FxHashMap as HashMap;
 use std::{path::PathBuf, sync::Arc};
 
-use crate::{filewatcher::FileWatcher, graphics::GraphicsSystem, utils::*};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::filewatcher::FileWatcher;
+use crate::{graphics::GraphicsSystem, utils::*};
 
 mod holder;
 pub use holder::AssetStatus;
@@ -27,22 +29,27 @@ pub mod events {
     }
 }
 
-/// The main Asset trait. All other assets need to implement this.
+/// The main Asset trait. Holds information about the import settings for that asset and serves
+/// as a base trait for the InternalAsset trait which contains the functions to construct assets.
 pub trait Asset: 'static {
     // When updating: also change `AssetHolder::ImportSettings`
     type ImportSettings: Default + 'static + PartialEq + Eq;
+}
 
-    fn create_from_bytes(
-        ctx: &mut GeeseContextHandle<AssetSystem>,
+/// This private trait holds the methods for creating an asset from bytes.
+/// Those methods are not supposed to be called from outside.
+trait InternalAsset: Asset {
+    fn create_from_bytes<S: GeeseSystem>(
+        ctx: &mut GeeseContextHandle<S>,
         bytes: &[u8],
         import_settings: &Self::ImportSettings,
     ) -> anyhow::Result<Self>
     where
         Self: std::marker::Sized;
 
-    fn update_from_bytes(
+    fn update_from_bytes<S: GeeseSystem>(
         &mut self,
-        ctx: &mut GeeseContextHandle<AssetSystem>,
+        ctx: &mut GeeseContextHandle<S>,
         bytes: &[u8],
         import_settings: &Self::ImportSettings,
     ) -> anyhow::Result<()>;
@@ -95,7 +102,8 @@ impl AssetSystem {
     }
 
     /// Loads a new asset from the given path. Returns a handle to that asset. Note that `hot_reload` does nothing on WASM.
-    pub fn load<T: Asset>(
+    #[allow(unused)]
+    pub fn load<T: InternalAsset>(
         &mut self,
         path: impl Into<AssetPath>,
         hot_reload: bool,
@@ -140,12 +148,14 @@ impl AssetSystem {
     }
 
     /// Registers an asset where the data of the asset is already present outside and does not need to be loaded first. The `assetname` helps identify the asset in error logs etc.
-    pub fn register<T: Asset>(
+    pub fn register<T: InternalAsset>(
         &mut self,
-        asset: T,
+        asset_bytes: &[u8],
         assetname: Option<&str>,
         import_settings: T::ImportSettings,
-    ) -> AssetHandle<T> {
+    ) -> anyhow::Result<AssetHandle<T>> {
+        let asset = T::create_from_bytes(&mut self.ctx, asset_bytes, &import_settings)?;
+
         let id = self.get_next_id();
         let key = Arc::new(id);
         self.assets.insert(
@@ -157,7 +167,7 @@ impl AssetSystem {
             )),
         );
 
-        AssetHandle::new(key)
+        Ok(AssetHandle::new(key))
     }
 
     /// Reacts to the Filewatcher event to reload assets
@@ -269,7 +279,9 @@ impl GeeseSystem for AssetSystem {
         .with(Self::drop_unused_assets);
 
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
+        #[allow(unused)]
         let base_path;
+        #[allow(unused)]
         if let Ok(cur) = std::env::current_exe() {
             base_path = cur
                 .parent()

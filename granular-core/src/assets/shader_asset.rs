@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 use wgpu::{ShaderModule, ShaderModuleDescriptor};
 
-use crate::{graphics::GraphicsSystem, utils::*};
+use crate::{assets::InternalAsset, graphics::GraphicsSystem, utils::*};
 
-use super::{Asset, AssetSystem};
+use super::Asset;
 
 /// Asset to hold a wgpu::ShaderModule
 #[derive(Debug)]
@@ -18,9 +18,10 @@ impl ShaderAsset {
 impl Asset for ShaderAsset {
     // could be used, if shaders need more settings
     type ImportSettings = ();
-
-    fn create_from_bytes(
-        ctx: &mut GeeseContextHandle<AssetSystem>,
+}
+impl InternalAsset for ShaderAsset {
+    fn create_from_bytes<S: GeeseSystem>(
+        ctx: &mut GeeseContextHandle<S>,
         bytes: &[u8],
         _import_settings: &Self::ImportSettings,
     ) -> anyhow::Result<Self> {
@@ -36,9 +37,9 @@ impl Asset for ShaderAsset {
         Ok(Self { module })
     }
 
-    fn update_from_bytes(
+    fn update_from_bytes<S: GeeseSystem>(
         &mut self,
-        ctx: &mut GeeseContextHandle<AssetSystem>,
+        ctx: &mut GeeseContextHandle<S>,
         bytes: &[u8],
         _import_settings: &Self::ImportSettings,
     ) -> anyhow::Result<()> {

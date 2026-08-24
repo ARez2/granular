@@ -1,7 +1,10 @@
 use std::{any::Any, sync::Arc};
 
 use super::{Asset, AssetSystem};
-use crate::{assets::AssetPath, utils::*};
+use crate::{
+    assets::{AssetPath, InternalAsset},
+    utils::*,
+};
 
 /// Represents the status of a single asset.
 #[derive(Debug, Clone)]
@@ -45,7 +48,8 @@ pub(super) trait AssetHolder {
     fn status(&self) -> AssetStatus;
     fn path(&self) -> &Option<AssetPath>;
 
-    /// Prepares for reloading
+    /// Prepares for reloading (disabled in wasm since there are no FileWatcher events which could trigger a reload)
+    #[cfg(not(target_arch = "wasm32"))]
     fn begin_reload(&mut self);
 
     /// Updates its own contents based on the bytes received (and if those can be used to successfully create an Asset)
@@ -125,7 +129,7 @@ impl<T: Asset> TypedAssetHolder<T> {
     }
 }
 // Impl AssetHolder
-impl<T: Asset> AssetHolder for TypedAssetHolder<T> {
+impl<T: InternalAsset> AssetHolder for TypedAssetHolder<T> {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -150,6 +154,7 @@ impl<T: Asset> AssetHolder for TypedAssetHolder<T> {
         TypedAssetHolder::path(self)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn begin_reload(&mut self) {
         self.loading = true;
         self.error = None;

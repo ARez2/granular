@@ -35,7 +35,7 @@ var texture_atlas_sampler: sampler;
 
 
 @fragment
-fn uniform_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex_color = textureSample(
         texture_atlas,
         texture_atlas_sampler,
@@ -44,5 +44,5 @@ fn uniform_main(in: VertexOutput) -> @location(0) vec4<f32> {
             in.tex_coords.y
         )
     );
-    return tex_color;
+    return tex_color * in.color;
 }

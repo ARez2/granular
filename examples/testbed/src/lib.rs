@@ -34,7 +34,8 @@ impl Game {
         let win_sys = self.ctx.get::<WindowSystem>();
         let window = win_sys.window_handle();
         window.set_visible(true);
-        window.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(640, 480)));
+        let s = window.request_inner_size(winit::dpi::PhysicalSize::new(640, 480));
+        debug!("Game set_min_inner_size {:?}", s);
         window.set_title("Granular engine testbed");
     }
 
@@ -57,7 +58,7 @@ impl Game {
         let mut renderer = self.ctx.get_mut::<BatchRenderer>();
         renderer.draw_quad(
             &graphics::Quad {
-                center: IVec2::new(500, 300),
+                center: IVec2::new(0, 0),
                 size: IVec2::new(200, 200),
                 color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
                 texture: self.texture.clone(),
@@ -110,21 +111,31 @@ impl GeeseSystem for Game {
         );
         drop(input);
 
-        let mut asset_sys = ctx.get_mut::<AssetSystem>();
-        let asset = asset_sys.load::<TextureAsset>(
-            "assets/cat2.jpg",
-            true,
-            TextureAssetImportSettings {
-                size: Extent3d {
-                    width: 563,
-                    height: 565,
-                    depth_or_array_layers: 1,
-                },
-                ..Default::default()
+        let cat_import_settings = TextureAssetImportSettings {
+            size: Extent3d {
+                width: 563,
+                height: 565,
+                depth_or_array_layers: 1,
             },
-        );
+            ..Default::default()
+        };
 
-        drop(asset_sys);
+        #[cfg(not(target_arch = "wasm32"))]
+        let asset = {
+            let mut asset_sys = ctx.get_mut::<AssetSystem>();
+            asset_sys.load::<TextureAsset>("assets/cat2.jpg", true, cat_import_settings)
+        };
+        #[cfg(target_arch = "wasm32")]
+        let asset = {
+            let mut asset_sys = ctx.get_mut::<AssetSystem>();
+            asset_sys
+                .register::<TextureAsset>(
+                    include_bytes!("../../../assets/cat2.jpg"),
+                    Some("cat texture"),
+                    cat_import_settings,
+                )
+                .unwrap()
+        };
 
         Self {
             ctx,

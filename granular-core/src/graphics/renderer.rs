@@ -1,6 +1,6 @@
 use winit::dpi::PhysicalSize;
 
-use super::{GraphicsSystem, SimulationRenderer};
+use super::GraphicsSystem;
 use crate::{BatchRenderer, Camera, utils::*};
 
 /// The main renderer which orchestrates the other renderers.
@@ -50,7 +50,6 @@ impl Renderer {
             let camera = self.ctx.get::<Camera>();
             camera.write_canvas_transform_buffer();
         }
-
         let mut batch_renderer = self.ctx.get_mut::<BatchRenderer>();
         batch_renderer.create_batches();
         batch_renderer.prepare_to_render();

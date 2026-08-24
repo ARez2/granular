@@ -31,23 +31,17 @@ impl WindowSystem {
         #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
         let mut window_attributes = WindowAttributes::default()
             .with_title("Default Granular Window")
-            .with_visible(false)
-            .with_resizable(true)
-            .with_window_level(winit::window::WindowLevel::AlwaysOnTop)
-            .with_position(winit::dpi::PhysicalPosition::new(1500, 100));
+            // .with_visible(false)
+            .with_resizable(true);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let window_attributes =
+            window_attributes.with_position(winit::dpi::PhysicalPosition::new(1500, 100));
 
         #[cfg(target_arch = "wasm32")]
         {
-            use wasm_bindgen::JsCast;
             use winit::platform::web::WindowAttributesExtWebSys;
-            let canvas = web_sys::window()
-                .unwrap()
-                .document()
-                .unwrap()
-                .get_element_by_id("canvas")
-                .unwrap()
-                .dyn_into::<web_sys::HtmlCanvasElement>()
-                .unwrap();
+            let canvas = crate::graphics::get_canvas();
             window_attributes = window_attributes.with_canvas(Some(canvas));
         }
 

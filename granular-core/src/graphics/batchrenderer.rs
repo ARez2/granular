@@ -25,7 +25,7 @@ use crate::graphics::Texture2D;
 use crate::graphics::texture::TextureHandle;
 use crate::graphics::texture_atlas::DynamicTextureAtlas;
 use crate::{
-    assets::{Asset, AssetHandle, AssetStatus, AssetSystem, ShaderAsset},
+    assets::{AssetHandle, AssetStatus, AssetSystem, ShaderAsset},
     utils::*,
 };
 
@@ -181,7 +181,7 @@ impl BatchRenderer {
             let (atlas_tex_coords_start, atlas_tex_coords_end) = self.texture_atlasses
                 [current_atlas_index]
                 .0
-                .get_texture_coords(&quad_tex)
+                .get_texture_coords(quad_tex)
                 .expect("Texture coords should exist for each quad");
 
             // Add the vertices of the quad to vertices, respecting size and attributes
@@ -273,7 +273,7 @@ impl BatchRenderer {
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: match clear {
-                        true => wgpu::LoadOp::Clear(Color::BLACK),
+                        true => wgpu::LoadOp::Clear(self.clear_color),
                         false => wgpu::LoadOp::Load,
                     },
                     store: wgpu::StoreOp::Store,
@@ -353,19 +353,14 @@ impl BatchRenderer {
         }));
     }
 
-    /// Reloads parts of the renderer depending on what asset changed
+    /// Reloads parts of the renderer depending on what asset changed. Ignored on wasm
+    #[cfg(not(target_arch = "wasm32"))]
     fn on_assetchange(&mut self, event: &crate::assets::events::AssetLoaded) {
         let asset_sys = self.ctx.get::<AssetSystem>();
         if event.asset_id == **self.shader_handle.id()
             && asset_sys.status(&self.shader_handle) == AssetStatus::Ready
         {
             let graphics_sys = self.ctx.get::<GraphicsSystem>();
-
-            let color_state = Some(wgpu::ColorTargetState {
-                format: graphics_sys.surface_config().format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            });
             self.render_pipeline = Some(Self::create_render_pipeline(
                 graphics_sys.device(),
                 &[
@@ -373,7 +368,7 @@ impl BatchRenderer {
                     Some(&self.atlas_bind_group_layout),
                 ],
                 asset_sys.get(&self.shader_handle).unwrap().module(),
-                color_state,
+                graphics_sys.surface_config().format,
             ));
             self.ready_to_render = true;
         }
@@ -384,13 +379,18 @@ impl BatchRenderer {
         device: &Device,
         bind_group_layouts: &[Option<&BindGroupLayout>],
         shader: &ShaderModule,
-        color_state: Option<ColorTargetState>,
+        surface_format: wgpu::TextureFormat,
     ) -> RenderPipeline {
         // IDEA: Create pipelines with different bind group layouts beforehand
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("main"),
             bind_group_layouts,
             immediate_size: 0,
+        });
+        let color_state = Some(wgpu::ColorTargetState {
+            format: surface_format,
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            write_mask: wgpu::ColorWrites::ALL,
         });
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("batch renderer pipeline"),
@@ -407,7 +407,7 @@ impl BatchRenderer {
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader,
-                entry_point: Some("uniform_main"),
+                entry_point: Some("fragment_main"),
                 targets: &[color_state],
                 compilation_options: Default::default()
             }),
@@ -532,15 +532,10 @@ impl GeeseSystem for BatchRenderer {
         .with::<Mut<AssetSystem>>()
         .with::<Mut<Camera>>();
 
+    #[cfg(not(target_arch = "wasm32"))]
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers().with(Self::on_assetchange);
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
-        let mut asset_sys = ctx.get_mut::<AssetSystem>();
-        let base_shader_handle =
-            asset_sys.load::<ShaderAsset>("shaders/batch_renderer.wgsl", true, ());
-        // Drop the mutable reference, from now on we only need it immutably
-        drop(asset_sys);
-
         let graphics_sys = ctx.get::<GraphicsSystem>();
         let device = graphics_sys.device();
 
@@ -622,10 +617,42 @@ impl GeeseSystem for BatchRenderer {
             white_pixel_handle
         };
 
+        let (base_shader_handle, ready_to_render, render_pipeline) =
+            if cfg!(not(target_arch = "wasm32")) {
+                (
+                    ctx.get_mut::<AssetSystem>().load::<ShaderAsset>(
+                        "shaders/batch_renderer.wgsl",
+                        true,
+                        (),
+                    ),
+                    false,
+                    None,
+                )
+            } else {
+                let shader_handle = ctx
+                    .get_mut::<AssetSystem>()
+                    .register::<ShaderAsset>(
+                        include_bytes!("../../../shaders/batch_renderer.wgsl"),
+                        None,
+                        (),
+                    )
+                    .unwrap();
+
+                let graphics_sys = ctx.get::<GraphicsSystem>();
+                let asset_sys = ctx.get::<AssetSystem>();
+                let pipeline = Self::create_render_pipeline(
+                    graphics_sys.device(),
+                    &[Some(&globals_bgl), Some(&atlas_bgl)],
+                    asset_sys.get(&shader_handle).unwrap().module(),
+                    graphics_sys.surface_config().format,
+                );
+                (shader_handle, true, Some(pipeline))
+            };
+
         Self {
             ctx,
 
-            ready_to_render: false,
+            ready_to_render,
 
             vertex_buffer,
             index_buffer,
@@ -638,8 +665,8 @@ impl GeeseSystem for BatchRenderer {
             globals_bind_group: (globals_bg, globals_bgl),
 
             shader_handle: base_shader_handle,
-            render_pipeline: None,
-            clear_color: Color::RED,
+            render_pipeline,
+            clear_color: Color::BLACK,
 
             white_pixel_handle,
 

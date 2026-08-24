@@ -1,5 +1,8 @@
+#[cfg(not(target_arch = "wasm32"))]
 use anyhow::anyhow;
-use std::{path::PathBuf, pin::Pin, sync::Arc};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
+use std::{pin::Pin, sync::Arc};
 
 use super::AssetPath;
 
@@ -14,10 +17,11 @@ pub(super) trait AssetSource: Send + Sync {
 }
 
 /// Uses the native filesystem (PathBuf) to load assets
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) struct FsAssetSource {
     pub base_path: PathBuf,
 }
-
+#[cfg(not(target_arch = "wasm32"))]
 impl AssetSource for FsAssetSource {
     fn load<'a>(&'a self, asset_id: u64, path: &'a AssetPath) -> AssetFuture<'a> {
         Box::pin(async move {
@@ -33,20 +37,21 @@ impl AssetSource for FsAssetSource {
 }
 
 // Example implementation for loading assets via URLs
+#[cfg(target_arch = "wasm32")]
 pub struct WebAssetSource {
     pub base_url: String,
 }
-
+#[cfg(target_arch = "wasm32")]
 impl AssetSource for WebAssetSource {
     fn load<'a>(&'a self, asset_id: u64, path: &'a AssetPath) -> AssetFuture<'a> {
         Box::pin(async move {
-            let url = format!("{}/{}", self.base_url, path.as_str());
+            let _url = format!("{}/{}", self.base_url, path.as_str());
 
             // let response = reqwest::get(url).await?;
             // let bytes = response.bytes().await?;
-            todo!();
+            // todo!();
 
-            // Ok(bytes.to_vec())
+            (asset_id, Ok(vec![]))
         })
     }
 

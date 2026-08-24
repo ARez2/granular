@@ -167,11 +167,26 @@ impl GraphicsSystem {
             return;
         };
 
+        debug!("resize_surface {:?}", new_size);
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut canvas = crate::graphics::get_canvas();
+            canvas.set_width(new_size.width.max(1));
+            canvas.set_height(new_size.height.max(1));
+            info!("canvas size: {}x{}", canvas.width(), canvas.height());
+            info!(
+                "canvas client size: {}x{}",
+                canvas.client_width(),
+                canvas.client_height()
+            );
+        }
         state.surface_config.width = new_size.width.max(1);
         state.surface_config.height = new_size.height.max(1);
         state
             .surface
             .configure(&state.device, &state.surface_config);
+        debug!("Surface config: {:?}", state.surface.get_configuration());
     }
 
     pub fn begin_frame(&mut self) {

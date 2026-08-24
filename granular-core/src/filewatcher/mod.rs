@@ -10,4 +10,5 @@ mod wasm;
 pub use native::{FileWatcher, events};
 
 #[cfg(target_arch = "wasm32")]
+#[allow(unused)]
 pub use wasm::{FileWatcher, events};

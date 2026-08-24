@@ -1,19 +1,14 @@
 use crate::utils::*;
 
-pub mod events {
-    pub struct FilesChanged {
-        pub paths: Vec<std::path::PathBuf>,
-    }
-}
+pub mod events {}
 
-pub struct FileWatcher {
-    ctx: GeeseContextHandle<Self>,
-}
+pub struct FileWatcher {}
 impl FileWatcher {
-    pub fn watch<P: AsRef<std::path::Path>>(&mut self, path: P, recursive: bool) {}
+    #[allow(unused)]
+    pub fn watch<P: AsRef<std::path::Path>>(&mut self, _path: P, _recursive: bool) {}
 }
 impl GeeseSystem for FileWatcher {
-    fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
-        Self { ctx }
+    fn new(_ctx: geese::GeeseContextHandle<Self>) -> Self {
+        Self {}
     }
 }
