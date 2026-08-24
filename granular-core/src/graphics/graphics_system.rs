@@ -108,6 +108,8 @@ impl GraphicsSystem {
                 .await
                 .expect("Failed to find an appropriate adapter");
 
+            debug!("{:?}", surface.get_capabilities(&adapter).formats);
+
             let mut features = wgpu::Features::empty();
             #[cfg(feature = "trace")]
             let features = features | GpuProfiler::ALL_WGPU_TIMER_FEATURES;
@@ -131,6 +133,8 @@ impl GraphicsSystem {
                 .get_default_config(&adapter, size.width, size.height)
                 .unwrap();
             surface_config.present_mode = wgpu::PresentMode::AutoNoVsync;
+            let f = Self::calculate_surface_view_format(&surface_config.format);
+            surface_config.view_formats = vec![f];
 
             let _ = proxy.send_event(CustomWinitEvent::GraphicsSystemInitialized(GraphicsState {
                 instance,
@@ -232,7 +236,10 @@ impl GraphicsSystem {
                 return;
             }
         };
-        let view = frame.texture.create_view(&TextureViewDescriptor {
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(Self::calculate_surface_view_format(
+                &state.surface_config.format,
+            )),
             ..Default::default()
         });
         let encoder = state
@@ -253,6 +260,21 @@ impl GraphicsSystem {
     pub fn surface_config(&self) -> &SurfaceConfiguration {
         if let GraphicsSystemState::Ready(state) = &self.state {
             return &state.surface_config;
+        }
+        panic!("GraphicsSystem is not ready!");
+    }
+
+    fn calculate_surface_view_format(surface_format: &wgpu::TextureFormat) -> wgpu::TextureFormat {
+        surface_format.add_srgb_suffix()
+    }
+
+    /// This is the basically the format we want to display. It gets put into the `view_formats` of the surface.
+    /// It causes the surface to have one format as "main" format but then get displayed in this format here.
+    /// This allows us to keep using linear values in the shaders and then let wgpu handle gamma correction
+    /// on platforms where the default surface format is not gamma corrected (like WASM).
+    pub fn get_surface_view_format(&self) -> wgpu::TextureFormat {
+        if let GraphicsSystemState::Ready(state) = &self.state {
+            return Self::calculate_surface_view_format(&state.surface_config.format);
         }
         panic!("GraphicsSystem is not ready!");
     }

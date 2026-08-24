@@ -368,7 +368,7 @@ impl BatchRenderer {
                     Some(&self.atlas_bind_group_layout),
                 ],
                 asset_sys.get(&self.shader_handle).unwrap().module(),
-                graphics_sys.surface_config().format,
+                graphics_sys.get_surface_view_format(),
             ));
             self.ready_to_render = true;
         }
@@ -639,12 +639,14 @@ impl GeeseSystem for BatchRenderer {
                     .unwrap();
 
                 let graphics_sys = ctx.get::<GraphicsSystem>();
-                let asset_sys = ctx.get::<AssetSystem>();
                 let pipeline = Self::create_render_pipeline(
                     graphics_sys.device(),
                     &[Some(&globals_bgl), Some(&atlas_bgl)],
-                    asset_sys.get(&shader_handle).unwrap().module(),
-                    graphics_sys.surface_config().format,
+                    ctx.get::<AssetSystem>()
+                        .get(&shader_handle)
+                        .unwrap()
+                        .module(),
+                    graphics_sys.get_surface_view_format(),
                 );
                 (shader_handle, true, Some(pipeline))
             };
