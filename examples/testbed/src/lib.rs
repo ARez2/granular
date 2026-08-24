@@ -1,9 +1,7 @@
-use chrono::Timelike;
 use fern::colors::{Color, ColoredLevelConfig};
 use glam::IVec2;
 use granular::prelude::{graphics::TextureHandle, *};
 use palette::{Srgba, WithAlpha};
-use web_time::SystemTime;
 use winit::keyboard::{KeyCode, ModifiersState};
 
 #[cfg(target_arch = "wasm32")]
@@ -151,35 +149,44 @@ fn set_up_logging() {
     // since almost all of them are the same as the color for the whole line, we
     // just clone `colors_line` and overwrite our changes
     let colors_level = colors_line.info(Color::Green);
-    // here we set up our fern Dispatch
-    #[cfg(target_arch = "wasm32")]
-    let mut disp = fern::Dispatch::new().format(move |out, message, record| {
-        out.finish(format_args!(
-            "{color_line}[{level} {target} {color_line}] {message}\x1B[0m",
-            color_line = format_args!(
-                "\x1B[{}m",
-                colors_line.get_color(&record.level()).to_fg_str()
-            ),
-            target = record.target(),
-            level = colors_level.color(record.level()),
-            message = message,
-        ));
-    });
-
-    #[cfg(not(target_arch = "wasm32"))]
-    let mut disp = fern::Dispatch::new().format(move |out, message, record| {
-        out.finish(format_args!(
-            "{color_line}{bold}[{date} {level} {bold}{target} {color_line}]{reset} {message}\x1B[0m",
+    let pre_date_string_closure = move |record: &log::Record<'_>| {
+        format!(
+            "{color_line}{bold}[",
             color_line = format_args!(
                 "\x1B[{}m",
                 colors_line.get_color(&record.level()).to_fg_str()
             ),
             bold = "\x1B[1m",
-            reset = "\x1B[0m",
-            date = format_time(),
-            target = record.target(),
-            level = colors_level.color(record.level()),
-            message = message,
+        )
+    };
+    let date_string = {
+        if cfg!(not(target_arch = "wasm32")) {
+            format_time()
+        } else {
+            String::new()
+        }
+    };
+    let post_date_string_closure =
+        move |message: &core::fmt::Arguments<'_>, record: &log::Record<'_>| {
+            format!(
+                "{level} {bold}{target} {color_line}]{reset} {message}{reset}",
+                color_line = format_args!(
+                    "\x1B[{}m",
+                    colors_line.get_color(&record.level()).to_fg_str()
+                ),
+                bold = "\x1B[1m",
+                reset = "\x1B[0m",
+                target = record.target(),
+                level = colors_level.color(record.level()),
+                message = message,
+            )
+        };
+    // here we set up our fern Dispatch
+    let mut disp = fern::Dispatch::new().format(move |out, message, record| {
+        out.finish(format_args!(
+            "{pre_date_string}{date_string}{post_date_string}",
+            pre_date_string = pre_date_string_closure(record),
+            post_date_string = post_date_string_closure(message, record)
         ));
     });
     disp = disp
@@ -210,13 +217,19 @@ fn set_up_logging() {
 }
 
 fn format_time() -> String {
-    let now = chrono::Local::now();
+    use std::time::SystemTime;
+    use time::{OffsetDateTime, UtcOffset};
+
+    let now = SystemTime::now();
+    let timestamp = OffsetDateTime::from(now);
+    let offset = UtcOffset::current_local_offset().expect("Could not determine local timezone");
+    let local = timestamp.to_offset(offset);
 
     format!(
-        "{:02}:{:02}:{:02}.{:05}",
-        now.hour(),
-        now.minute(),
-        now.second(),
-        now.nanosecond() / 10_000,
+        "{:02}:{:02}:{:02}.{:06} ",
+        local.hour(),
+        local.minute(),
+        local.second(),
+        local.microsecond(),
     )
 }

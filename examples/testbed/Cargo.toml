@@ -12,13 +12,13 @@ granular = { path = "../.." }
 log.workspace = true
 geese.workspace = true
 palette.workspace = true
-web-time.workspace = true
+# web-time.workspace = true
 winit.workspace = true
 
 fern = { version = "0.7.1", features = ["colored"] }
 regex = "1.10.3"
 glam = { version = "0.25.0", features = ["approx"] }
-chrono = "0.4.45"
+time = { version = "0.3.55", features = ["local-offset"] }
 
 [features]
 trace = ["granular/trace"]
@@ -28,6 +28,3 @@ trace = ["granular/trace"]
 console_log = "1.0"
 wasm-bindgen = "0.2.127"
 console_error_panic_hook = "0.1.5"
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-humantime = "2.4.0"
