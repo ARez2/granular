@@ -5,11 +5,14 @@ pub use graphics_system::{GraphicsSystem, RenderContext};
 mod graphics_helpers;
 pub use graphics_helpers::*;
 
-mod texture;
-pub use texture::{Texture2D, TextureHandle};
+mod texture2d;
+pub use texture2d::Texture2D;
 
 mod texture_bundle;
 pub use texture_bundle::TextureBundle;
+
+mod texture_system;
+pub use texture_system::{TextureHandle, TextureSystem};
 
 pub(super) mod window_system;
 pub use window_system::WindowSystem;

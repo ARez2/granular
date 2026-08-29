@@ -21,9 +21,9 @@ use winit::dpi::PhysicalSize;
 
 use super::graphics_system::{GraphicsSystem, VERTEX_SIZE, Vertex};
 use super::{Camera, TextureBundle};
-use crate::graphics::texture::TextureHandle;
-use crate::graphics::texture_atlas::DynamicTextureAtlas;
-use crate::graphics::{RenderContext, Texture2D};
+use crate::graphics::{
+    RenderContext, Texture2D, TextureHandle, TextureSystem, texture_atlas::DynamicTextureAtlas,
+};
 use crate::{
     assets::{AssetHandle, AssetStatus, AssetSystem, ShaderAsset},
     utils::*,
@@ -240,10 +240,10 @@ impl BatchRenderer {
                 });
 
         {
-            let graphics_sys = self.ctx.get::<GraphicsSystem>();
+            let texture_sys = self.ctx.get::<TextureSystem>();
             for (atlas, _) in &mut self.texture_atlasses {
                 atlas.rebuild_atlas(
-                    |handle| graphics_sys.get_texture(handle).unwrap().texture(),
+                    |handle| texture_sys.get_texture(handle).unwrap().texture(),
                     &mut atlas_encoder,
                 );
             }
@@ -323,8 +323,8 @@ impl BatchRenderer {
             }
             if !has_texture {
                 let texture_size = {
-                    let graphics_sys = self.ctx.get::<GraphicsSystem>();
-                    graphics_sys.get_texture(handle).unwrap().texture().size()
+                    let texture_sys = self.ctx.get::<TextureSystem>();
+                    texture_sys.get_texture(handle).unwrap().texture().size()
                 };
                 for (idx, (atlas, _)) in self.texture_atlasses.iter_mut().enumerate() {
                     if atlas
@@ -525,6 +525,7 @@ impl BatchRenderer {
 
 impl GeeseSystem for BatchRenderer {
     const DEPENDENCIES: geese::Dependencies = dependencies()
+        .with::<Mut<TextureSystem>>()
         .with::<Mut<GraphicsSystem>>()
         .with::<Mut<AssetSystem>>()
         .with::<Mut<Camera>>();
@@ -606,8 +607,8 @@ impl GeeseSystem for BatchRenderer {
         drop(graphics_sys);
         drop(camera);
         let white_pixel_handle = {
-            let mut graphics_sys = ctx.get_mut::<GraphicsSystem>();
-            let white_pixel_handle = graphics_sys.create_texture(Box::new(white_pixel));
+            let mut texture_sys = ctx.get_mut::<TextureSystem>();
+            let white_pixel_handle = texture_sys.create_texture(Box::new(white_pixel));
             texture_atlasses[0]
                 .0
                 .add_texture(white_pixel_handle.clone(), UVec2::new(1, 1));

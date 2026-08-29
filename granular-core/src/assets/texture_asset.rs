@@ -1,8 +1,9 @@
 use anyhow::anyhow;
 
 use crate::{
+    AssetSystem,
     assets::{Asset, InternalAsset},
-    graphics::{GraphicsSystem, TextureBundle, TextureHandle},
+    graphics::{GraphicsSystem, TextureBundle, TextureHandle, TextureSystem},
     utils::*,
 };
 
@@ -88,35 +89,38 @@ impl Asset for TextureAsset {
     type ImportSettings = TextureAssetImportSettings;
 }
 impl InternalAsset for TextureAsset {
-    fn create_from_bytes<S: GeeseSystem>(
-        ctx: &mut GeeseContextHandle<S>,
+    fn create_from_bytes(
+        ctx: &mut GeeseContextHandle<AssetSystem>,
         bytes: &[u8],
         import_settings: &Self::ImportSettings,
     ) -> anyhow::Result<Self>
     where
         Self: std::marker::Sized,
     {
-        let mut graphics_sys = ctx.get_mut::<GraphicsSystem>();
-        let bundle = Self::create_bundle_from_import_settings(
-            graphics_sys.device(),
-            graphics_sys.queue(),
-            import_settings,
-            bytes,
-        );
-        let texture_handle = graphics_sys.create_texture(Box::new(bundle));
+        let bundle = {
+            let graphics_sys = ctx.get::<GraphicsSystem>();
+            Self::create_bundle_from_import_settings(
+                graphics_sys.device(),
+                graphics_sys.queue(),
+                import_settings,
+                bytes,
+            )
+        };
+        let texture_handle = {
+            let mut texture_sys = ctx.get_mut::<TextureSystem>();
+            texture_sys.create_texture(Box::new(bundle))
+        };
         Ok(Self { texture_handle })
     }
 
-    fn update_from_bytes<S: GeeseSystem>(
+    fn update_from_bytes(
         &mut self,
-        ctx: &mut GeeseContextHandle<S>,
+        ctx: &mut GeeseContextHandle<AssetSystem>,
         bytes: &[u8],
         import_settings: &Self::ImportSettings,
     ) -> anyhow::Result<()> {
-        let graphics_sys = ctx.get_mut::<GraphicsSystem>();
-        let queue = graphics_sys.queue();
-
-        let tex = graphics_sys
+        let texture_sys = ctx.get::<TextureSystem>();
+        let tex = texture_sys
             .get_texture(&self.texture_handle)
             .ok_or(anyhow!("Texture not found in GraphicsSystem."))?
             .texture();
@@ -131,17 +135,21 @@ impl InternalAsset for TextureAsset {
             rows_per_image: Some(extent.height),
         };
 
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytes,
-            data_layout,
-            extent,
-        );
+        {
+            let graphics_sys = ctx.get::<GraphicsSystem>();
+            let queue = graphics_sys.queue();
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytes,
+                data_layout,
+                extent,
+            );
+        }
 
         Ok(())
     }

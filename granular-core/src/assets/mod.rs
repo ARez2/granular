@@ -2,7 +2,7 @@ use rustc_hash::FxHashMap as HashMap;
 use std::{path::PathBuf, sync::Arc};
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::filewatcher::FileWatcher;
+use crate::{filewatcher::FileWatcher, graphics::TextureSystem};
 use crate::{graphics::GraphicsSystem, utils::*};
 
 mod holder;
@@ -40,17 +40,17 @@ pub trait Asset: 'static {
 /// This private trait holds the methods for creating an asset from bytes.
 /// Those methods are not supposed to be called from outside.
 trait InternalAsset: Asset {
-    fn create_from_bytes<S: GeeseSystem>(
-        ctx: &mut GeeseContextHandle<S>,
+    fn create_from_bytes(
+        ctx: &mut GeeseContextHandle<AssetSystem>,
         bytes: &[u8],
         import_settings: &Self::ImportSettings,
     ) -> anyhow::Result<Self>
     where
         Self: std::marker::Sized;
 
-    fn update_from_bytes<S: GeeseSystem>(
+    fn update_from_bytes(
         &mut self,
-        ctx: &mut GeeseContextHandle<S>,
+        ctx: &mut GeeseContextHandle<AssetSystem>,
         bytes: &[u8],
         import_settings: &Self::ImportSettings,
     ) -> anyhow::Result<()>;
@@ -260,12 +260,14 @@ impl GeeseSystem for AssetSystem {
     #[cfg(not(target_arch = "wasm32"))]
     const DEPENDENCIES: geese::Dependencies = dependencies()
         .with::<Mut<FileWatcher>>()
+        .with::<Mut<TextureSystem>>()
         .with::<Mut<FutureExecutor>>()
         .with::<Mut<GraphicsSystem>>();
 
     #[cfg(target_arch = "wasm32")]
     const DEPENDENCIES: geese::Dependencies = dependencies()
         .with::<Mut<FutureExecutor>>()
+        .with::<Mut<TextureSystem>>()
         .with::<Mut<GraphicsSystem>>();
 
     #[cfg(not(target_arch = "wasm32"))]
