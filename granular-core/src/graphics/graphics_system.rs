@@ -1,5 +1,8 @@
 #![allow(unused)]
 
+use std::sync::Arc;
+
+use anyhow::bail;
 use bytemuck_derive::{Pod, Zeroable};
 use glam::{IVec2, Vec2};
 use rustc_hash::FxHashMap;
@@ -12,6 +15,7 @@ use wgpu_profiler::{GpuProfiler, GpuProfilerSettings, GpuTimerQueryResult};
 use winit::{
     dpi::PhysicalSize,
     event_loop::{ActiveEventLoop, EventLoopProxy},
+    window::Window,
 };
 
 use super::WindowSystem;
@@ -21,13 +25,14 @@ use crate::{
     utils::*,
 };
 
-pub type FrameData = (
-    SurfaceTexture,
-    TextureView,
-    CommandEncoder,
-    std::sync::Arc<winit::window::Window>,
-);
-pub type FrameDataMut<'a> = Option<&'a mut FrameData>;
+#[derive(Debug)]
+pub struct RenderContext {
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub frame: SurfaceTexture,
+    pub view: TextureView,
+    pub encoder: CommandEncoder,
+}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -53,7 +58,6 @@ pub struct GraphicsState {
     instance: Instance,
     adapter: Adapter,
     surface_config: SurfaceConfiguration,
-    frame_data: Option<FrameData>,
     surface: Surface<'static>,
     device: Device,
     queue: Queue,
@@ -140,7 +144,6 @@ impl GraphicsSystem {
                 instance,
                 adapter,
                 surface_config,
-                frame_data: None,
                 surface,
                 device,
                 queue,
@@ -193,10 +196,10 @@ impl GraphicsSystem {
         debug!("Surface config: {:?}", state.surface.get_configuration());
     }
 
-    pub fn begin_frame(&mut self) {
+    pub fn begin_frame(&mut self) -> anyhow::Result<RenderContext> {
         self.device().poll(wgpu::wgt::PollType::Poll);
         let GraphicsSystemState::Ready(state) = &mut self.state else {
-            return;
+            bail!("GraphicsSystem is not ready!");
         };
 
         let window = self.ctx.get::<WindowSystem>().window_handle();
@@ -206,7 +209,7 @@ impl GraphicsSystem {
             CurrentSurfaceTexture::Timeout | CurrentSurfaceTexture::Occluded => {
                 // Try again later
                 window.request_redraw();
-                return;
+                bail!("Surface got a timeout or is occluded. Try again later.");
             }
             CurrentSurfaceTexture::Suboptimal(texture) => {
                 drop(texture);
@@ -215,14 +218,14 @@ impl GraphicsSystem {
                     .surface
                     .configure(&state.device, &state.surface_config);
                 window.request_redraw();
-                return;
+                bail!("Surface isnt optimal. Try again next frame.");
             }
             CurrentSurfaceTexture::Outdated => {
                 state
                     .surface
                     .configure(&state.device, &state.surface_config);
                 window.request_redraw();
-                return;
+                bail!("The surface is outdated. Try again next frame.");
             }
             CurrentSurfaceTexture::Validation => {
                 unreachable!("No error scope registered, so validation errors will panic")
@@ -233,7 +236,7 @@ impl GraphicsSystem {
                     .surface
                     .configure(&state.device, &state.surface_config);
                 window.request_redraw();
-                return;
+                bail!("The surface has been lost. Try again next frame.");
             }
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
@@ -247,7 +250,13 @@ impl GraphicsSystem {
             .create_command_encoder(&CommandEncoderDescriptor {
                 label: Some("Command encoder"),
             });
-        state.frame_data = Some((frame, view, encoder, window))
+        return Ok(RenderContext {
+            device: state.device.clone(),
+            queue: state.queue.clone(),
+            frame,
+            view,
+            encoder,
+        });
     }
 
     pub fn device(&self) -> &Device {
@@ -293,26 +302,17 @@ impl GraphicsSystem {
         panic!("GraphicsSystem is not ready!");
     }
 
-    pub fn present_frame(&mut self) {
+    pub fn present_frame(&mut self, context: RenderContext) {
         let GraphicsSystemState::Ready(state) = &mut self.state else {
             return;
         };
 
-        if state.frame_data.is_none() {
-            warn!("No frame data present, begin a frame by calling begin_frame()");
-            return;
-        };
-        let (frame, _, encoder, window) = state.frame_data.take().unwrap();
-        state.queue.submit(Some(encoder.finish()));
-        window.pre_present_notify();
-        state.queue.present(frame);
-    }
-
-    pub fn frame_data_mut(&mut self) -> FrameDataMut<'_> {
-        if let GraphicsSystemState::Ready(state) = &mut self.state {
-            return state.frame_data.as_mut();
-        }
-        panic!("GraphicsSystem is not ready!");
+        state.queue.submit(Some(context.encoder.finish()));
+        self.ctx
+            .get::<WindowSystem>()
+            .window_handle()
+            .pre_present_notify();
+        state.queue.present(context.frame);
     }
 
     fn get_next_texture_id(&mut self) -> u32 {

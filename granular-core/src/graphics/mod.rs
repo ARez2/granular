@@ -1,6 +1,6 @@
 mod graphics_system;
 pub(super) use graphics_system::GraphicsState;
-pub use graphics_system::GraphicsSystem;
+pub use graphics_system::{GraphicsSystem, RenderContext};
 
 mod graphics_helpers;
 pub use graphics_helpers::*;

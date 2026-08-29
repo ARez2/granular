@@ -272,9 +272,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
             WindowEvent::RedrawRequested => {
                 self.ctx.flush().with(events::Draw);
                 let mut renderer = self.ctx.get_mut::<Renderer>();
-                renderer.start_frame();
                 renderer.render();
-                renderer.end_frame();
                 renderer.request_redraw();
 
                 profiling::finish_frame!();

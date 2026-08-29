@@ -21,9 +21,9 @@ use winit::dpi::PhysicalSize;
 
 use super::graphics_system::{GraphicsSystem, VERTEX_SIZE, Vertex};
 use super::{Camera, TextureBundle};
-use crate::graphics::Texture2D;
 use crate::graphics::texture::TextureHandle;
 use crate::graphics::texture_atlas::DynamicTextureAtlas;
+use crate::graphics::{RenderContext, Texture2D};
 use crate::{
     assets::{AssetHandle, AssetStatus, AssetSystem, ShaderAsset},
     utils::*,
@@ -31,19 +31,15 @@ use crate::{
 
 pub type QuadTexture = Option<TextureHandle>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Quad {
     pub center: IVec2,
     pub size: IVec2,
-    /// If there is a texture set, this tints the texture
+    /// If there is a texture set, this tints the texture, otherwise the quad will have this color
     pub color: Srgba,
     pub texture: QuadTexture,
 }
-impl PartialEq for Quad {
-    fn eq(&self, other: &Self) -> bool {
-        false
-    }
-}
+
 impl Eq for Quad {}
 
 /// A simple wrapper that stores a quad and a corresponding layer
@@ -54,21 +50,19 @@ struct BatchQuadEntry {
     used_texture_atlas_idx: usize,
     quad: Quad,
 }
-#[allow(clippy::non_canonical_partial_ord_impl)]
-impl PartialOrd for BatchQuadEntry {
-    // sorts first by layer and then by used_texture_atlas_idx
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(
-            self.layer.cmp(&other.layer).then(
-                self.used_texture_atlas_idx
-                    .cmp(&other.used_texture_atlas_idx),
-            ),
+// sorts first by layer and then by used_texture_atlas_idx
+impl Ord for BatchQuadEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.layer.cmp(&other.layer).then(
+            self.used_texture_atlas_idx
+                .cmp(&other.used_texture_atlas_idx),
         )
     }
 }
-impl Ord for BatchQuadEntry {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.layer.cmp(&other.layer)
+
+impl PartialOrd for BatchQuadEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -113,7 +107,7 @@ impl BatchRenderer {
     const DEFAULT_TEXATLAS_HEIGHT: u32 = 2048;
     const DEFAULT_TEXATLAS_FILTERING: wgpu::FilterMode = wgpu::FilterMode::Nearest;
 
-    pub(super) fn end_frame(&mut self) {
+    pub(super) fn end_frame(&mut self, _context: &mut RenderContext) {
         if !self.ready_to_render {
             return;
         }
@@ -123,7 +117,7 @@ impl BatchRenderer {
     }
 
     /// Handles batching and issuing draw calls accordingly
-    pub(super) fn create_batches(&mut self) {
+    fn create_batches(&mut self) {
         if !self.ready_to_render {
             return;
         }
@@ -225,66 +219,69 @@ impl BatchRenderer {
         });
     }
 
-    pub(super) fn prepare_to_render(&mut self) {
+    pub(super) fn prepare_to_render(&mut self, context: &mut RenderContext) {
         if !self.ready_to_render {
             return;
         }
+        self.create_batches();
+
         // Write the data from vertices to the vertex buffer
-        let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
-        graphics_sys.queue().write_buffer(
+        context.queue.write_buffer(
             &self.vertex_buffer,
             0,
             bytemuck::cast_slice(&self.vertices_to_draw),
         );
 
         let mut atlas_encoder =
-            graphics_sys
-                .device()
+            context
+                .device
                 .create_command_encoder(&wgpu::wgt::CommandEncoderDescriptor {
                     label: Some("Atlas command encoder"),
                 });
 
-        for (atlas, _) in &mut self.texture_atlasses {
-            atlas.rebuild_atlas(
-                |handle| graphics_sys.get_texture(handle).unwrap().texture(),
-                &mut atlas_encoder,
-            );
+        {
+            let graphics_sys = self.ctx.get::<GraphicsSystem>();
+            for (atlas, _) in &mut self.texture_atlasses {
+                atlas.rebuild_atlas(
+                    |handle| graphics_sys.get_texture(handle).unwrap().texture(),
+                    &mut atlas_encoder,
+                );
+            }
         }
-        graphics_sys.queue().submit(Some(atlas_encoder.finish()));
+        context.queue.submit(Some(atlas_encoder.finish()));
     }
 
-    pub(super) fn render_batch_layers(&mut self, layer_range: Range<i32>, clear: bool) {
+    pub(super) fn render_batch_layers(
+        &mut self,
+        context: &mut RenderContext,
+        layer_range: Range<i32>,
+        clear: bool,
+    ) {
         if !self.ready_to_render {
             return;
         }
 
-        let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
-        let framedata = graphics_sys.frame_data_mut();
-        if framedata.is_none() {
-            warn!("No frame data present, call begin_frame first!");
-            return;
-        };
-        let framedata = framedata.unwrap();
-
-        let mut rpass = framedata.2.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("BatchRenderer render pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &framedata.1,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: match clear {
-                        true => wgpu::LoadOp::Clear(self.clear_color),
-                        false => wgpu::LoadOp::Load,
+        let mut rpass = context
+            .encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("BatchRenderer render pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &context.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: match clear {
+                            true => wgpu::LoadOp::Clear(self.clear_color),
+                            false => wgpu::LoadOp::Load,
+                        },
+                        store: wgpu::StoreOp::Store,
                     },
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
 
         self.batches
             .iter()

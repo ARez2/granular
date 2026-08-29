@@ -9,23 +9,6 @@ pub struct Renderer {
 }
 #[profiling::all_functions]
 impl Renderer {
-    pub fn start_frame(&mut self) {
-        let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
-        graphics_sys.begin_frame();
-    }
-
-    /// Presents and ends the frame
-    pub fn end_frame(&mut self) {
-        {
-            let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
-            graphics_sys.present_frame();
-        }
-        {
-            let mut batch_renderer = self.ctx.get_mut::<BatchRenderer>();
-            batch_renderer.end_frame();
-        }
-    }
-
     /// Resizes the surface with the new_size
     pub(crate) fn resize(&mut self, new_size: PhysicalSize<u32>) {
         {
@@ -50,10 +33,23 @@ impl Renderer {
             let camera = self.ctx.get::<Camera>();
             camera.write_canvas_transform_buffer();
         }
-        let mut batch_renderer = self.ctx.get_mut::<BatchRenderer>();
-        batch_renderer.create_batches();
-        batch_renderer.prepare_to_render();
-        batch_renderer.render_batch_layers(i32::MIN..i32::MAX, true);
+        let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+        let context = graphics_sys.begin_frame();
+        if let Err(e) = context {
+            error!("Error while getting the RenderingContext: {:?}", e);
+            return;
+        }
+        let mut context = context.unwrap();
+        drop(graphics_sys);
+        {
+            let mut batch_renderer = self.ctx.get_mut::<BatchRenderer>();
+            batch_renderer.prepare_to_render(&mut context);
+            batch_renderer.render_batch_layers(&mut context, i32::MIN..i32::MAX, true);
+            batch_renderer.end_frame(&mut context);
+        }
+
+        let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+        graphics_sys.present_frame(context);
     }
 }
 impl GeeseSystem for Renderer {
