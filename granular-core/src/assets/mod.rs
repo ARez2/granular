@@ -1,201 +1,182 @@
 use rustc_hash::FxHashMap as HashMap;
-use std::{path::PathBuf, sync::Arc};
+#[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+use std::path::PathBuf;
+use std::{
+    any::Any,
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::{filewatcher::FileWatcher, graphics::TextureSystem};
-use crate::{graphics::GraphicsSystem, utils::*};
-
-mod holder;
-pub use holder::AssetStatus;
-use holder::{AssetHolder, TypedAssetHolder};
-
-mod asset_path;
-pub use asset_path::AssetPath;
+#[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+use crate::filewatcher::FileWatcher;
+use crate::utils::*;
 
 mod asset_handle;
 pub use asset_handle::AssetHandle;
 
 mod asset_source;
-use asset_source::AssetSource;
-
-mod texture_asset;
-pub use texture_asset::{TextureAsset, TextureAssetImportSettings};
-mod shader_asset;
-pub use shader_asset::ShaderAsset;
+pub use asset_source::AssetSource;
 
 pub mod events {
     #[derive(Debug)]
-    pub struct AssetLoaded {
+    pub struct AssetChanged {
         pub asset_id: u64,
     }
 }
 
-/// The main Asset trait. Holds information about the import settings for that asset and serves
-/// as a base trait for the InternalAsset trait which contains the functions to construct assets.
-pub trait Asset: 'static {
-    // When updating: also change `AssetHolder::ImportSettings`
-    type ImportSettings: Default + 'static + PartialEq + Eq + Clone + Copy;
+fn pathbuf_to_string(pathbuf: PathBuf) -> String {
+    pathbuf.as_os_str().to_str().unwrap().to_string()
 }
 
-/// This private trait holds the methods for creating an asset from bytes.
-/// Those methods are not supposed to be called from outside.
-trait InternalAsset: Asset {
-    fn create_from_bytes(
-        ctx: &mut GeeseContextHandle<AssetSystem>,
-        bytes: &[u8],
-        import_settings: &Self::ImportSettings,
-    ) -> anyhow::Result<Self>
-    where
-        Self: std::marker::Sized;
-
-    fn update_from_bytes(
-        &mut self,
-        ctx: &mut GeeseContextHandle<AssetSystem>,
-        bytes: &[u8],
-        import_settings: &Self::ImportSettings,
-    ) -> anyhow::Result<()>;
+fn hash_bytes(bytes: &[u8]) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+    bytes.hash(&mut hasher);
+    hasher.finish()
 }
 
-/// The AssetSystem is responsible for keeping track of assets, loading/ unloading them, providing handles and handling hot-reloads of assets.
+type ErasedAsset = dyn Any + Send + Sync;
+type AssetLoader = dyn Fn(Vec<u8>) -> anyhow::Result<Box<ErasedAsset>> + Send + Sync;
+
+struct AssetEntry {
+    asset: Box<ErasedAsset>,
+    source: Option<AssetSource>,
+    loader: Option<Box<AssetLoader>>,
+    hash: u64,
+}
+
 pub struct AssetSystem {
     ctx: GeeseContextHandle<Self>,
-    asset_source: Arc<dyn AssetSource>,
-    assets: HashMap<Arc<u64>, Box<dyn AssetHolder>>,
-    path_to_id: HashMap<AssetPath, u64>,
     next_id: u64,
+    assets: HashMap<Arc<u64>, AssetEntry>,
+    source_to_id: HashMap<String, u64>,
 }
-#[profiling::all_functions]
+impl GeeseSystem for AssetSystem {
+    #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+    const DEPENDENCIES: geese::Dependencies = dependencies().with::<Mut<FileWatcher>>();
+
+    #[cfg(any(target_arch = "wasm32", not(debug_assertions)))]
+    const EVENT_HANDLERS: EventHandlers<Self> = Self::DEFAULT_EVENT_HANDLERS;
+    #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+    const EVENT_HANDLERS: EventHandlers<Self> =
+        Self::DEFAULT_EVENT_HANDLERS.with(Self::on_assetchange);
+
+    fn new(ctx: GeeseContextHandle<Self>) -> Self {
+        Self {
+            ctx,
+            next_id: 0,
+            assets: HashMap::default(),
+            source_to_id: HashMap::default(),
+        }
+    }
+}
 impl AssetSystem {
-    /// Fetches an asset by its AssetHandle. Returns None if it wasnt found
-    pub fn get<T: Asset>(&self, handle: &AssetHandle<T>) -> Option<&T> {
-        self.assets
-            .get(handle.id())
-            .and_then(|holder| holder.inner_any())
-            .and_then(|value| value.downcast_ref::<T>())
-    }
+    const DEFAULT_EVENT_HANDLERS: geese::EventHandlers<AssetSystem> =
+        event_handlers().with(Self::drop_unused_assets);
 
     /// Fetches an asset by its AssetHandle. Returns None if it wasnt found
-    pub fn get_mut<T: Asset>(&mut self, handle: &AssetHandle<T>) -> Option<&mut T> {
-        self.assets
-            .get_mut(handle.id())
-            .and_then(|holder| holder.inner_any_mut())
-            .and_then(|value| value.downcast_mut::<T>())
+    pub fn get<T>(&self, handle: &AssetHandle<T>) -> Option<&T>
+    where
+        T: Send + Sync + 'static,
+    {
+        let entry = self.assets.get(handle.id().as_ref())?;
+        entry.asset.downcast_ref::<T>()
     }
 
-    /// Returns the status of the asset behind the AssetHandle
-    pub fn status<T: Asset>(&self, handle: &AssetHandle<T>) -> AssetStatus {
-        let asset = self.assets.get(handle.id());
-        if let Some(asset) = asset {
-            return asset.status();
-        } else {
-            return AssetStatus::NotFound;
-        }
+    /// Fetches an asset by its AssetHandle. Returns None if it wasnt found
+    pub fn get_mut<T>(&mut self, handle: &AssetHandle<T>) -> Option<&mut T>
+    where
+        T: Send + Sync + 'static,
+    {
+        let entry = self.assets.get_mut(handle.id().as_ref())?;
+        entry.asset.downcast_mut::<T>()
     }
 
-    /// Returns the AssetPath behind the AssetHandle. This path is optional (as assets can also be `register`ed in the AssetSystem without a path).
-    pub fn path<T: Asset>(&self, handle: &AssetHandle<T>) -> &Option<AssetPath> {
-        let asset = self.assets.get(handle.id());
-        if let Some(asset) = asset {
-            return asset.path();
-        } else {
-            return &None;
-        }
-    }
+    /// Loads a new asset from the given source. You can use the `asset_source!("path/to/asset")` macro here.
+    /// The loader closure should take the bytes and produce a anyhow::Result with the asset inside.
+    pub fn load<T, F>(&mut self, source: AssetSource, loader: F) -> anyhow::Result<AssetHandle<T>>
+    where
+        T: Send + Sync + 'static,
+        F: Fn(Vec<u8>) -> anyhow::Result<T> + Send + Sync + 'static,
+    {
+        let source_string = source.to_string();
+        if let Some(id) = self.source_to_id.get(&source_string).cloned() {
+            warn!("Asset already exists. Returning existing handle...");
+            #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+            self.reload_asset(id);
 
-    /// Loads a new asset from the given path. Returns a handle to that asset. Note that `hot_reload` does nothing on WASM.
-    #[allow(unused)]
-    pub fn load<T: InternalAsset>(
-        &mut self,
-        path: impl Into<AssetPath>,
-        hot_reload: bool,
-        import_settings: T::ImportSettings,
-    ) -> AssetHandle<T> {
-        // let path = self.add_basepath(path);
-        let path = path.into();
-
-        if let Some(id) = self.path_to_id.get(&path) {
-            let key_value = self.assets.get_key_value(id).unwrap();
-            return AssetHandle::new(key_value.0.clone());
+            let key_value = self.assets.get_key_value(&id).unwrap();
+            return Ok(AssetHandle::new(key_value.0.clone()));
         }
 
-        let id = self.get_next_id();
-
-        let handle = {
-            let key = Arc::new(id);
-
-            self.assets.insert(
-                key.clone(),
-                Box::new(TypedAssetHolder::<T>::loading(
-                    path.clone(),
-                    import_settings,
-                )),
+        let bytes = source.read();
+        if let Err(e) = bytes {
+            error!(
+                "Error while reading asset source '{}': {}",
+                source_string, e
             );
+            return Err(e);
+        }
+        let bytes = bytes.unwrap();
+        let hash = hash_bytes(&bytes);
+        // This moves/ captures the user-provided loader and uses it to create a new
+        let final_loader: Box<AssetLoader> = Box::new(move |bytes| Ok(Box::new(loader(bytes)?)));
 
-            AssetHandle::new(key)
+        let asset = (final_loader)(bytes);
+        if let Err(e) = asset {
+            error!("Error while loading asset: {}", e);
+            return Err(e);
+        }
+        let asset = asset.unwrap();
+
+        let entry = AssetEntry {
+            asset,
+            source: Some(source),
+            loader: Some(final_loader),
+            hash,
         };
-        let abspath = self.asset_source.make_assetpath_absolute(&path);
-        self.path_to_id.insert(abspath, id);
 
-        #[cfg(not(target_arch = "wasm32"))]
-        if hot_reload {
-            let mut filewatcher = self.ctx.get_mut::<FileWatcher>();
-            filewatcher.watch(path.clone().as_str(), true);
-            // self.watch(path.clone());
+        let id = self.next_id;
+        self.next_id += 1;
+        let asset_id = Arc::new(id);
+        self.assets.insert(asset_id.clone(), entry);
+        self.source_to_id.insert(source_string, id);
+
+        #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+        {
+            if let Some(entry) = self.assets.get_mut(&id)
+                && let Some(AssetSource::File { path }) = &entry.source
+            {
+                self.ctx
+                    .get_mut::<FileWatcher>()
+                    .watch(path.parent().unwrap(), true);
+            }
         }
 
-        self.queue_load(id, path.clone());
-
-        handle
+        Ok(AssetHandle::new(asset_id))
     }
 
-    /// Registers an asset where the data of the asset is already present outside and does not need to be loaded first. The `assetname` helps identify the asset in error logs etc.
-    pub fn register<T: InternalAsset>(
-        &mut self,
-        asset_bytes: &[u8],
-        assetname: Option<&str>,
-        import_settings: T::ImportSettings,
-    ) -> anyhow::Result<AssetHandle<T>> {
-        let asset = T::create_from_bytes(&mut self.ctx, asset_bytes, &import_settings)?;
+    /// Registers an asset where the data of the asset is already present outside and does not need to be loaded first.
+    pub fn register<T>(&mut self, asset: T) -> AssetHandle<T>
+    where
+        T: Send + Sync + 'static,
+    {
+        let id = self.next_id;
+        self.next_id += 1;
 
-        let id = self.get_next_id();
-        let key = Arc::new(id);
+        let asset_id = Arc::new(id);
+
         self.assets.insert(
-            key.clone(),
-            Box::new(TypedAssetHolder::ready(
-                asset,
-                assetname.map(AssetPath::new),
-                import_settings,
-            )),
+            asset_id.clone(),
+            AssetEntry {
+                source: None,
+                asset: Box::new(asset),
+                loader: None,
+                hash: 0,
+            },
         );
 
-        Ok(AssetHandle::new(key))
+        AssetHandle::new(asset_id)
     }
-
-    /// Reacts to the Filewatcher event to reload assets
-    #[cfg(not(target_arch = "wasm32"))]
-    fn reload(&mut self, event: &crate::filewatcher::events::FilesChanged) {
-        for path in &event.paths {
-            debug!("Reload event for {}", path.display());
-            let asset_path = AssetPath::new(path.clone().into_string().unwrap());
-            let Some(id) = self.path_to_id.get(&asset_path).copied() else {
-                continue;
-            };
-
-            let Some(asset) = self.assets.get_mut(&id) else {
-                continue;
-            };
-
-            asset.begin_reload();
-            info!("Reloading asset at {}", asset_path.as_str());
-            self.queue_load(id, asset_path);
-        }
-    }
-
-    // #[profiling::skip]
-    // pub fn add_basepath(&self, to_path: impl TryInto<PathBuf>) -> PathBuf {
-    //     let path: PathBuf = to_path.try_into().ok().expect("Could not add base path");
-    //     self.base_path.join(path)
-    // }
 
     /// Removes assets which are no longer used. Gets called every 2.5 seconds.
     fn drop_unused_assets(&mut self, _: &crate::events::timing::FixedTick<2500>) {
@@ -208,7 +189,7 @@ impl AssetSystem {
                 true
             }
         });
-        self.path_to_id.retain(|path, id| {
+        self.source_to_id.retain(|path, id| {
             let should_drop = removed_usizes.contains(id);
             if should_drop {
                 debug!("Removing asset at '{}'", path.as_str());
@@ -217,101 +198,50 @@ impl AssetSystem {
         });
     }
 
-    #[profiling::skip]
-    fn get_next_id(&mut self) -> u64 {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
+    /// Event handler for when a file changes. Reloads the asset if neccessary using `reload_asset`
+    #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+    fn on_assetchange(&mut self, event: &crate::filewatcher::events::FilesChanged) {
+        for path in event.paths.clone() {
+            let string = pathbuf_to_string(path);
+            let Some(id) = self.source_to_id.get(&string) else {
+                continue;
+            };
+            self.reload_asset(*id);
+        }
     }
 
-    fn queue_load(&mut self, asset_id: u64, path: AssetPath) {
-        let source = self.asset_source.clone();
-        let mut executor = self.ctx.get_mut::<FutureExecutor>();
-        executor.spawn(async move { source.load(asset_id, &path).await });
-    }
-
-    /// Finishes loading an asset
-    fn asset_loaded(
-        &mut self,
-        event: &future_executor::events::FutureReady<asset_source::AssetLoadResult>,
-    ) {
-        let (asset_id, bytes) = &event.0;
-        let Some(holder) = self.assets.get_mut(asset_id) else {
+    /// Performs the actual reload of the asset and emits `events::AssetChanged` but only if the bytes actually changed.
+    #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+    fn reload_asset(&mut self, asset_id: u64) {
+        let Some(entry) = self.assets.get_mut(&asset_id) else {
             return;
         };
-
-        match bytes {
-            Ok(bytes) => {
-                holder.update_from_bytes(&mut self.ctx, bytes);
-
-                self.ctx.raise_event(events::AssetLoaded {
-                    asset_id: *asset_id,
-                });
-            }
-
-            Err(error) => {
-                holder.fail(error.clone());
-            }
-        }
-    }
-}
-#[profiling::all_functions]
-impl GeeseSystem for AssetSystem {
-    #[cfg(not(target_arch = "wasm32"))]
-    const DEPENDENCIES: geese::Dependencies = dependencies()
-        .with::<Mut<FileWatcher>>()
-        .with::<Mut<TextureSystem>>()
-        .with::<Mut<FutureExecutor>>()
-        .with::<Mut<GraphicsSystem>>();
-
-    #[cfg(target_arch = "wasm32")]
-    const DEPENDENCIES: geese::Dependencies = dependencies()
-        .with::<Mut<FutureExecutor>>()
-        .with::<Mut<TextureSystem>>()
-        .with::<Mut<GraphicsSystem>>();
-
-    #[cfg(not(target_arch = "wasm32"))]
-    const EVENT_HANDLERS: geese::EventHandlers<Self> = event_handlers()
-        .with(Self::reload)
-        .with(Self::asset_loaded)
-        .with(Self::drop_unused_assets);
-
-    #[cfg(target_arch = "wasm32")]
-    const EVENT_HANDLERS: geese::EventHandlers<Self> = event_handlers()
-        .with(Self::asset_loaded)
-        .with(Self::drop_unused_assets);
-
-    fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
-        #[allow(unused)]
-        let base_path;
-        #[allow(unused)]
-        if let Ok(cur) = std::env::current_exe() {
-            base_path = cur
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .to_path_buf();
-        } else {
-            base_path = PathBuf::default();
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let asset_source = asset_source::FsAssetSource { base_path };
-        #[cfg(target_arch = "wasm32")]
-        let asset_source = asset_source::WebAssetSource {
-            base_url: String::from("replace_me"),
+        let Some(source) = &entry.source else {
+            return;
         };
-        let asset_source = Arc::new(asset_source);
+        let Some(loader) = &entry.loader else {
+            return;
+        };
+        let bytes_res = source.read();
+        if let Err(e) = bytes_res {
+            warn!(
+                "Error while reading asset source '{}': {}, {asset_id}",
+                source, e
+            );
+            return;
+        }
+        let bytes = bytes_res.unwrap();
+        let hash = hash_bytes(&bytes);
 
-        Self {
-            ctx,
-            asset_source,
-            assets: HashMap::default(),
-            path_to_id: HashMap::default(),
-            next_id: 0,
+        if hash != entry.hash {
+            let new_asset = (loader)(bytes);
+            if let Err(e) = new_asset {
+                error!("Error while reloading asset: {:?}", e);
+                return;
+            }
+            entry.asset = new_asset.unwrap();
+            entry.hash = hash;
+            self.ctx.raise_event(events::AssetChanged { asset_id });
         }
     }
 }

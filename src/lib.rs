@@ -1,7 +1,7 @@
 pub mod prelude {
     pub use granular_core::{
         AssetSystem, BatchRenderer, Camera, GranularEngine,
-        assets::{self, Asset, AssetHandle, AssetStatus, TextureAsset, TextureAssetImportSettings},
+        assets::{self, AssetHandle},
         events,
         graphics::{self, TextureBundle, WindowSystem},
         input_system::*,
@@ -9,3 +9,5 @@ pub mod prelude {
     };
     pub use wgpu::{Extent3d, FilterMode, TextureFormat};
 }
+
+pub use wgpu;

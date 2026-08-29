@@ -1,6 +1,6 @@
 use fern::colors::{Color, ColoredLevelConfig};
 use glam::IVec2;
-use granular::prelude::{graphics::TextureHandle, *};
+use granular::prelude::{graphics::GraphicsSystem, *};
 use palette::{Srgba, WithAlpha};
 use winit::keyboard::{KeyCode, ModifiersState};
 
@@ -22,14 +22,33 @@ pub fn run() {
     engine.run();
 }
 
+/// Settings you might want to set when loading a texture. Not complete
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct TextureSettings {
+    pub size: granular::wgpu::Extent3d,
+    pub format: granular::wgpu::TextureFormat,
+    pub filtering: granular::wgpu::FilterMode,
+}
+impl Default for TextureSettings {
+    fn default() -> Self {
+        Self {
+            size: granular::wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            format: granular::wgpu::TextureFormat::Rgba8UnormSrgb,
+            filtering: granular::wgpu::FilterMode::Nearest,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Game {
     ctx: GeeseContextHandle<Self>,
 
-    texture_handle: AssetHandle<TextureAsset>,
-    texture: Option<TextureHandle>,
-    texture2_handle: AssetHandle<TextureAsset>,
-    texture2: Option<TextureHandle>,
+    texture_handle: AssetHandle<TextureBundle>,
+    texture2_handle: AssetHandle<TextureBundle>,
 }
 impl Game {
     fn init(&mut self, _event: &events::Initialized) {
@@ -58,7 +77,7 @@ impl Game {
                 center: IVec2::new(50, 50),
                 size: IVec2::new(200, 200),
                 color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
-                texture: self.texture.clone(),
+                texture: Some(self.texture_handle.clone()),
             },
             -2,
         );
@@ -76,32 +95,10 @@ impl Game {
                 center: IVec2::new(40, 300),
                 size: IVec2::new(150, 150),
                 color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
-                texture: self.texture2.clone(),
+                texture: Some(self.texture2_handle.clone()),
             },
             0,
         );
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn on_asset_loaded(&mut self, event: &assets::events::AssetLoaded) {
-        let mut asset_sys = self.ctx.get_mut::<AssetSystem>();
-        if event.asset_id == **self.texture_handle.id() {
-            self.texture = Some(
-                asset_sys
-                    .get_mut(&self.texture_handle)
-                    .unwrap()
-                    .handle()
-                    .clone(),
-            );
-        } else if event.asset_id == **self.texture2_handle.id() {
-            self.texture2 = Some(
-                asset_sys
-                    .get_mut(&self.texture2_handle)
-                    .unwrap()
-                    .handle()
-                    .clone(),
-            );
-        }
     }
 
     const EVENT_HANDLERS_SHARED: EventHandlers<Self> = event_handlers()
@@ -110,14 +107,11 @@ impl Game {
         .with(Self::on_draw);
 }
 impl GeeseSystem for Game {
-    #[cfg(target_arch = "wasm32")]
     const EVENT_HANDLERS: EventHandlers<Self> = Self::EVENT_HANDLERS_SHARED;
-    #[cfg(not(target_arch = "wasm32"))]
-    const EVENT_HANDLERS: EventHandlers<Self> =
-        Self::EVENT_HANDLERS_SHARED.with(Self::on_asset_loaded);
 
     const DEPENDENCIES: Dependencies = dependencies()
         .with::<WindowSystem>()
+        .with::<GraphicsSystem>()
         .with::<Mut<InputSystem>>()
         .with::<Mut<Camera>>()
         .with::<Mut<AssetSystem>>()
@@ -145,53 +139,75 @@ impl GeeseSystem for Game {
         );
         drop(input);
 
-        let cat_import_settings = TextureAssetImportSettings {
-            size: Extent3d {
-                width: 563,
-                height: 565,
-                depth_or_array_layers: 1,
-            },
-            ..Default::default()
+        let (device, queue) = {
+            let graphics_sys = ctx.get::<GraphicsSystem>();
+            (graphics_sys.device().clone(), graphics_sys.queue().clone())
+        };
+        let load_image = move |bytes: Vec<u8>, settings: TextureSettings| {
+            Ok(TextureBundle::new(
+                &device,
+                &queue,
+                "TextureAsset",
+                granular::wgpu::TextureDescriptor {
+                    label: Some("TextureAsset Desc"),
+                    size: settings.size,
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: granular::wgpu::TextureDimension::D2,
+                    format: settings.format,
+                    usage: granular::wgpu::TextureUsages::TEXTURE_BINDING
+                        | granular::wgpu::TextureUsages::COPY_DST
+                        | granular::wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                },
+                &granular::wgpu::TextureViewDescriptor::default(),
+                &granular::wgpu::SamplerDescriptor {
+                    address_mode_u: granular::wgpu::AddressMode::ClampToEdge,
+                    address_mode_v: granular::wgpu::AddressMode::ClampToEdge,
+                    address_mode_w: granular::wgpu::AddressMode::ClampToEdge,
+                    mag_filter: settings.filtering,
+                    min_filter: granular::wgpu::FilterMode::Nearest,
+                    mipmap_filter: match settings.filtering {
+                        granular::wgpu::FilterMode::Linear => {
+                            granular::wgpu::MipmapFilterMode::Linear
+                        }
+                        granular::wgpu::FilterMode::Nearest => {
+                            granular::wgpu::MipmapFilterMode::Nearest
+                        }
+                    },
+                    ..Default::default()
+                },
+                &bytes,
+                granular::wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(
+                        crate::graphics::bytes_per_pixel(settings.format).unwrap_or(4)
+                            * settings.size.width,
+                    ),
+                    rows_per_image: Some(settings.size.height),
+                },
+            ))
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let (texture_handle, texture, texture2_handle, texture2) = {
+        let (texture_handle, texture2_handle) = {
             let mut asset_sys = ctx.get_mut::<AssetSystem>();
-            (
-                asset_sys.load::<TextureAsset>("assets/cat.jpg", true, cat_import_settings),
-                None,
-                asset_sys.load::<TextureAsset>("assets/cat2.jpg", true, cat_import_settings),
-                None,
-            )
-        };
-        #[cfg(target_arch = "wasm32")]
-        let (texture_handle, texture, texture2_handle, texture2) = {
-            let mut asset_sys = ctx.get_mut::<AssetSystem>();
-            let h1 = asset_sys
-                .register::<TextureAsset>(
-                    include_bytes!("../../../assets/cat.jpg"),
-                    Some("cat texture"),
-                    cat_import_settings,
-                )
+            let load1 = load_image.clone();
+            let texture_handle = asset_sys
+                .load(asset_source!("../../assets/cat.jpg"), move |bytes| {
+                    load1(bytes, TextureSettings::default())
+                })
                 .unwrap();
-            let t1 = asset_sys.get_mut(&h1).unwrap().handle().clone();
-            let h2 = asset_sys
-                .register::<TextureAsset>(
-                    include_bytes!("../../../assets/cat2.jpg"),
-                    Some("cat texture 2"),
-                    cat_import_settings,
-                )
+            let texture2_handle = asset_sys
+                .load(asset_source!("../../assets/cat2.jpg"), move |bytes| {
+                    load_image(bytes, TextureSettings::default())
+                })
                 .unwrap();
-            let t2 = asset_sys.get_mut(&h2).unwrap().handle().clone();
-            warn!("HELLO {:?} {:?}", t1, t2);
-            (h1, Some(t1), h2, Some(t2))
+            (texture_handle, texture2_handle)
         };
 
         Self {
             ctx,
-            texture,
             texture_handle,
-            texture2,
             texture2_handle,
         }
     }

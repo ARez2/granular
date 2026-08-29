@@ -11,7 +11,7 @@ use winit::{
 pub mod future_executor;
 
 pub mod utils;
-use utils::*;
+pub use utils::*;
 
 pub mod assets;
 pub use assets::AssetSystem;

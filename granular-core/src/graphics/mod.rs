@@ -11,9 +11,6 @@ pub use texture2d::Texture2D;
 mod texture_bundle;
 pub use texture_bundle::TextureBundle;
 
-mod texture_system;
-pub use texture_system::{TextureHandle, TextureSystem};
-
 pub(super) mod window_system;
 pub use window_system::WindowSystem;
 
@@ -29,8 +26,12 @@ pub use batchrenderer::{BatchRenderer, Quad};
 // mod simulation_renderer;
 // pub use simulation_renderer::SimulationRenderer;
 
+pub type TextureHandle = AssetHandle<TextureBundle>;
+
 mod texture_atlas;
 pub use texture_atlas::TextureAtlas;
+
+use crate::assets::AssetHandle;
 
 #[cfg(target_arch = "wasm32")]
 pub fn get_canvas() -> web_sys::HtmlCanvasElement {

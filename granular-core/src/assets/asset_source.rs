@@ -1,63 +1,56 @@
-#[cfg(not(target_arch = "wasm32"))]
-use anyhow::anyhow;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
 use std::path::PathBuf;
-use std::{pin::Pin, sync::Arc};
 
-use super::AssetPath;
+#[derive(Debug, Clone)]
+pub enum AssetSource {
+    Embedded {
+        name: &'static str,
+        bytes: &'static [u8],
+    },
 
-/// (Asset ID, Asset Bytes)
-pub(super) type AssetLoadResult = (u64, anyhow::Result<Vec<u8>, Arc<anyhow::Error>>);
-pub(super) type AssetFuture<'a> = Pin<Box<dyn Future<Output = AssetLoadResult> + 'a + Send>>;
-
-pub(super) trait AssetSource: Send + Sync {
-    fn load<'a>(&'a self, asset_id: u64, path: &'a AssetPath) -> AssetFuture<'a>;
-
-    fn make_assetpath_absolute(&self, path: &AssetPath) -> AssetPath;
+    #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+    File { path: PathBuf },
 }
-
-/// Uses the native filesystem (PathBuf) to load assets
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) struct FsAssetSource {
-    pub base_path: PathBuf,
-}
-#[cfg(not(target_arch = "wasm32"))]
-impl AssetSource for FsAssetSource {
-    fn load<'a>(&'a self, asset_id: u64, path: &'a AssetPath) -> AssetFuture<'a> {
-        Box::pin(async move {
-            let path = self.make_assetpath_absolute(path);
-            let bytes = std::fs::read(path.as_str()).map_err(|e| Arc::new(anyhow!(e)));
-            (asset_id, bytes)
-        })
-    }
-
-    fn make_assetpath_absolute(&self, path: &AssetPath) -> AssetPath {
-        AssetPath::new(self.base_path.join(path.as_str()).to_str().unwrap())
+impl AssetSource {
+    pub(super) fn read(&self) -> anyhow::Result<Vec<u8>> {
+        match self {
+            Self::Embedded { name: _, bytes } => Ok(bytes.to_vec()),
+            #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+            Self::File { path } => {
+                let bytes = std::fs::read(path)?;
+                Ok(bytes)
+            }
+        }
     }
 }
-
-// Example implementation for loading assets via URLs
-#[cfg(target_arch = "wasm32")]
-pub struct WebAssetSource {
-    pub base_url: String,
+impl std::fmt::Display for AssetSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            AssetSource::Embedded { name, bytes: _ } => write!(f, "{name}"),
+            #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+            AssetSource::File { path } => write!(f, "{}", super::pathbuf_to_string(path.clone())),
+        }
+    }
 }
-#[cfg(target_arch = "wasm32")]
-impl AssetSource for WebAssetSource {
-    fn load<'a>(&'a self, asset_id: u64, path: &'a AssetPath) -> AssetFuture<'a> {
-        Box::pin(async move {
-            let _url = format!("{}/{}", self.base_url, path.as_str());
+#[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+#[macro_export]
+macro_rules! asset_source {
+    ($path:literal) => {{
+        $crate::validate_asset!($path);
 
-            // let response = reqwest::get(url).await?;
-            // let bytes = response.bytes().await?;
-            // todo!();
+        $crate::AssetSource::File {
+            path: std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/", $path)),
+        }
+    }};
+}
 
-            (asset_id, Ok(vec![]))
-        })
-    }
-
-    fn make_assetpath_absolute(&self, path: &AssetPath) -> AssetPath {
-        let mut p = self.base_url.clone();
-        p.push_str(path.as_str());
-        AssetPath::new(p)
-    }
+#[cfg(any(target_arch = "wasm32", not(debug_assertions)))]
+#[macro_export]
+macro_rules! asset_source {
+    ($path:literal) => {
+        $crate::AssetSource::Embedded {
+            name: $path,
+            bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/", $path)),
+        }
+    };
 }

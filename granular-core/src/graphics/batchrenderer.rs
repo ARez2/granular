@@ -7,6 +7,7 @@ use glam::{IVec2, UVec2, Vec2};
 use palette::Srgba;
 use palette::cast::ComponentsInto;
 use rustc_hash::FxHashMap as HashMap;
+use rustc_hash::FxHashSet as HashSet;
 use std::collections::BinaryHeap;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::ops::Range;
@@ -22,10 +23,10 @@ use winit::dpi::PhysicalSize;
 use super::graphics_system::{GraphicsSystem, VERTEX_SIZE, Vertex};
 use super::{Camera, TextureBundle};
 use crate::graphics::{
-    RenderContext, Texture2D, TextureHandle, TextureSystem, texture_atlas::DynamicTextureAtlas,
+    RenderContext, Texture2D, TextureHandle, texture_atlas::DynamicTextureAtlas,
 };
 use crate::{
-    assets::{AssetHandle, AssetStatus, AssetSystem, ShaderAsset},
+    assets::{AssetHandle, AssetSystem},
     utils::*,
 };
 
@@ -39,7 +40,6 @@ pub struct Quad {
     pub color: Srgba,
     pub texture: QuadTexture,
 }
-
 impl Eq for Quad {}
 
 /// A simple wrapper that stores a quad and a corresponding layer
@@ -77,21 +77,22 @@ struct Batch {
 pub struct BatchRenderer {
     ctx: GeeseContextHandle<Self>,
 
-    // Used to wait for the shader to get loaded
-    ready_to_render: bool,
-
     vertex_buffer: Buffer,
     index_buffer: Buffer,
     index_format: IndexFormat,
 
     quads_to_draw: BinaryHeap<std::cmp::Reverse<BatchQuadEntry>>,
+    /// This is filled whenever we get an AssetChanged event and then when we create the batches, we check if the quad's texture
+    /// is in this set (so it has changed), and if so, we remove and re-add it to our atlasses.
+    /// This is cleared inside of `end_frame`
+    changed_asset_ids: HashSet<u64>,
     batches: Vec<Batch>,
     vertices_to_draw: Vec<Vertex>,
 
     globals_bind_group: (BindGroup, BindGroupLayout),
 
-    shader_handle: AssetHandle<ShaderAsset>,
-    render_pipeline: Option<RenderPipeline>,
+    shader_handle: AssetHandle<ShaderModule>,
+    render_pipeline: RenderPipeline,
     clear_color: Color,
 
     white_pixel_handle: TextureHandle,
@@ -107,24 +108,8 @@ impl BatchRenderer {
     const DEFAULT_TEXATLAS_HEIGHT: u32 = 2048;
     const DEFAULT_TEXATLAS_FILTERING: wgpu::FilterMode = wgpu::FilterMode::Nearest;
 
-    pub(super) fn end_frame(&mut self, _context: &mut RenderContext) {
-        if !self.ready_to_render {
-            return;
-        }
-        self.batches.clear();
-        self.quads_to_draw.clear();
-        self.vertices_to_draw.clear();
-    }
-
     /// Handles batching and issuing draw calls accordingly
     fn create_batches(&mut self) {
-        if !self.ready_to_render {
-            return;
-        }
-
-        let cam = self.ctx.get::<Camera>();
-        let shaderglobals = cam.canvas_transform_buffer();
-
         let total_quads_to_draw = self.quads_to_draw.len();
         let max_textures = {
             let graphics_sys = self.ctx.get::<GraphicsSystem>();
@@ -146,7 +131,8 @@ impl BatchRenderer {
             let entry = current_quad.unwrap().0;
             let quad = entry.quad;
             let current_layer = entry.layer;
-            let current_atlas_index = entry.used_texture_atlas_idx;
+            // this is mutable because it might get changed later when we assign a new atlas because the texture has changed
+            let mut current_atlas_index = entry.used_texture_atlas_idx;
             // Since the quads are ordered by layer, this means that we have now iterated through
             // all quads in this layer and we need to create a batch with the last ones
             if !first_iteration
@@ -171,11 +157,21 @@ impl BatchRenderer {
             let w = quad.size.x;
             let h = quad.size.y;
             let color: [f32; 4] = quad.color.into();
-            let quad_tex = &quad.texture.as_ref().unwrap_or(&self.white_pixel_handle);
+            let quad_tex = quad
+                .texture
+                .clone()
+                .unwrap_or(self.white_pixel_handle.clone());
+            if self.changed_asset_ids.contains(quad_tex.id()) {
+                let mut prev_atlas = &mut self.texture_atlasses[current_atlas_index].0;
+                // remove the tex from the atlas it is currently in
+                prev_atlas.remove_texture(quad_tex.clone());
+                // and find a new atlas which has enough space to fit the texture (since texture size could have changed, this might not be the same atlas)
+                current_atlas_index = self.insert_texture_into_atlas(&quad_tex);
+            }
             let (atlas_tex_coords_start, atlas_tex_coords_end) = self.texture_atlasses
                 [current_atlas_index]
                 .0
-                .get_texture_coords(quad_tex)
+                .get_texture_coords(&quad_tex)
                 .expect("Texture coords should exist for each quad");
 
             // Add the vertices of the quad to vertices, respecting size and attributes
@@ -220,9 +216,6 @@ impl BatchRenderer {
     }
 
     pub(super) fn prepare_to_render(&mut self, context: &mut RenderContext) {
-        if !self.ready_to_render {
-            return;
-        }
         self.create_batches();
 
         // Write the data from vertices to the vertex buffer
@@ -240,10 +233,10 @@ impl BatchRenderer {
                 });
 
         {
-            let texture_sys = self.ctx.get::<TextureSystem>();
+            let asset_sys = self.ctx.get::<AssetSystem>();
             for (atlas, _) in &mut self.texture_atlasses {
                 atlas.rebuild_atlas(
-                    |handle| texture_sys.get_texture(handle).unwrap().texture(),
+                    |handle| asset_sys.get(handle).unwrap().texture(),
                     &mut atlas_encoder,
                 );
             }
@@ -257,10 +250,6 @@ impl BatchRenderer {
         layer_range: Range<i32>,
         clear: bool,
     ) {
-        if !self.ready_to_render {
-            return;
-        }
-
         let mut rpass = context
             .encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -287,11 +276,7 @@ impl BatchRenderer {
             .iter()
             .filter(|b| layer_range.contains(&b.layer))
             .for_each(|batch| {
-                rpass.set_pipeline(
-                    self.render_pipeline
-                        .as_ref()
-                        .expect("We are ready_to_render so the pipeline must exist"),
-                );
+                rpass.set_pipeline(&self.render_pipeline);
                 // The index buffer stays the same over all batches
                 rpass.set_index_buffer(self.index_buffer.slice(..), self.index_format);
                 // Only use a slice of the vertex buffer, which belongs to the current batch
@@ -309,6 +294,14 @@ impl BatchRenderer {
             });
     }
 
+    /// Performs clean-up at the end of the frame
+    pub(super) fn end_frame(&mut self, _context: &mut RenderContext) {
+        self.batches.clear();
+        self.quads_to_draw.clear();
+        self.changed_asset_ids.clear();
+        self.vertices_to_draw.clear();
+    }
+
     /// Records a new quad that needs to be drawn this frame (low performance cost, even though quad gets cloned)
     pub fn draw_quad(&mut self, quad: &Quad, layer: i32) {
         let mut used_texture_atlas_idx = 0;
@@ -323,21 +316,11 @@ impl BatchRenderer {
             }
             if !has_texture {
                 let texture_size = {
-                    let texture_sys = self.ctx.get::<TextureSystem>();
-                    texture_sys.get_texture(handle).unwrap().texture().size()
+                    let asset_sys = self.ctx.get::<AssetSystem>();
+                    let tex = asset_sys.get(handle).unwrap().texture();
+                    UVec2::new(tex.size().width, tex.size().height)
                 };
-                for (idx, (atlas, _)) in self.texture_atlasses.iter_mut().enumerate() {
-                    if atlas
-                        .add_texture(
-                            handle.clone(),
-                            UVec2::new(texture_size.width, texture_size.height),
-                        )
-                        .is_ok()
-                    {
-                        used_texture_atlas_idx = idx;
-                        break;
-                    }
-                }
+                self.insert_texture_into_atlas(handle);
             }
         } else {
             // the white pixel is always in the first atlas since we add in in the new() function
@@ -350,24 +333,39 @@ impl BatchRenderer {
         }));
     }
 
+    fn insert_texture_into_atlas(&mut self, handle: &TextureHandle) -> usize {
+        let texture_size = {
+            let asset_sys = self.ctx.get::<AssetSystem>();
+            let tex = asset_sys.get(handle).unwrap().texture();
+            UVec2::new(tex.size().width, tex.size().height)
+        };
+        let mut used_texture_atlas_idx = 0;
+        for (idx, (atlas, _)) in self.texture_atlasses.iter_mut().enumerate() {
+            if atlas.add_texture(handle.clone(), texture_size).is_ok() {
+                used_texture_atlas_idx = idx;
+                break;
+            }
+        }
+        used_texture_atlas_idx
+    }
+
     /// Reloads parts of the renderer depending on what asset changed. Ignored on wasm
     #[cfg(not(target_arch = "wasm32"))]
-    fn on_assetchange(&mut self, event: &crate::assets::events::AssetLoaded) {
+    fn on_assetchange(&mut self, event: &crate::assets::events::AssetChanged) {
         let asset_sys = self.ctx.get::<AssetSystem>();
-        if event.asset_id == **self.shader_handle.id()
-            && asset_sys.status(&self.shader_handle) == AssetStatus::Ready
-        {
+        if event.asset_id == **self.shader_handle.id() {
             let graphics_sys = self.ctx.get::<GraphicsSystem>();
-            self.render_pipeline = Some(Self::create_render_pipeline(
+            self.render_pipeline = Self::create_render_pipeline(
                 graphics_sys.device(),
                 &[
                     Some(&self.globals_bind_group.1),
                     Some(&self.atlas_bind_group_layout),
                 ],
-                asset_sys.get(&self.shader_handle).unwrap().module(),
+                asset_sys.get(&self.shader_handle).unwrap(),
                 graphics_sys.get_surface_view_format(),
-            ));
-            self.ready_to_render = true;
+            );
+        } else {
+            self.changed_asset_ids.insert(event.asset_id);
         }
     }
 
@@ -525,7 +523,6 @@ impl BatchRenderer {
 
 impl GeeseSystem for BatchRenderer {
     const DEPENDENCIES: geese::Dependencies = dependencies()
-        .with::<Mut<TextureSystem>>()
         .with::<Mut<GraphicsSystem>>()
         .with::<Mut<AssetSystem>>()
         .with::<Mut<Camera>>();
@@ -607,64 +604,56 @@ impl GeeseSystem for BatchRenderer {
         drop(graphics_sys);
         drop(camera);
         let white_pixel_handle = {
-            let mut texture_sys = ctx.get_mut::<TextureSystem>();
-            let white_pixel_handle = texture_sys.create_texture(Box::new(white_pixel));
+            let mut asset_sys = ctx.get_mut::<AssetSystem>();
+            let white_pixel_handle = asset_sys.register(white_pixel);
             texture_atlasses[0]
                 .0
                 .add_texture(white_pixel_handle.clone(), UVec2::new(1, 1));
             white_pixel_handle
         };
 
-        let (base_shader_handle, ready_to_render, render_pipeline) =
-            if cfg!(not(target_arch = "wasm32")) {
-                (
-                    ctx.get_mut::<AssetSystem>().load::<ShaderAsset>(
-                        "shaders/batch_renderer.wgsl",
-                        true,
-                        (),
-                    ),
-                    false,
-                    None,
-                )
-            } else {
-                let shader_handle = ctx
-                    .get_mut::<AssetSystem>()
-                    .register::<ShaderAsset>(
-                        include_bytes!("../../../shaders/batch_renderer.wgsl"),
-                        None,
-                        (),
-                    )
-                    .unwrap();
-
-                let graphics_sys = ctx.get::<GraphicsSystem>();
-                let pipeline = Self::create_render_pipeline(
-                    graphics_sys.device(),
-                    &[Some(&globals_bgl), Some(&atlas_bgl)],
-                    ctx.get::<AssetSystem>()
-                        .get(&shader_handle)
-                        .unwrap()
-                        .module(),
-                    graphics_sys.get_surface_view_format(),
-                );
-                (shader_handle, true, Some(pipeline))
-            };
+        let device = {
+            let graphics_sys = ctx.get::<GraphicsSystem>();
+            graphics_sys.device().clone()
+        };
+        let shader_handle = ctx
+            .get_mut::<AssetSystem>()
+            .load(
+                asset_source!("../shaders/batch_renderer.wgsl"),
+                move |bytes| {
+                    Ok(device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: None,
+                        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(
+                            String::from_utf8(bytes)?,
+                        )),
+                    }))
+                },
+            )
+            .unwrap();
+        let graphics_sys = ctx.get::<GraphicsSystem>();
+        let render_pipeline = Self::create_render_pipeline(
+            graphics_sys.device(),
+            &[Some(&globals_bgl), Some(&atlas_bgl)],
+            ctx.get::<AssetSystem>().get(&shader_handle).unwrap(),
+            graphics_sys.get_surface_view_format(),
+        );
+        drop(graphics_sys);
 
         Self {
             ctx,
-
-            ready_to_render,
 
             vertex_buffer,
             index_buffer,
             index_format: wgpu::IndexFormat::Uint16,
 
             quads_to_draw: BinaryHeap::new(),
+            changed_asset_ids: HashSet::default(),
             batches: vec![],
             vertices_to_draw: Vec::with_capacity(1000),
 
             globals_bind_group: (globals_bg, globals_bgl),
 
-            shader_handle: base_shader_handle,
+            shader_handle,
             render_pipeline,
             clear_color: Color::BLACK,
 

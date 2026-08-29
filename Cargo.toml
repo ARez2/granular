@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["granular-core", "examples/*"]
+members = ["granular-core", "proc_macros", "examples/*"]
 # exclude = [
 #     "examples/*"
 # ]
@@ -15,11 +15,13 @@ trace = ["granular-core/trace"]
 
 [dependencies]
 granular-core = { path = "granular-core" }
+proc_macros.workspace = true
 palette.workspace = true
 wgpu.workspace = true
 
 
 [workspace.dependencies]
+proc_macros = { path = "proc_macros" }
 geese = "0.3.11"
 log = "0.4.33"
 winit = { version = "*" }

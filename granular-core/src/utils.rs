@@ -9,3 +9,5 @@ pub use geese::{
 };
 
 pub use crate::future_executor::{self, FutureExecutor};
+pub use crate::{asset_source, assets::AssetSource};
+pub use proc_macros::validate_asset;

@@ -37,9 +37,16 @@ impl FileWatcher {
         if let Ok(event) = self.rx.try_recv() {
             match event {
                 Ok(event) => {
-                    if let notify::EventKind::Modify(_kind) = event.kind {
-                        self.ctx
-                            .raise_event(events::FilesChanged::from_event(&event));
+                    if let notify::EventKind::Modify(kind) = event.kind {
+                        let valid = !matches!(
+                            &kind,
+                            notify::event::ModifyKind::Name(notify::event::RenameMode::To)
+                                | notify::event::ModifyKind::Name(notify::event::RenameMode::From)
+                        );
+                        if valid {
+                            self.ctx
+                                .raise_event(events::FilesChanged::from_event(&event));
+                        }
                     }
                 }
                 Err(e) => error!("Watch error: {:?}", e),

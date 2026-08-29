@@ -187,7 +187,6 @@ impl GraphicsSystem {
         state
             .surface
             .configure(&state.device, &state.surface_config);
-        debug!("Surface config: {:?}", state.surface.get_configuration());
     }
 
     pub fn begin_frame(&mut self) -> anyhow::Result<RenderContext> {
