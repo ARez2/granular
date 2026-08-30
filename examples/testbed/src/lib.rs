@@ -139,68 +139,25 @@ impl GeeseSystem for Game {
         );
         drop(input);
 
-        let (device, queue) = {
-            let graphics_sys = ctx.get::<GraphicsSystem>();
-            (graphics_sys.device().clone(), graphics_sys.queue().clone())
-        };
-        let load_image = move |bytes: Vec<u8>, settings: TextureSettings| {
-            Ok(TextureBundle::new(
-                &device,
-                &queue,
-                "TextureAsset",
-                granular::wgpu::TextureDescriptor {
-                    label: Some("TextureAsset Desc"),
-                    size: settings.size,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: granular::wgpu::TextureDimension::D2,
-                    format: settings.format,
-                    usage: granular::wgpu::TextureUsages::TEXTURE_BINDING
-                        | granular::wgpu::TextureUsages::COPY_DST
-                        | granular::wgpu::TextureUsages::COPY_SRC,
-                    view_formats: &[],
-                },
-                &granular::wgpu::TextureViewDescriptor::default(),
-                &granular::wgpu::SamplerDescriptor {
-                    address_mode_u: granular::wgpu::AddressMode::ClampToEdge,
-                    address_mode_v: granular::wgpu::AddressMode::ClampToEdge,
-                    address_mode_w: granular::wgpu::AddressMode::ClampToEdge,
-                    mag_filter: settings.filtering,
-                    min_filter: granular::wgpu::FilterMode::Nearest,
-                    mipmap_filter: match settings.filtering {
-                        granular::wgpu::FilterMode::Linear => {
-                            granular::wgpu::MipmapFilterMode::Linear
-                        }
-                        granular::wgpu::FilterMode::Nearest => {
-                            granular::wgpu::MipmapFilterMode::Nearest
-                        }
-                    },
-                    ..Default::default()
-                },
-                &bytes,
-                granular::wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(
-                        crate::graphics::bytes_per_pixel(settings.format).unwrap_or(4)
-                            * settings.size.width,
-                    ),
-                    rows_per_image: Some(settings.size.height),
-                },
-            ))
-        };
-
         let (texture_handle, texture2_handle) = {
             let mut asset_sys = ctx.get_mut::<AssetSystem>();
-            let load1 = load_image.clone();
             let texture_handle = asset_sys
-                .load(asset_source!("../../assets/cat.jpg"), move |bytes| {
-                    load1(bytes, TextureSettings::default())
-                })
+                .load(
+                    asset_source!("../../assets/cat.jpg"),
+                    TextureBundleLoadSettings {
+                        name: String::from("cat"),
+                        ..Default::default()
+                    },
+                )
                 .unwrap();
             let texture2_handle = asset_sys
-                .load(asset_source!("../../assets/cat2.jpg"), move |bytes| {
-                    load_image(bytes, TextureSettings::default())
-                })
+                .load(
+                    asset_source!("../../assets/cat2.jpg"),
+                    TextureBundleLoadSettings {
+                        name: String::from("cat2"),
+                        ..Default::default()
+                    },
+                )
                 .unwrap();
             (texture_handle, texture2_handle)
         };

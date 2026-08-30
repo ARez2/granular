@@ -18,6 +18,8 @@ pub use asset_handle::AssetHandle;
 mod asset_source;
 pub use asset_source::AssetSource;
 
+mod assets;
+
 pub mod events {
     #[derive(Debug)]
     pub struct AssetChanged {
@@ -35,17 +37,21 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
-pub trait AssetTraits: Send + Sync + 'static {}
-impl<T: Send + Sync + 'static> AssetTraits for T {}
+pub trait Asset: Send + Sync + 'static {
+    type LoadSettings: Any + Clone + Default + Send + Sync + 'static;
+}
 
 type ErasedAsset = dyn Any + Send + Sync;
-type LoaderFn = dyn (FnMut(Vec<u8>) -> anyhow::Result<Box<ErasedAsset>>) + Send + Sync + 'static;
-type LoaderMap = HashMap<std::any::TypeId, Box<LoaderFn>>;
+type ErasedSettings = dyn Any + Send + Sync;
+type ErasedLoader =
+    dyn FnMut(Vec<u8>, &ErasedSettings) -> anyhow::Result<Box<ErasedAsset>> + Send + Sync + 'static;
+type LoaderMap = HashMap<std::any::TypeId, Box<ErasedLoader>>;
 
 struct AssetEntry {
     type_id: std::any::TypeId,
     asset: Box<ErasedAsset>,
     source: Option<AssetSource>,
+    settings: Option<Box<ErasedSettings>>,
     hash: u64,
 }
 
@@ -81,23 +87,32 @@ impl AssetSystem {
         event_handlers().with(Self::drop_unused_assets);
 
     /// Fetches an asset by its AssetHandle. Returns None if it wasnt found
-    pub fn get<T: AssetTraits>(&self, handle: &AssetHandle<T>) -> Option<&T> {
+    pub fn get<T: Asset>(&self, handle: &AssetHandle<T>) -> Option<&T> {
         let entry = self.assets.get(handle.id().as_ref())?;
         entry.asset.downcast_ref::<T>()
     }
 
     /// Fetches an asset by its AssetHandle. Returns None if it wasnt found
-    pub fn get_mut<T: AssetTraits>(&mut self, handle: &AssetHandle<T>) -> Option<&mut T> {
+    pub fn get_mut<T: Asset>(&mut self, handle: &AssetHandle<T>) -> Option<&mut T> {
         let entry = self.assets.get_mut(handle.id().as_ref())?;
         entry.asset.downcast_mut::<T>()
     }
 
-    pub fn add_loader<T: AssetTraits>(
+    /// Registers a new loader for that asset type. The loader only has to be registered once and can then be re-used by other systems down the line.
+    pub fn add_loader<T: Asset>(
         &mut self,
-        mut loader_fn: impl (FnMut(Vec<u8>) -> anyhow::Result<T>) + Send + Sync + 'static,
+        mut loader_fn: impl (FnMut(Vec<u8>, T::LoadSettings) -> anyhow::Result<T>)
+        + Send
+        + Sync
+        + 'static,
     ) {
-        let closure = Box::new(move |bytes| {
-            let asset: T = loader_fn(bytes)?;
+        let closure: Box<ErasedLoader> = Box::new(move |bytes, settings| {
+            let settings = settings
+                .downcast_ref::<T::LoadSettings>()
+                .expect("Invalid LoadSettings type for asset loader");
+
+            let asset = loader_fn(bytes, settings.clone())?;
+
             Ok(Box::new(asset) as Box<ErasedAsset>)
         });
         self.loaders.insert(std::any::TypeId::of::<T>(), closure);
@@ -105,7 +120,11 @@ impl AssetSystem {
 
     /// Loads a new asset from the given source. You can use the `asset_source!("path/to/asset")` macro here.
     /// The loader closure should take the bytes and produce a anyhow::Result with the asset inside.
-    pub fn load<T: AssetTraits>(&mut self, source: AssetSource) -> anyhow::Result<AssetHandle<T>> {
+    pub fn load<T: Asset>(
+        &mut self,
+        source: AssetSource,
+        settings: T::LoadSettings,
+    ) -> anyhow::Result<AssetHandle<T>> {
         let source_string = source.to_string();
         if let Some(id) = self.source_to_id.get(&source_string).cloned() {
             warn!("Asset already exists. Returning existing handle...");
@@ -138,7 +157,8 @@ impl AssetSystem {
         let bytes = bytes.unwrap();
         let hash = hash_bytes(&bytes);
 
-        let asset = (loader)(bytes);
+        let erased_settings = Box::new(settings);
+        let asset = (loader)(bytes, &erased_settings);
         if let Err(e) = asset {
             error!("Error while loading asset: {}", e);
             return Err(e);
@@ -149,6 +169,7 @@ impl AssetSystem {
             type_id: std::any::TypeId::of::<T>(),
             asset,
             source: Some(source),
+            settings: Some(erased_settings),
             hash,
         };
 
@@ -173,7 +194,7 @@ impl AssetSystem {
     }
 
     /// Registers an asset where the data of the asset is already present outside and does not need to be loaded first.
-    pub fn register<T: AssetTraits>(&mut self, asset: T) -> AssetHandle<T> {
+    pub fn register<T: Asset>(&mut self, asset: T) -> AssetHandle<T> {
         let id = self.next_id;
         self.next_id += 1;
 
@@ -185,6 +206,7 @@ impl AssetSystem {
                 type_id: std::any::TypeId::of::<T>(),
                 source: None,
                 asset: Box::new(asset),
+                settings: None,
                 hash: 0,
             },
         );
@@ -235,10 +257,14 @@ impl AssetSystem {
         let Some(source) = &entry.source else {
             return;
         };
+        let Some(prev_settings) = &entry.settings else {
+            return;
+        };
         let loader_opt = self.loaders.get_mut(&type_id);
         let Some(loader) = loader_opt else {
             return;
         };
+
         let bytes_res = source.read();
         if let Err(e) = bytes_res {
             warn!(
@@ -251,7 +277,7 @@ impl AssetSystem {
         let hash = hash_bytes(&bytes);
 
         if hash != entry.hash {
-            let new_asset = (loader)(bytes);
+            let new_asset = (loader)(bytes, prev_settings);
             if let Err(e) = new_asset {
                 error!("Error while reloading asset: {:?}", e);
                 return;

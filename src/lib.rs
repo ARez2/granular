@@ -3,7 +3,7 @@ pub mod prelude {
         AssetSystem, BatchRenderer, Camera, GranularEngine,
         assets::{self, AssetHandle},
         events,
-        graphics::{self, TextureBundle, WindowSystem},
+        graphics::{self, TextureBundle, TextureBundleLoadSettings, WindowSystem},
         input_system::*,
         utils::*,
     };

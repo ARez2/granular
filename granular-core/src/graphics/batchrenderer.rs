@@ -614,7 +614,7 @@ impl GeeseSystem for BatchRenderer {
 
         let shader_handle = ctx
             .get_mut::<AssetSystem>()
-            .load(asset_source!("../shaders/batch_renderer.wgsl"))
+            .load(asset_source!("../shaders/batch_renderer.wgsl"), ())
             .unwrap();
         let graphics_sys = ctx.get::<GraphicsSystem>();
         let render_pipeline = Self::create_render_pipeline(

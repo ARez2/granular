@@ -19,7 +19,11 @@ use winit::{
 };
 
 use super::WindowSystem;
-use crate::{AssetSystem, CustomWinitEvent, graphics::Texture2D, utils::*};
+use crate::{
+    AssetSystem, CustomWinitEvent,
+    graphics::{Texture2D, TextureBundle},
+    utils::*,
+};
 
 #[derive(Debug)]
 pub struct RenderContext {
@@ -156,10 +160,12 @@ impl GraphicsSystem {
         self.resize_surface(window_size);
 
         {
-            let mut asset_sys = self.ctx.get_mut::<AssetSystem>();
             let dev = self.device().clone();
+            let dev2 = self.device().clone();
+            let q = self.queue().clone();
+            let mut asset_sys = self.ctx.get_mut::<AssetSystem>();
             // the generic here is technically optional but its clearer this way
-            asset_sys.add_loader::<wgpu::ShaderModule>(move |bytes| {
+            asset_sys.add_loader::<wgpu::ShaderModule>(move |bytes, _settings| {
                 Ok(dev.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: None,
                     source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(String::from_utf8(
@@ -167,15 +173,14 @@ impl GraphicsSystem {
                     )?)),
                 }))
             });
-            let dev = self.device().clone();
-            let q = self.queue().clone();
-            asset_sys.add_loader(move |bytes: Vec<u8>| {
+
+            asset_sys.add_loader::<TextureBundle>(move |bytes, settings| {
                 Ok(TextureBundle::new(
-                    &dev,
+                    &dev2,
                     &q,
-                    "TextureAsset",
+                    &settings.name,
                     wgpu::TextureDescriptor {
-                        label: Some("TextureAsset Desc"),
+                        label: Some(&format!("{} descriptor", settings.name)),
                         size: settings.size,
                         mip_level_count: 1,
                         sample_count: 1,

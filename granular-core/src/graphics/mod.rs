@@ -9,7 +9,7 @@ mod texture2d;
 pub use texture2d::Texture2D;
 
 mod texture_bundle;
-pub use texture_bundle::TextureBundle;
+pub use texture_bundle::{TextureBundle, TextureBundleLoadSettings};
 
 pub(super) mod window_system;
 pub use window_system::WindowSystem;

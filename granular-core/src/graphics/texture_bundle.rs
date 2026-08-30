@@ -3,7 +3,7 @@ use wgpu::{
     TextureDescriptor, TextureView, TextureViewDescriptor,
 };
 
-use crate::{graphics::Texture2D, utils::*};
+use crate::{assets::Asset, graphics::Texture2D, utils::*};
 
 #[derive(Debug)]
 pub struct TextureBundle {
@@ -167,4 +167,30 @@ impl Texture2D for TextureBundle {
     fn view(&self) -> &wgpu::TextureView {
         &self.view
     }
+}
+
+/// Settings you might want to set when loading a texture. Not complete
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct TextureBundleLoadSettings {
+    pub name: String,
+    pub size: wgpu::Extent3d,
+    pub format: wgpu::TextureFormat,
+    pub filtering: wgpu::FilterMode,
+}
+impl Default for TextureBundleLoadSettings {
+    fn default() -> Self {
+        Self {
+            name: String::from("TextureBundle"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            filtering: wgpu::FilterMode::Nearest,
+        }
+    }
+}
+impl Asset for TextureBundle {
+    type LoadSettings = TextureBundleLoadSettings;
 }
