@@ -42,8 +42,11 @@ pub trait Asset: 'static {
     type LoadSettings: Any + Clone + Default + 'static;
 }
 
+/// Type-erased Asset so we dont need generics in AssetEntry and AssetSystem.assets
 type ErasedAsset = dyn Any;
+/// Type-erased LoadSettings for an Asset so we dont need generics in AssetEntry and AssetSystem.assets
 type ErasedSettings = dyn Any;
+/// Type-erased Asset loader function so we can easily store it in LoaderMap
 type ErasedLoader =
     dyn FnMut(Vec<u8>, &ErasedSettings) -> anyhow::Result<Box<ErasedAsset>> + 'static;
 type LoaderMap = HashMap<std::any::TypeId, Box<ErasedLoader>>;
@@ -52,11 +55,13 @@ struct AssetEntry {
     /// We only need to store this in case we need to reload the asset and need to find the corresponding loader function
     #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
     type_id: std::any::TypeId,
+    /// The actual type-erased asset data
     asset: Box<ErasedAsset>,
     source: Option<AssetSource>,
     /// We only need to store this in case we ever need to reload the asset where we cant pass in new settings
     #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
     settings: Option<Box<ErasedSettings>>,
+    /// A hash of the bytes used to construct that asset, so we can say if the asset has changed (and dont need to store the full bytes)
     hash: u64,
 }
 
@@ -106,6 +111,7 @@ impl AssetSystem {
     /// Registers a new loader for that asset type. The loader only has to be registered once and can then be re-used by other systems down the line.
     pub fn add_loader<T: Asset>(
         &mut self,
+        // This needs to be a full type because we want to provide some convenience for the user (like not having to wrap everything inside a Box::new(...))
         mut loader_fn: impl (FnMut(Vec<u8>, T::LoadSettings) -> anyhow::Result<T>) + 'static,
     ) {
         let closure: Box<ErasedLoader> = Box::new(move |bytes, settings| {
@@ -124,6 +130,12 @@ impl AssetSystem {
             Ok(Box::new(asset) as Box<ErasedAsset>)
         });
         self.loaders.insert(std::any::TypeId::of::<T>(), closure);
+    }
+
+    fn get_next_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
     }
 
     /// Loads a new asset from the given source. You can use the `asset_source!("path/to/asset")` macro here.
@@ -183,8 +195,7 @@ impl AssetSystem {
             hash,
         };
 
-        let id = self.next_id;
-        self.next_id += 1;
+        let id = self.get_next_id();
         let asset_id = Arc::new(id);
         self.assets.insert(asset_id.clone(), entry);
         self.source_to_id.insert(source_string, id);
@@ -205,9 +216,7 @@ impl AssetSystem {
 
     /// Registers an asset where the data of the asset is already present outside and does not need to be loaded first.
     pub fn register<T: Asset>(&mut self, asset: T) -> AssetHandle<T> {
-        let id = self.next_id;
-        self.next_id += 1;
-
+        let id = self.get_next_id();
         let asset_id = Arc::new(id);
 
         self.assets.insert(
@@ -289,6 +298,8 @@ impl AssetSystem {
         let hash = hash_bytes(&bytes);
 
         if hash != entry.hash {
+            // Settings has type Option<Box<ErasedSettings>>, so double deref gives just the ErasedSettings,
+            // then borrow that because of the loader signature
             let new_asset = (loader)(bytes, &**prev_settings);
             if let Err(e) = new_asset {
                 error!("Error while reloading asset: {:?}", e);
