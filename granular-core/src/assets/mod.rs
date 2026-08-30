@@ -1,3 +1,4 @@
+use anyhow::bail;
 use rustc_hash::FxHashMap as HashMap;
 #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
 use std::path::PathBuf;
@@ -34,13 +35,17 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
+pub trait AssetTraits: Send + Sync + 'static {}
+impl<T: Send + Sync + 'static> AssetTraits for T {}
+
 type ErasedAsset = dyn Any + Send + Sync;
-type AssetLoader = dyn Fn(Vec<u8>) -> anyhow::Result<Box<ErasedAsset>> + Send + Sync;
+type LoaderFn = dyn (FnMut(Vec<u8>) -> anyhow::Result<Box<ErasedAsset>>) + Send + Sync + 'static;
+type LoaderMap = HashMap<std::any::TypeId, Box<LoaderFn>>;
 
 struct AssetEntry {
+    type_id: std::any::TypeId,
     asset: Box<ErasedAsset>,
     source: Option<AssetSource>,
-    loader: Option<Box<AssetLoader>>,
     hash: u64,
 }
 
@@ -48,6 +53,7 @@ pub struct AssetSystem {
     ctx: GeeseContextHandle<Self>,
     next_id: u64,
     assets: HashMap<Arc<u64>, AssetEntry>,
+    loaders: LoaderMap,
     source_to_id: HashMap<String, u64>,
 }
 impl GeeseSystem for AssetSystem {
@@ -65,6 +71,7 @@ impl GeeseSystem for AssetSystem {
             ctx,
             next_id: 0,
             assets: HashMap::default(),
+            loaders: HashMap::default(),
             source_to_id: HashMap::default(),
         }
     }
@@ -74,30 +81,31 @@ impl AssetSystem {
         event_handlers().with(Self::drop_unused_assets);
 
     /// Fetches an asset by its AssetHandle. Returns None if it wasnt found
-    pub fn get<T>(&self, handle: &AssetHandle<T>) -> Option<&T>
-    where
-        T: Send + Sync + 'static,
-    {
+    pub fn get<T: AssetTraits>(&self, handle: &AssetHandle<T>) -> Option<&T> {
         let entry = self.assets.get(handle.id().as_ref())?;
         entry.asset.downcast_ref::<T>()
     }
 
     /// Fetches an asset by its AssetHandle. Returns None if it wasnt found
-    pub fn get_mut<T>(&mut self, handle: &AssetHandle<T>) -> Option<&mut T>
-    where
-        T: Send + Sync + 'static,
-    {
+    pub fn get_mut<T: AssetTraits>(&mut self, handle: &AssetHandle<T>) -> Option<&mut T> {
         let entry = self.assets.get_mut(handle.id().as_ref())?;
         entry.asset.downcast_mut::<T>()
     }
 
+    pub fn add_loader<T: AssetTraits>(
+        &mut self,
+        mut loader_fn: impl (FnMut(Vec<u8>) -> anyhow::Result<T>) + Send + Sync + 'static,
+    ) {
+        let closure = Box::new(move |bytes| {
+            let asset: T = loader_fn(bytes)?;
+            Ok(Box::new(asset) as Box<ErasedAsset>)
+        });
+        self.loaders.insert(std::any::TypeId::of::<T>(), closure);
+    }
+
     /// Loads a new asset from the given source. You can use the `asset_source!("path/to/asset")` macro here.
     /// The loader closure should take the bytes and produce a anyhow::Result with the asset inside.
-    pub fn load<T, F>(&mut self, source: AssetSource, loader: F) -> anyhow::Result<AssetHandle<T>>
-    where
-        T: Send + Sync + 'static,
-        F: Fn(Vec<u8>) -> anyhow::Result<T> + Send + Sync + 'static,
-    {
+    pub fn load<T: AssetTraits>(&mut self, source: AssetSource) -> anyhow::Result<AssetHandle<T>> {
         let source_string = source.to_string();
         if let Some(id) = self.source_to_id.get(&source_string).cloned() {
             warn!("Asset already exists. Returning existing handle...");
@@ -107,6 +115,17 @@ impl AssetSystem {
             let key_value = self.assets.get_key_value(&id).unwrap();
             return Ok(AssetHandle::new(key_value.0.clone()));
         }
+        let loader_opt = self.loaders.get_mut(&std::any::TypeId::of::<T>());
+        let Some(loader) = loader_opt else {
+            error!(
+                "No loader registered for Asset of type '{}'",
+                std::any::type_name::<T>()
+            );
+            bail!(
+                "No loader registered for Asset of type '{}'",
+                std::any::type_name::<T>()
+            );
+        };
 
         let bytes = source.read();
         if let Err(e) = bytes {
@@ -118,10 +137,8 @@ impl AssetSystem {
         }
         let bytes = bytes.unwrap();
         let hash = hash_bytes(&bytes);
-        // This moves/ captures the user-provided loader and uses it to create a new
-        let final_loader: Box<AssetLoader> = Box::new(move |bytes| Ok(Box::new(loader(bytes)?)));
 
-        let asset = (final_loader)(bytes);
+        let asset = (loader)(bytes);
         if let Err(e) = asset {
             error!("Error while loading asset: {}", e);
             return Err(e);
@@ -129,9 +146,9 @@ impl AssetSystem {
         let asset = asset.unwrap();
 
         let entry = AssetEntry {
+            type_id: std::any::TypeId::of::<T>(),
             asset,
             source: Some(source),
-            loader: Some(final_loader),
             hash,
         };
 
@@ -156,10 +173,7 @@ impl AssetSystem {
     }
 
     /// Registers an asset where the data of the asset is already present outside and does not need to be loaded first.
-    pub fn register<T>(&mut self, asset: T) -> AssetHandle<T>
-    where
-        T: Send + Sync + 'static,
-    {
+    pub fn register<T: AssetTraits>(&mut self, asset: T) -> AssetHandle<T> {
         let id = self.next_id;
         self.next_id += 1;
 
@@ -168,9 +182,9 @@ impl AssetSystem {
         self.assets.insert(
             asset_id.clone(),
             AssetEntry {
+                type_id: std::any::TypeId::of::<T>(),
                 source: None,
                 asset: Box::new(asset),
-                loader: None,
                 hash: 0,
             },
         );
@@ -213,13 +227,16 @@ impl AssetSystem {
     /// Performs the actual reload of the asset and emits `events::AssetChanged` but only if the bytes actually changed.
     #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
     fn reload_asset(&mut self, asset_id: u64) {
+        let type_id = self.assets.get(&asset_id).map(|v| v.type_id);
         let Some(entry) = self.assets.get_mut(&asset_id) else {
             return;
         };
+        let type_id = type_id.unwrap();
         let Some(source) = &entry.source else {
             return;
         };
-        let Some(loader) = &entry.loader else {
+        let loader_opt = self.loaders.get_mut(&type_id);
+        let Some(loader) = loader_opt else {
             return;
         };
         let bytes_res = source.read();

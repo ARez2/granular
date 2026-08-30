@@ -19,7 +19,7 @@ use winit::{
 };
 
 use super::WindowSystem;
-use crate::{CustomWinitEvent, graphics::Texture2D, utils::*};
+use crate::{AssetSystem, CustomWinitEvent, graphics::Texture2D, utils::*};
 
 #[derive(Debug)]
 pub struct RenderContext {
@@ -154,6 +154,63 @@ impl GraphicsSystem {
         // winit might have updated the window size while we were
         // creating the surface asynchronously, so resize the surface.
         self.resize_surface(window_size);
+
+        {
+            let mut asset_sys = self.ctx.get_mut::<AssetSystem>();
+            let dev = self.device().clone();
+            // the generic here is technically optional but its clearer this way
+            asset_sys.add_loader::<wgpu::ShaderModule>(move |bytes| {
+                Ok(dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: None,
+                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(String::from_utf8(
+                        bytes,
+                    )?)),
+                }))
+            });
+            let dev = self.device().clone();
+            let q = self.queue().clone();
+            asset_sys.add_loader(move |bytes: Vec<u8>| {
+                Ok(TextureBundle::new(
+                    &dev,
+                    &q,
+                    "TextureAsset",
+                    wgpu::TextureDescriptor {
+                        label: Some("TextureAsset Desc"),
+                        size: settings.size,
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: settings.format,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING
+                            | wgpu::TextureUsages::COPY_DST
+                            | wgpu::TextureUsages::COPY_SRC,
+                        view_formats: &[],
+                    },
+                    &wgpu::TextureViewDescriptor::default(),
+                    &wgpu::SamplerDescriptor {
+                        address_mode_u: wgpu::AddressMode::ClampToEdge,
+                        address_mode_v: wgpu::AddressMode::ClampToEdge,
+                        address_mode_w: wgpu::AddressMode::ClampToEdge,
+                        mag_filter: settings.filtering,
+                        min_filter: wgpu::FilterMode::Nearest,
+                        mipmap_filter: match settings.filtering {
+                            wgpu::FilterMode::Linear => wgpu::MipmapFilterMode::Linear,
+                            wgpu::FilterMode::Nearest => wgpu::MipmapFilterMode::Nearest,
+                        },
+                        ..Default::default()
+                    },
+                    &bytes,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(
+                            crate::graphics::bytes_per_pixel(settings.format).unwrap_or(4)
+                                * settings.size.width,
+                        ),
+                        rows_per_image: Some(settings.size.height),
+                    },
+                ))
+            });
+        }
     }
 
     pub fn request_redraw(&self) {
@@ -312,7 +369,8 @@ impl GraphicsSystem {
 impl GeeseSystem for GraphicsSystem {
     const DEPENDENCIES: Dependencies = dependencies()
         .with::<Mut<FutureExecutor>>()
-        .with::<WindowSystem>();
+        .with::<WindowSystem>()
+        .with::<Mut<AssetSystem>>();
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         Self {

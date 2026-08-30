@@ -612,23 +612,9 @@ impl GeeseSystem for BatchRenderer {
             white_pixel_handle
         };
 
-        let device = {
-            let graphics_sys = ctx.get::<GraphicsSystem>();
-            graphics_sys.device().clone()
-        };
         let shader_handle = ctx
             .get_mut::<AssetSystem>()
-            .load(
-                asset_source!("../shaders/batch_renderer.wgsl"),
-                move |bytes| {
-                    Ok(device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                        label: None,
-                        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(
-                            String::from_utf8(bytes)?,
-                        )),
-                    }))
-                },
-            )
+            .load(asset_source!("../shaders/batch_renderer.wgsl"))
             .unwrap();
         let graphics_sys = ctx.get::<GraphicsSystem>();
         let render_pipeline = Self::create_render_pipeline(
