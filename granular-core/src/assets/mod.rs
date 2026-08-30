@@ -18,7 +18,7 @@ pub use asset_handle::AssetHandle;
 mod asset_source;
 pub use asset_source::AssetSource;
 
-mod assets;
+mod asset_impls;
 
 pub mod events {
     #[derive(Debug)]
@@ -27,6 +27,7 @@ pub mod events {
     }
 }
 
+#[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
 fn pathbuf_to_string(pathbuf: PathBuf) -> String {
     pathbuf.as_os_str().to_str().unwrap().to_string()
 }
@@ -37,20 +38,24 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
-pub trait Asset: Send + Sync + 'static {
-    type LoadSettings: Any + Clone + Default + Send + Sync + 'static;
+pub trait Asset: 'static {
+    type LoadSettings: Any + Clone + Default + 'static;
 }
 
-type ErasedAsset = dyn Any + Send + Sync;
-type ErasedSettings = dyn Any + Send + Sync;
+type ErasedAsset = dyn Any;
+type ErasedSettings = dyn Any;
 type ErasedLoader =
-    dyn FnMut(Vec<u8>, &ErasedSettings) -> anyhow::Result<Box<ErasedAsset>> + Send + Sync + 'static;
+    dyn FnMut(Vec<u8>, &ErasedSettings) -> anyhow::Result<Box<ErasedAsset>> + 'static;
 type LoaderMap = HashMap<std::any::TypeId, Box<ErasedLoader>>;
 
 struct AssetEntry {
+    /// We only need to store this in case we need to reload the asset and need to find the corresponding loader function
+    #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
     type_id: std::any::TypeId,
     asset: Box<ErasedAsset>,
     source: Option<AssetSource>,
+    /// We only need to store this in case we ever need to reload the asset where we cant pass in new settings
+    #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
     settings: Option<Box<ErasedSettings>>,
     hash: u64,
 }
@@ -101,15 +106,18 @@ impl AssetSystem {
     /// Registers a new loader for that asset type. The loader only has to be registered once and can then be re-used by other systems down the line.
     pub fn add_loader<T: Asset>(
         &mut self,
-        mut loader_fn: impl (FnMut(Vec<u8>, T::LoadSettings) -> anyhow::Result<T>)
-        + Send
-        + Sync
-        + 'static,
+        mut loader_fn: impl (FnMut(Vec<u8>, T::LoadSettings) -> anyhow::Result<T>) + 'static,
     ) {
         let closure: Box<ErasedLoader> = Box::new(move |bytes, settings| {
-            let settings = settings
+            let settings = (*settings)
                 .downcast_ref::<T::LoadSettings>()
-                .expect("Invalid LoadSettings type for asset loader");
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Invalid LoadSettings type for asset loader. Expected: '{:?}'.   Got: '{:?}'",
+                        std::any::type_name::<T::LoadSettings>(),
+                        std::any::type_name_of_val(settings)
+                    )
+                });
 
             let asset = loader_fn(bytes, settings.clone())?;
 
@@ -157,8 +165,8 @@ impl AssetSystem {
         let bytes = bytes.unwrap();
         let hash = hash_bytes(&bytes);
 
-        let erased_settings = Box::new(settings);
-        let asset = (loader)(bytes, &erased_settings);
+        let erased_settings: Box<ErasedSettings> = Box::new(settings);
+        let asset = (loader)(bytes, &*erased_settings);
         if let Err(e) = asset {
             error!("Error while loading asset: {}", e);
             return Err(e);
@@ -166,9 +174,11 @@ impl AssetSystem {
         let asset = asset.unwrap();
 
         let entry = AssetEntry {
+            #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
             type_id: std::any::TypeId::of::<T>(),
             asset,
             source: Some(source),
+            #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
             settings: Some(erased_settings),
             hash,
         };
@@ -203,9 +213,11 @@ impl AssetSystem {
         self.assets.insert(
             asset_id.clone(),
             AssetEntry {
+                #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
                 type_id: std::any::TypeId::of::<T>(),
                 source: None,
                 asset: Box::new(asset),
+                #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
                 settings: None,
                 hash: 0,
             },
@@ -277,7 +289,7 @@ impl AssetSystem {
         let hash = hash_bytes(&bytes);
 
         if hash != entry.hash {
-            let new_asset = (loader)(bytes, prev_settings);
+            let new_asset = (loader)(bytes, &**prev_settings);
             if let Err(e) = new_asset {
                 error!("Error while reloading asset: {:?}", e);
                 return;
