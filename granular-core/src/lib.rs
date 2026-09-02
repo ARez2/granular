@@ -47,7 +47,6 @@ pub mod events {
     pub struct Draw;
 }
 
-#[derive(Debug)]
 enum CustomWinitEvent {
     GraphicsSystemInitialized(graphics::GraphicsState),
 }

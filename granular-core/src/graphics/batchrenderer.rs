@@ -98,8 +98,10 @@ pub struct BatchRenderer {
     white_pixel_handle: TextureHandle,
 
     atlas_bind_group_layout: BindGroupLayout,
+    atlasses_dirty: bool,
     texture_atlasses: Vec<(DynamicTextureAtlas, BindGroup)>,
 }
+#[profiling::all_functions]
 impl BatchRenderer {
     const MAX_QUAD_COUNT: usize = 1000;
     const MAX_VERTEX_COUNT: usize = BatchRenderer::MAX_QUAD_COUNT * 4;
@@ -225,23 +227,27 @@ impl BatchRenderer {
             bytemuck::cast_slice(&self.vertices_to_draw),
         );
 
-        let mut atlas_encoder =
-            context
-                .device
-                .create_command_encoder(&wgpu::wgt::CommandEncoderDescriptor {
-                    label: Some("Atlas command encoder"),
-                });
+        // meaning if we will want to render quads with textures, which havent been rendered to any atlas yet
+        if self.atlasses_dirty {
+            let mut atlas_encoder =
+                context
+                    .device
+                    .create_command_encoder(&wgpu::wgt::CommandEncoderDescriptor {
+                        label: Some("Atlas command encoder"),
+                    });
 
-        {
-            let asset_sys = self.ctx.get::<AssetSystem>();
-            for (atlas, _) in &mut self.texture_atlasses {
-                atlas.rebuild_atlas(
-                    |handle| asset_sys.get(handle).unwrap().texture(),
-                    &mut atlas_encoder,
-                );
+            {
+                let asset_sys = self.ctx.get::<AssetSystem>();
+                for (atlas, _) in &mut self.texture_atlasses {
+                    atlas.rebuild_atlas(
+                        |handle| asset_sys.get(handle).unwrap().texture(),
+                        &mut atlas_encoder,
+                    );
+                }
             }
+            context.queue.submit(Some(atlas_encoder.finish()));
+            self.atlasses_dirty = false;
         }
-        context.queue.submit(Some(atlas_encoder.finish()));
     }
 
     pub(super) fn render_batch_layers(
@@ -250,27 +256,35 @@ impl BatchRenderer {
         layer_range: Range<i32>,
         clear: bool,
     ) {
-        let mut rpass = context
-            .encoder
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("BatchRenderer render pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &context.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: match clear {
-                            true => wgpu::LoadOp::Clear(self.clear_color),
-                            false => wgpu::LoadOp::Load,
-                        },
-                        store: wgpu::StoreOp::Store,
+        #[cfg(feature = "trace")]
+        let prof = context.profiler.lock().unwrap();
+        #[cfg(feature = "trace")]
+        let mut profiler_scope = prof.scope("BatchRenderer render", &mut context.encoder);
+
+        let rpass_desc = wgpu::RenderPassDescriptor {
+            label: Some("BatchRenderer render pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &context.view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: match clear {
+                        true => wgpu::LoadOp::Clear(self.clear_color),
+                        false => wgpu::LoadOp::Load,
                     },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        };
+
+        #[cfg(feature = "trace")]
+        let mut rpass = profiler_scope.scoped_render_pass("main render pass", rpass_desc);
+        #[cfg(not(feature = "trace"))]
+        let mut rpass = context.encoder.begin_render_pass(&rpass_desc);
 
         self.batches
             .iter()
@@ -315,6 +329,7 @@ impl BatchRenderer {
                 }
             }
             if !has_texture {
+                self.atlasses_dirty = true;
                 let texture_size = {
                     let asset_sys = self.ctx.get::<AssetSystem>();
                     let tex = asset_sys.get(handle).unwrap().texture();
@@ -646,6 +661,7 @@ impl GeeseSystem for BatchRenderer {
             white_pixel_handle,
 
             atlas_bind_group_layout: atlas_bgl,
+            atlasses_dirty: false,
             texture_atlasses,
         }
     }

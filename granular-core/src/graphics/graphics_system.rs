@@ -1,6 +1,8 @@
 #![allow(unused)]
 
 use std::sync::Arc;
+#[cfg(feature = "trace")]
+use std::sync::Mutex;
 
 use anyhow::bail;
 use bytemuck_derive::{Pod, Zeroable};
@@ -25,13 +27,14 @@ use crate::{
     utils::*,
 };
 
-#[derive(Debug)]
 pub struct RenderContext {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub frame: SurfaceTexture,
     pub view: TextureView,
     pub encoder: CommandEncoder,
+    #[cfg(feature = "trace")]
+    pub profiler: Arc<Mutex<GpuProfiler>>,
 }
 
 #[repr(C)]
@@ -53,7 +56,6 @@ impl Vertex {
 pub const VERTEX_SIZE: usize = std::mem::size_of::<Vertex>();
 
 /// This holds the main information for the GraphicsBackend. It is being sent out as an event after the async initialization
-#[derive(Debug)]
 pub struct GraphicsState {
     instance: Instance,
     adapter: Adapter,
@@ -61,6 +63,11 @@ pub struct GraphicsState {
     surface: Surface<'static>,
     device: Device,
     queue: Queue,
+
+    #[cfg(feature = "trace")]
+    pub profiler: Arc<Mutex<GpuProfiler>>,
+    #[cfg(feature = "trace")]
+    latest_profiler_results: Option<Vec<GpuTimerQueryResult>>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -138,6 +145,25 @@ impl GraphicsSystem {
             let f = Self::calculate_surface_view_format(&surface_config.format);
             surface_config.view_formats = vec![f];
 
+            #[cfg(feature = "trace")]
+            let profiler = GpuProfiler::new_with_tracy_client(
+                GpuProfilerSettings::default(),
+                adapter.get_info().backend,
+                &device,
+                &queue,
+            )
+            .unwrap_or_else(|err| match err {
+                wgpu_profiler::CreationError::TracyClientNotRunning
+                | wgpu_profiler::CreationError::TracyGpuContextCreationError(_) => {
+                    println!("Failed to connect to Tracy. Continuing without Tracy integration.");
+                    GpuProfiler::new(&device, GpuProfilerSettings::default())
+                        .expect("Failed to create profiler")
+                }
+                _ => {
+                    panic!("Failed to create profiler: {err}");
+                }
+            });
+
             let _ = proxy.send_event(CustomWinitEvent::GraphicsSystemInitialized(GraphicsState {
                 instance,
                 adapter,
@@ -145,6 +171,10 @@ impl GraphicsSystem {
                 surface,
                 device,
                 queue,
+                #[cfg(feature = "trace")]
+                profiler: Arc::new(Mutex::new(profiler)),
+                #[cfg(feature = "trace")]
+                latest_profiler_results: Default::default(),
             }));
         });
     }
@@ -311,6 +341,8 @@ impl GraphicsSystem {
             frame,
             view,
             encoder,
+            #[cfg(feature = "trace")]
+            profiler: state.profiler.clone(),
         });
     }
 
@@ -357,17 +389,40 @@ impl GraphicsSystem {
         panic!("GraphicsSystem is not ready!");
     }
 
-    pub fn present_frame(&mut self, context: RenderContext) {
+    pub fn present_frame(&mut self, mut context: RenderContext) {
         let GraphicsSystemState::Ready(state) = &mut self.state else {
             return;
         };
 
-        state.queue.submit(Some(context.encoder.finish()));
-        self.ctx
-            .get::<WindowSystem>()
-            .window_handle()
-            .pre_present_notify();
-        state.queue.present(context.frame);
+        #[cfg(feature = "trace")]
+        let mut prof_lock = state
+            .profiler
+            .lock()
+            .expect("Nothing should lock the mutex now");
+        #[cfg(feature = "trace")]
+        prof_lock.resolve_queries(&mut context.encoder);
+
+        {
+            profiling::scope!("wgpu queue submit");
+            state.queue.submit(Some(context.encoder.finish()));
+        }
+        {
+            profiling::scope!("wgpu queue present");
+            self.ctx
+                .get::<WindowSystem>()
+                .window_handle()
+                .pre_present_notify();
+            state.queue.present(context.frame);
+        }
+
+        #[cfg(feature = "trace")]
+        {
+            // Signal to the profiler that the frame is finished.
+            prof_lock.end_frame().unwrap();
+            // Query for oldest finished frame (this is almost certainly not the one we just submitted!) and display results in the command line.
+            state.latest_profiler_results =
+                prof_lock.process_finished_frame(state.queue.get_timestamp_period());
+        }
     }
 }
 #[profiling::all_functions]
