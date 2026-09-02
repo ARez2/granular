@@ -140,30 +140,20 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
         let mut buffer = geese::EventBuffer::default().with(events::timing::Tick::<1>);
 
         let now = Instant::now();
-        self.last_ticks.iter_mut().for_each(|(tickrate, last)| {
+        for (tickrate, last) in &mut self.last_ticks {
             if *last + *tickrate < now {
                 *last = now;
-                let tickrate_millis = tickrate.as_millis() as u64;
-                match tickrate_millis {
-                    1 => {
-                        self.ctx.flush().with(events::timing::FixedTick::<1>);
-                    }
-                    16 => {
-                        self.ctx.flush().with(events::timing::FixedTick::<16>);
-                    }
-                    1000 => {
-                        self.ctx.flush().with(events::timing::FixedTick::<1000>);
-                    }
-                    2500 => {
-                        self.ctx.flush().with(events::timing::FixedTick::<2500>);
-                    }
-                    5000 => {
-                        self.ctx.flush().with(events::timing::FixedTick::<5000>);
-                    }
-                    _ => (),
-                };
+
+                match tickrate.as_millis() as u64 {
+                    1 => buffer = buffer.with(events::timing::FixedTick::<1>),
+                    16 => buffer = buffer.with(events::timing::FixedTick::<16>),
+                    1000 => buffer = buffer.with(events::timing::FixedTick::<1000>),
+                    2500 => buffer = buffer.with(events::timing::FixedTick::<2500>),
+                    5000 => buffer = buffer.with(events::timing::FixedTick::<5000>),
+                    _ => {}
+                }
             }
-        });
+        }
 
         if self.frame.is_multiple_of(60) {
             buffer = buffer.with(events::timing::Tick::<60>);

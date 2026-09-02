@@ -9,6 +9,10 @@ members = ["granular-core", "proc_macros", "examples/*"]
 #     "examples/*"
 # ]
 
+[profile.trace]
+inherits = "release"
+debug = 1
+
 [features]
 default = []
 trace = ["granular-core/trace"]

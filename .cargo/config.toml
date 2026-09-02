@@ -1,0 +1,2 @@
+[alias]
+run-testbed-trace = "run -p testbed --profile trace --features trace"

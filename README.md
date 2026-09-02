@@ -19,6 +19,12 @@ cargo watch -s "wasm-pack build examples/testbed --target web --dev"
 cargo run -p testbed
 ```
 
+## Running with profiling
+```
+cargo run-testbed-trace
+```
+(Uses an alias defined in `.cargo/config.toml`)
+
 
 ## Todo
 - ✅ Done: Fix `AssetSystem` for WASM
