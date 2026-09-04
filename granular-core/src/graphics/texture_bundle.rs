@@ -8,7 +8,7 @@ use crate::{assets::Asset, graphics::Texture2D, utils::*};
 #[derive(Debug)]
 pub struct TextureBundle {
     texture: wgpu::Texture,
-    data_layout: TexelCopyBufferLayout,
+    data_layout: Option<TexelCopyBufferLayout>,
     view: TextureView,
     sampler: Sampler,
 }
@@ -21,11 +21,12 @@ impl TextureBundle {
         mut tex_descriptor: TextureDescriptor,
         view_descriptor: &TextureViewDescriptor,
         sampler_descriptor: &SamplerDescriptor,
-        data: &[u8],
-        mut data_layout: TexelCopyBufferLayout,
+        mut data: Option<(&[u8], TexelCopyBufferLayout)>,
     ) -> Self {
         let mut converted_data: Option<Vec<u8>> = None;
-        if let Ok(img) = image::load_from_memory(data) {
+        if let Some((img_data, img_data_layout)) = &mut data
+            && let Ok(img) = image::load_from_memory(img_data)
+        {
             converted_data = crate::graphics::convert_image(&img, tex_descriptor.format).ok();
             let auto_extent = Extent3d {
                 width: img.width(),
@@ -38,7 +39,7 @@ impl TextureBundle {
                     tex_descriptor.size, auto_extent
                 );
                 tex_descriptor.size = auto_extent;
-                data_layout = wgpu::TexelCopyBufferLayout {
+                *img_data_layout = wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(
                         crate::graphics::bytes_per_pixel(tex_descriptor.format).unwrap_or(4)
@@ -56,23 +57,24 @@ impl TextureBundle {
         let view = texture.create_view(view_descriptor);
         let sampler = device.create_sampler(sampler_descriptor);
 
-        let upload_data = converted_data.as_deref().unwrap_or(data);
-
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            upload_data,
-            data_layout,
-            texture.size(),
-        );
+        if let Some((img_data, data_layout)) = data {
+            let upload_data = converted_data.as_deref().unwrap_or(img_data);
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                upload_data,
+                data_layout,
+                texture.size(),
+            );
+        }
 
         Self {
             texture,
-            data_layout,
+            data_layout: data.map(|(d, l)| l),
             view,
             sampler,
         }
@@ -83,7 +85,7 @@ impl TextureBundle {
         queue: &Queue,
         extent: Extent3d,
         filtering: wgpu::FilterMode,
-        data: &[u8],
+        data: Option<&[u8]>,
     ) -> Self {
         let tex_descriptor = wgpu::TextureDescriptor {
             size: extent,
@@ -124,8 +126,7 @@ impl TextureBundle {
             tex_descriptor,
             &view_descriptor,
             &sampler_descriptor,
-            data,
-            data_layout,
+            data.map(|d| (d, data_layout)),
         )
     }
 
@@ -141,7 +142,7 @@ impl TextureBundle {
         &self.texture
     }
 
-    pub fn data_layout(&self) -> TexelCopyBufferLayout {
+    pub fn data_layout(&self) -> Option<TexelCopyBufferLayout> {
         self.data_layout
     }
 

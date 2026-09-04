@@ -158,7 +158,7 @@ impl GeeseSystem for Camera {
             position: IVec2::ZERO,
             angle: 0.0,
             screen_size: Vec2::ONE,
-            scaling_mode: ScalingMode::Keep,
+            scaling_mode: ScalingMode::Stretch,
             zoom: 1.0,
 
             canvas_transform,

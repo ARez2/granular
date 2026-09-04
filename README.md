@@ -29,9 +29,9 @@ cargo run-testbed-trace
 ## Todo
 - ✅ Done: Fix `AssetSystem` for WASM
 - ✅ Done: Fix `BatchRenderer` on WASM (`BINDING_INDEXING` not supported on WASM)
+- ✅ Done: Integrate new compute shader based simulation into granular
+- ✅ Done: Integrate `wgpu_profiler` into rendering
+- ✅ Done: Integrate `include-wgsl-oil` (also for `Vertex`)
 - Dynamically remove textures from `BatchRenderer` texture atlasses
-- Integrate new compute shader based simulation into granular
-- Integrate `wgpu_profiler` into rendering
-- Integrate `include-wgsl-oil` (also for `Vertex`)
 - Low priority: Input system: What about touch gestures?
 

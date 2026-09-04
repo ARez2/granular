@@ -69,19 +69,21 @@ impl TextureAtlas {
                 },
                 ..Default::default()
             },
-            &vec![
-                0u8;
-                width as usize
-                    * height as usize
-                    * crate::graphics::bytes_per_pixel(Self::DEFAULT_FORMAT).unwrap() as usize
-            ],
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(
-                    crate::graphics::bytes_per_pixel(Self::DEFAULT_FORMAT).unwrap_or(4) * width,
-                ),
-                rows_per_image: Some(height),
-            },
+            Some((
+                &vec![
+                    0u8;
+                    width as usize
+                        * height as usize
+                        * crate::graphics::bytes_per_pixel(Self::DEFAULT_FORMAT).unwrap() as usize
+                ],
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(
+                        crate::graphics::bytes_per_pixel(Self::DEFAULT_FORMAT).unwrap_or(4) * width,
+                    ),
+                    rows_per_image: Some(height),
+                },
+            )),
         );
         Self::new_from_existing(atlas_texture, width, height)
     }

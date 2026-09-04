@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["granular-core", "proc_macros", "examples/*"]
+members = ["granular-core", "proc_macros", "examples/*", "simulation"]
 # exclude = [
 #     "examples/*"
 # ]
@@ -19,9 +19,11 @@ trace = ["granular-core/trace"]
 
 [dependencies]
 granular-core = { path = "granular-core" }
+simulation = { path = "simulation" }
 proc_macros.workspace = true
 palette.workspace = true
 wgpu.workspace = true
+glam.workspace = true
 
 
 [workspace.dependencies]
@@ -29,11 +31,18 @@ proc_macros = { path = "proc_macros" }
 geese = "0.3.11"
 log = "0.4.33"
 winit = { version = "*" }
-palette = "0.7.5"
+palette = "0.7.6"
 web-time = "1.1.0"
 wgpu = "30.0.0"
+glam = { version = "0.33.3", features = ["approx", "bytemuck", "encase"] }
 # Profiling:
 profiling = { version = "1.0.18" }
 wgpu-profiler = { version = "0.28.0", features = ["tracy"] }
 # version 0.18.4 ==> Tracy 13.1 
 tracy-client = { version = "0.18.4", features = ["verify"] }
+
+
+include-wgsl-oil = { version = "0.2.9", features = ["encase", "glam"] }
+encase = "0.12.0"
+bytemuck = "1.14.0"
+bytemuck_derive = "1.5.0"

@@ -1,5 +1,4 @@
 use fern::colors::{Color, ColoredLevelConfig};
-use glam::IVec2;
 use granular::prelude::{graphics::GraphicsSystem, *};
 use palette::{Srgba, WithAlpha};
 use winit::keyboard::{KeyCode, ModifiersState};
@@ -70,33 +69,27 @@ impl Game {
         drop(camera);
     }
 
-    fn on_draw(&mut self, _: &events::Draw) {
+    fn on_draw(&mut self, _: &granular::graphics::events::PrepareToRender) {
         let mut renderer = self.ctx.get_mut::<BatchRenderer>();
         renderer.draw_quad(
-            &graphics::Quad {
-                center: IVec2::new(50, 50),
-                size: IVec2::new(200, 200),
-                color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
-                texture: Some(self.texture_handle.clone()),
-            },
+            IVec2::new(50, 50),
+            IVec2::new(50, 50),
+            palette::named::WHITE,
+            Some(self.texture_handle.clone()),
             -2,
         );
         renderer.draw_quad(
-            &graphics::Quad {
-                center: IVec2::new(200, 200),
-                size: IVec2::new(100, 100),
-                color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
-                texture: None,
-            },
+            IVec2::new(200, 200),
+            IVec2::new(25, 25),
+            palette::named::WHITE,
+            None,
             1,
         );
         renderer.draw_quad(
-            &graphics::Quad {
-                center: IVec2::new(40, 300),
-                size: IVec2::new(150, 150),
-                color: Srgba::from_format(palette::named::WHITE.with_alpha(1.0)),
-                texture: Some(self.texture2_handle.clone()),
-            },
+            IVec2::new(40, 300),
+            IVec2::new(50, 50),
+            palette::named::WHITE,
+            Some(self.texture2_handle.clone()),
             0,
         );
     }
@@ -119,6 +112,8 @@ impl GeeseSystem for Game {
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         info!("Game created");
+
+        ctx.raise_event(geese::notify::flush().with(geese::notify::add_system::<Simulation>()));
 
         let mut input = ctx.get_mut::<InputSystem>();
         input.add_action(

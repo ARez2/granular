@@ -27,6 +27,13 @@ use crate::{
     utils::*,
 };
 
+pub mod events {
+    pub struct PrepareToRender {}
+    pub struct Render {}
+    pub struct PostRender {}
+    pub(super) struct RenderingDone {}
+}
+
 pub struct RenderContext {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -36,24 +43,6 @@ pub struct RenderContext {
     #[cfg(feature = "trace")]
     pub profiler: Arc<Mutex<GpuProfiler>>,
 }
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
-pub(crate) struct Vertex {
-    _pos: IVec2,
-    _col: [f32; 4],
-    _tex_coord: Vec2,
-}
-impl Vertex {
-    pub fn new(pos: IVec2, color: [f32; 4], tex_coord: Vec2) -> Self {
-        Self {
-            _pos: pos,
-            _col: color,
-            _tex_coord: tex_coord,
-        }
-    }
-}
-pub const VERTEX_SIZE: usize = std::mem::size_of::<Vertex>();
 
 /// This holds the main information for the GraphicsBackend. It is being sent out as an event after the async initialization
 pub struct GraphicsState {
@@ -80,6 +69,7 @@ enum GraphicsSystemState {
 pub struct GraphicsSystem {
     ctx: GeeseContextHandle<Self>,
     state: GraphicsSystemState,
+    context: Option<RenderContext>,
 }
 #[profiling::all_functions]
 impl GraphicsSystem {
@@ -234,15 +224,17 @@ impl GraphicsSystem {
                         },
                         ..Default::default()
                     },
-                    &bytes,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(
-                            crate::graphics::bytes_per_pixel(settings.format).unwrap_or(4)
-                                * settings.size.width,
-                        ),
-                        rows_per_image: Some(settings.size.height),
-                    },
+                    Some((
+                        &bytes,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(
+                                crate::graphics::bytes_per_pixel(settings.format).unwrap_or(4)
+                                    * settings.size.width,
+                            ),
+                            rows_per_image: Some(settings.size.height),
+                        },
+                    )),
                 ))
             });
         }
@@ -259,8 +251,6 @@ impl GraphicsSystem {
         let GraphicsSystemState::Ready(state) = &mut self.state else {
             return;
         };
-
-        debug!("resize_surface {:?}", new_size);
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -281,10 +271,11 @@ impl GraphicsSystem {
             .configure(&state.device, &state.surface_config);
     }
 
-    pub fn begin_frame(&mut self) -> anyhow::Result<RenderContext> {
+    pub fn begin_frame(&mut self) {
         self.device().poll(wgpu::wgt::PollType::Poll);
         let GraphicsSystemState::Ready(state) = &mut self.state else {
-            bail!("GraphicsSystem is not ready!");
+            error!("GraphicsSystem is not ready!");
+            return;
         };
 
         let window = self.ctx.get::<WindowSystem>().window_handle();
@@ -294,7 +285,8 @@ impl GraphicsSystem {
             CurrentSurfaceTexture::Timeout | CurrentSurfaceTexture::Occluded => {
                 // Try again later
                 window.request_redraw();
-                bail!("Surface got a timeout or is occluded. Try again later.");
+                error!("Surface got a timeout or is occluded. Try again later.");
+                return;
             }
             CurrentSurfaceTexture::Suboptimal(texture) => {
                 drop(texture);
@@ -303,14 +295,16 @@ impl GraphicsSystem {
                     .surface
                     .configure(&state.device, &state.surface_config);
                 window.request_redraw();
-                bail!("Surface isnt optimal. Try again next frame.");
+                error!("Surface isnt optimal. Try again next frame.");
+                return;
             }
             CurrentSurfaceTexture::Outdated => {
                 state
                     .surface
                     .configure(&state.device, &state.surface_config);
                 window.request_redraw();
-                bail!("The surface is outdated. Try again next frame.");
+                error!("The surface is outdated. Try again next frame.");
+                return;
             }
             CurrentSurfaceTexture::Validation => {
                 unreachable!("No error scope registered, so validation errors will panic")
@@ -321,7 +315,8 @@ impl GraphicsSystem {
                     .surface
                     .configure(&state.device, &state.surface_config);
                 window.request_redraw();
-                bail!("The surface has been lost. Try again next frame.");
+                error!("The surface has been lost. Try again next frame.");
+                return;
             }
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
@@ -335,7 +330,7 @@ impl GraphicsSystem {
             .create_command_encoder(&CommandEncoderDescriptor {
                 label: Some("Command encoder"),
             });
-        return Ok(RenderContext {
+        self.context = Some(RenderContext {
             device: state.device.clone(),
             queue: state.queue.clone(),
             frame,
@@ -351,6 +346,25 @@ impl GraphicsSystem {
             return &state.device;
         }
         panic!("GraphicsSystem is not ready!");
+    }
+
+    pub fn render_context(&mut self) -> &mut RenderContext {
+        self.context.as_mut().expect("Context must exist")
+    }
+
+    pub(crate) fn render(&mut self) {
+        if !matches!(self.state, GraphicsSystemState::Ready(_)) || self.context.is_none() {
+            return;
+        }
+        self.ctx.raise_event(
+            geese::notify::flush()
+                .with(geese::notify::flush().with(events::PrepareToRender {}))
+                .with(geese::notify::flush().with(events::Render {}))
+                .with(geese::notify::flush().with(events::PostRender {})),
+        );
+        self.ctx.raise_event(
+            geese::notify::flush().with(geese::notify::flush().with(events::RenderingDone {})),
+        );
     }
 
     pub fn surface_config(&self) -> &SurfaceConfiguration {
@@ -389,40 +403,42 @@ impl GraphicsSystem {
         panic!("GraphicsSystem is not ready!");
     }
 
-    pub fn present_frame(&mut self, mut context: RenderContext) {
-        let GraphicsSystemState::Ready(state) = &mut self.state else {
-            return;
-        };
+    pub fn present_frame(&mut self, _: &events::RenderingDone) {
+        if let GraphicsSystemState::Ready(state) = &mut self.state {
+            let mut context = self.context.take().unwrap();
 
-        #[cfg(feature = "trace")]
-        let mut prof_lock = state
-            .profiler
-            .lock()
-            .expect("Nothing should lock the mutex now");
-        #[cfg(feature = "trace")]
-        prof_lock.resolve_queries(&mut context.encoder);
+            #[cfg(feature = "trace")]
+            let mut prof_lock = state
+                .profiler
+                .lock()
+                .expect("Nothing should lock the mutex now");
+            #[cfg(feature = "trace")]
+            prof_lock.resolve_queries(&mut context.encoder);
 
-        {
-            profiling::scope!("wgpu queue submit");
-            state.queue.submit(Some(context.encoder.finish()));
-        }
-        {
-            profiling::scope!("wgpu queue present");
-            self.ctx
-                .get::<WindowSystem>()
-                .window_handle()
-                .pre_present_notify();
-            state.queue.present(context.frame);
+            {
+                profiling::scope!("wgpu queue submit");
+                state.queue.submit(Some(context.encoder.finish()));
+            }
+            {
+                profiling::scope!("wgpu queue present");
+                self.ctx
+                    .get::<WindowSystem>()
+                    .window_handle()
+                    .pre_present_notify();
+                state.queue.present(context.frame);
+            }
+
+            #[cfg(feature = "trace")]
+            {
+                // Signal to the profiler that the frame is finished.
+                prof_lock.end_frame().unwrap();
+                // Query for oldest finished frame (this is almost certainly not the one we just submitted!) and display results in the command line.
+                state.latest_profiler_results =
+                    prof_lock.process_finished_frame(state.queue.get_timestamp_period());
+            }
         }
 
-        #[cfg(feature = "trace")]
-        {
-            // Signal to the profiler that the frame is finished.
-            prof_lock.end_frame().unwrap();
-            // Query for oldest finished frame (this is almost certainly not the one we just submitted!) and display results in the command line.
-            state.latest_profiler_results =
-                prof_lock.process_finished_frame(state.queue.get_timestamp_period());
-        }
+        self.request_redraw();
     }
 }
 #[profiling::all_functions]
@@ -432,11 +448,13 @@ impl GeeseSystem for GraphicsSystem {
         .with::<WindowSystem>()
         .with::<Mut<AssetSystem>>();
 
+    const EVENT_HANDLERS: EventHandlers<Self> = event_handlers().with(Self::present_frame);
+
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         Self {
             ctx,
-
             state: GraphicsSystemState::Uninitialized,
+            context: None,
         }
     }
 }

@@ -20,25 +20,23 @@ use wgpu::{
 };
 use winit::dpi::PhysicalSize;
 
-use super::graphics_system::{GraphicsSystem, VERTEX_SIZE, Vertex};
-use super::{Camera, TextureBundle};
-use crate::graphics::{
-    RenderContext, Texture2D, TextureHandle, texture_atlas::DynamicTextureAtlas,
+use super::{
+    Camera, RenderContext, Texture2D, TextureBundle, TextureHandle,
+    graphics_system::GraphicsSystem, texture_atlas::DynamicTextureAtlas, vertex::*,
 };
+use crate::graphics::{self, IntoGpuColor};
 use crate::{
     assets::{AssetHandle, AssetSystem},
     utils::*,
 };
 
-pub type QuadTexture = Option<TextureHandle>;
-
 #[derive(Debug, Clone, PartialEq)]
-pub struct Quad {
+struct Quad {
     pub center: IVec2,
     pub size: IVec2,
     /// If there is a texture set, this tints the texture, otherwise the quad will have this color
-    pub color: Srgba,
-    pub texture: QuadTexture,
+    pub color: [f32; 4],
+    pub texture: Option<TextureHandle>,
 }
 impl Eq for Quad {}
 
@@ -66,6 +64,7 @@ impl PartialOrd for BatchQuadEntry {
     }
 }
 
+#[derive(Debug)]
 struct Batch {
     atlas_idx: usize,
     vertices_range: Range<u64>,
@@ -158,7 +157,6 @@ impl BatchRenderer {
             let y = quad_pos.y;
             let w = quad.size.x;
             let h = quad.size.y;
-            let color: [f32; 4] = quad.color.into();
             let quad_tex = quad
                 .texture
                 .clone()
@@ -180,22 +178,22 @@ impl BatchRenderer {
             self.vertices_to_draw.reserve(4);
             self.vertices_to_draw.push(Vertex::new(
                 IVec2::new(x - w, y - h),
-                color,
+                quad.color,
                 atlas_tex_coords_start,
             ));
             self.vertices_to_draw.push(Vertex::new(
                 IVec2::new(x - w, y + h),
-                color,
+                quad.color,
                 Vec2::new(atlas_tex_coords_start.x, atlas_tex_coords_end.y),
             ));
             self.vertices_to_draw.push(Vertex::new(
                 IVec2::new(x + w, y + h),
-                color,
+                quad.color,
                 atlas_tex_coords_end,
             ));
             self.vertices_to_draw.push(Vertex::new(
                 IVec2::new(x + w, y - h),
-                color,
+                quad.color,
                 Vec2::new(atlas_tex_coords_end.x, atlas_tex_coords_start.y),
             ));
 
@@ -217,24 +215,32 @@ impl BatchRenderer {
         });
     }
 
-    pub(super) fn prepare_to_render(&mut self, context: &mut RenderContext) {
+    // if this would be an event handler to PrepareToRender, then the user wouldnt have a way to submit quads before this
+    fn prepare_to_render(&mut self) {
+        if self.quads_to_draw.is_empty() {
+            return;
+        }
         self.create_batches();
 
-        // Write the data from vertices to the vertex buffer
-        context.queue.write_buffer(
-            &self.vertex_buffer,
-            0,
-            bytemuck::cast_slice(&self.vertices_to_draw),
-        );
+        let device = {
+            let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+            let mut context = graphics_sys.render_context();
+
+            // Write the data from vertices to the vertex buffer
+            context.queue.write_buffer(
+                &self.vertex_buffer,
+                0,
+                bytemuck::cast_slice(&self.vertices_to_draw),
+            );
+            context.device.clone()
+        };
 
         // meaning if we will want to render quads with textures, which havent been rendered to any atlas yet
         if self.atlasses_dirty {
             let mut atlas_encoder =
-                context
-                    .device
-                    .create_command_encoder(&wgpu::wgt::CommandEncoderDescriptor {
-                        label: Some("Atlas command encoder"),
-                    });
+                device.create_command_encoder(&wgpu::wgt::CommandEncoderDescriptor {
+                    label: Some("Atlas command encoder"),
+                });
 
             {
                 let asset_sys = self.ctx.get::<AssetSystem>();
@@ -245,17 +251,27 @@ impl BatchRenderer {
                     );
                 }
             }
-            context.queue.submit(Some(atlas_encoder.finish()));
+            {
+                let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+                let mut context = graphics_sys.render_context();
+                context.queue.submit(Some(atlas_encoder.finish()));
+            }
             self.atlasses_dirty = false;
         }
     }
 
-    pub(super) fn render_batch_layers(
-        &mut self,
-        context: &mut RenderContext,
-        layer_range: Range<i32>,
-        clear: bool,
-    ) {
+    fn render_batch_layers(&mut self, _: &graphics::events::Render) {
+        if self.quads_to_draw.is_empty() {
+            return;
+        }
+        self.prepare_to_render();
+
+        let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+        let mut context = graphics_sys.render_context();
+
+        let layer_range = i32::MIN..i32::MAX;
+        let clear = true;
+
         #[cfg(feature = "trace")]
         let prof = context.profiler.lock().unwrap();
         #[cfg(feature = "trace")]
@@ -309,17 +325,24 @@ impl BatchRenderer {
     }
 
     /// Performs clean-up at the end of the frame
-    pub(super) fn end_frame(&mut self, _context: &mut RenderContext) {
+    fn end_frame(&mut self, _: &graphics::events::PostRender) {
         self.batches.clear();
         self.quads_to_draw.clear();
         self.changed_asset_ids.clear();
         self.vertices_to_draw.clear();
     }
 
-    /// Records a new quad that needs to be drawn this frame (low performance cost, even though quad gets cloned)
-    pub fn draw_quad(&mut self, quad: &Quad, layer: i32) {
+    /// Records a new quad that needs to be drawn this frame
+    pub fn draw_quad<C: IntoGpuColor>(
+        &mut self,
+        center: IVec2,
+        size: IVec2,
+        color: C,
+        texture: Option<AssetHandle<TextureBundle>>,
+        layer: i32,
+    ) {
         let mut used_texture_atlas_idx = 0;
-        if let Some(handle) = &quad.texture {
+        if let Some(handle) = &texture {
             let mut has_texture = false;
             for (idx, (atlas, _)) in self.texture_atlasses.iter().enumerate() {
                 if atlas.contains_texture(handle) {
@@ -341,11 +364,29 @@ impl BatchRenderer {
             // the white pixel is always in the first atlas since we add in in the new() function
             used_texture_atlas_idx = 0;
         }
+
+        let rgba: [f32; 4] = color.into_gpu_color();
         self.quads_to_draw.push(std::cmp::Reverse(BatchQuadEntry {
             layer,
             used_texture_atlas_idx,
-            quad: quad.clone(),
+            quad: Quad {
+                center,
+                size,
+                color: rgba,
+                texture,
+            },
         }));
+    }
+
+    /// Notifies the BatchRenderer that this texture has changed it's content and needs to be updated
+    pub fn mark_quad_texture_dirty(&mut self, texture: AssetHandle<TextureBundle>) {
+        for (idx, (atlas, _)) in self.texture_atlasses.iter_mut().enumerate() {
+            if atlas.contains_texture(&texture) {
+                atlas.mark_texture_dirty(texture);
+                self.atlasses_dirty = true;
+                break;
+            }
+        }
     }
 
     fn insert_texture_into_atlas(&mut self, handle: &TextureHandle) -> usize {
@@ -411,15 +452,15 @@ impl BatchRenderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: VERTEX_SIZE as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex, // position        color       tex_coords
-                    attributes: &wgpu::vertex_attr_array![0 => Sint32x2, 1 => Float32x4, 2 => Float32x2],
+                    attributes: &VERTEX_ATTR,
                 })],
-                compilation_options: Default::default()
+                compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader,
                 entry_point: Some("fragment_main"),
                 targets: &[color_state],
-                compilation_options: Default::default()
+                compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 front_face: wgpu::FrontFace::Ccw,
@@ -428,7 +469,7 @@ impl BatchRenderer {
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
-            cache: None
+            cache: None,
         })
     }
 
@@ -542,8 +583,15 @@ impl GeeseSystem for BatchRenderer {
         .with::<Mut<AssetSystem>>()
         .with::<Mut<Camera>>();
 
+    #[cfg(target_arch = "wasm32")]
+    const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
+        .with(Self::render_batch_layers)
+        .with(Self::end_frame);
     #[cfg(not(target_arch = "wasm32"))]
-    const EVENT_HANDLERS: EventHandlers<Self> = event_handlers().with(Self::on_assetchange);
+    const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
+        .with(Self::on_assetchange)
+        .with(Self::render_batch_layers)
+        .with(Self::end_frame);
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
         let graphics_sys = ctx.get::<GraphicsSystem>();
@@ -591,12 +639,14 @@ impl GeeseSystem for BatchRenderer {
                 //mipmap_filter: wgpu::FilterMode::Nearest,
                 ..Default::default()
             },
-            &[255, 255, 255, 255],
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: None,
-            },
+            Some((
+                &[255, 255, 255, 255],
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4),
+                    rows_per_image: None,
+                },
+            )),
         );
 
         let camera = ctx.get::<Camera>();

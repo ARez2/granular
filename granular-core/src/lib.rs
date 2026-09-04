@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use web_time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
+    dpi::PhysicalSize,
     event::{DeviceEvent, DeviceId, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     window::WindowId,
@@ -19,7 +20,7 @@ pub use assets::AssetSystem;
 //mod tick;
 pub mod graphics;
 pub use graphics::{BatchRenderer, Camera};
-use graphics::{Renderer, WindowSystem};
+use graphics::{GraphicsSystem, WindowSystem};
 
 mod filewatcher;
 use filewatcher::FileWatcher;
@@ -27,10 +28,16 @@ use filewatcher::FileWatcher;
 pub mod input_system;
 pub use input_system::{InputAction, InputActionTrigger, InputSystem};
 
-// pub mod simulation;
-// pub use simulation::*;
-
-use crate::graphics::GraphicsSystem;
+pub mod prelude {
+    pub use super::{
+        AssetSystem, BatchRenderer, Camera, GranularEngine,
+        assets::{self, AssetHandle},
+        events,
+        graphics::{self, GraphicsSystem, TextureBundle, TextureBundleLoadSettings, WindowSystem},
+        input_system::*,
+        utils::*,
+    };
+}
 
 pub mod events {
     pub struct Initialized {}
@@ -43,8 +50,6 @@ pub mod events {
         pub struct FixedTick<const N: u64>;
         pub const FIXED_TICKS: [u64; 5] = [5000, 2500, 1000, 16, 1];
     }
-
-    pub struct Draw;
 }
 
 enum CustomWinitEvent {
@@ -58,7 +63,6 @@ enum EngineState {
     Running,
 }
 
-#[derive(Debug)]
 pub struct GranularEngine<AppSystem: GeeseSystem + std::fmt::Debug> {
     ctx: GeeseContext,
     event_loop: Option<EventLoop<CustomWinitEvent>>,
@@ -171,6 +175,20 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
 
         self.ctx.flush().with_buffer(buffer);
     }
+
+    /// Resizes the surface with the new_size
+    fn resize(&mut self, new_size: PhysicalSize<u32>) {
+        {
+            let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+            graphics_sys.resize_surface(new_size);
+            #[cfg(target_os = "macos")]
+            graphics_sys.request_redraw();
+        }
+        {
+            let mut camera = self.ctx.get_mut::<Camera>();
+            camera.set_screen_size((new_size.width, new_size.height));
+        }
+    }
 }
 #[profiling::all_functions]
 // Implement the winit::ApplicationHandler trait
@@ -199,7 +217,6 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
 
                 self.ctx
                     .flush()
-                    .with(geese::notify::add_system::<Renderer>())
                     .with(geese::notify::add_system::<AssetSystem>())
                     // .with(geese::notify::add_system::<Simulation>())
                     .with(geese::notify::add_system::<AppSystem>())
@@ -208,8 +225,8 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
                 info!("Everything is initialized.");
 
                 {
-                    let win = self.ctx.get::<WindowSystem>().window_handle();
-                    self.ctx.get_mut::<Renderer>().resize(win.inner_size());
+                    let new_size = self.ctx.get::<WindowSystem>().window_handle().inner_size();
+                    self.resize(new_size);
                 }
             }
         }
@@ -249,20 +266,22 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {
-                let mut renderer = self.ctx.get_mut::<Renderer>();
-                renderer.resize(new_size);
-                #[cfg(target_os = "macos")]
-                graphics.request_redraw();
+                self.resize(new_size);
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.update_modifiers(&modifiers);
             }
             WindowEvent::RedrawRequested => {
-                self.ctx.flush().with(events::Draw);
-                let mut renderer = self.ctx.get_mut::<Renderer>();
-                renderer.render();
-                renderer.request_redraw();
+                {
+                    let camera = self.ctx.get::<Camera>();
+                    camera.write_canvas_transform_buffer();
+                }
+                {
+                    let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+                    graphics_sys.begin_frame();
+                    graphics_sys.render();
+                }
 
                 profiling::finish_frame!();
             }

@@ -17,7 +17,6 @@ winit.workspace = true
 
 fern = { version = "0.7.1", features = ["colored"] }
 regex = "1.10.3"
-glam = { version = "0.25.0", features = ["approx"] }
 time = { version = "0.3.55", features = ["local-offset"] }
 
 [features]
