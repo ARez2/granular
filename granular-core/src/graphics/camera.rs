@@ -106,7 +106,7 @@ impl Camera {
             ScalingMode::Keep => 1.0,
             ScalingMode::Stretch => self.screen_size.y / self.screen_size.x,
         };
-        self.ortho_proj = Mat4::orthographic_rh_gl(
+        self.ortho_proj = glam::camera::rh::proj::opengl::orthographic(
             self.left * aspect_ratio,  // left
             self.right * aspect_ratio, // right
             self.bottom,               // bottom
@@ -136,7 +136,8 @@ impl GeeseSystem for Camera {
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
         let scale = Vec2::ONE;
         let (left, right, top, bottom, near, far) = (-1.0, 1.0, 1.0, -1.0, -1.0, 1.0);
-        let ortho_proj = Mat4::orthographic_rh_gl(left, right, bottom, top, near, far);
+        let ortho_proj =
+            glam::camera::rh::proj::opengl::orthographic(left, right, bottom, top, near, far);
         let view = Mat4::IDENTITY;
         let canvas_transform = ortho_proj * view;
 
