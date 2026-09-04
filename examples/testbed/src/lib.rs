@@ -72,21 +72,15 @@ impl Game {
     fn on_draw(&mut self, _: &granular::graphics::events::PrepareToRender) {
         let mut renderer = self.ctx.get_mut::<BatchRenderer>();
         renderer.draw_quad(
-            IVec2::new(50, 50),
+            IVec2::new(0, 250),
             IVec2::new(50, 50),
             palette::named::WHITE,
             Some(self.texture_handle.clone()),
             -2,
         );
+
         renderer.draw_quad(
-            IVec2::new(200, 200),
-            IVec2::new(25, 25),
-            palette::named::WHITE,
-            None,
-            1,
-        );
-        renderer.draw_quad(
-            IVec2::new(40, 300),
+            IVec2::new(50, 300),
             IVec2::new(50, 50),
             palette::named::WHITE,
             Some(self.texture2_handle.clone()),
