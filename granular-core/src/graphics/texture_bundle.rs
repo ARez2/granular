@@ -74,7 +74,7 @@ impl TextureBundle {
 
         Self {
             texture,
-            data_layout: data.map(|(d, l)| l),
+            data_layout: data.map(|(_d, l)| l),
             view,
             sampler,
         }
