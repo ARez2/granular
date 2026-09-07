@@ -456,7 +456,7 @@ impl BatchRenderer {
                     Some(&self.atlas_bind_group_layout),
                 ],
                 asset_sys.get(&self.shader_handle).unwrap(),
-                graphics_sys.get_surface_view_format(),
+                graphics_sys.get_game_view_format(),
             );
         } else {
             self.changed_asset_ids.insert(event.asset_id);
@@ -735,7 +735,7 @@ impl GeeseSystem for BatchRenderer {
             graphics_sys.device(),
             &[Some(&globals_bgl), Some(&atlas_bgl)],
             ctx.get::<AssetSystem>().get(&shader_handle).unwrap(),
-            graphics_sys.get_surface_view_format(),
+            graphics_sys.get_game_view_format(),
         );
         let screen_size = IVec2::new(
             graphics_sys.surface_config().width as i32,

@@ -200,12 +200,20 @@ impl GraphicsSystem {
             let mut asset_sys = self.ctx.get_mut::<AssetSystem>();
             // the generic here is technically optional but its clearer this way
             asset_sys.add_loader::<wgpu::ShaderModule>(move |bytes, _settings| {
-                Ok(dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+                let scope = dev.push_error_scope(wgpu::ErrorFilter::Validation);
+
+                let module = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: None,
                     source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(String::from_utf8(
                         bytes,
                     )?)),
-                }))
+                });
+
+                if pollster::block_on(scope.pop()).is_some() {
+                    return Err(anyhow::anyhow!("Error while reloading asset!"));
+                }
+
+                Ok(module)
             });
 
             asset_sys.add_loader::<TextureBundle>(move |bytes, settings| {
@@ -265,12 +273,13 @@ impl GraphicsSystem {
     fn create_game_render_target(
         device: &Device,
         queue: &Queue,
-        format: wgpu::TextureFormat,
+        mut format: wgpu::TextureFormat,
         game_resolution: LogicalSize<u32>,
     ) -> TextureBundle {
+        format = format.add_srgb_suffix();
         TextureBundle::new(
-            &device,
-            &queue,
+            device,
+            queue,
             "Game render target",
             wgpu::TextureDescriptor {
                 label: Some("Game render target desc"),
@@ -557,6 +566,20 @@ impl GraphicsSystem {
     pub fn get_surface_view_format(&self) -> wgpu::TextureFormat {
         if let GraphicsSystemState::Ready(state) = &self.state {
             return Self::calculate_surface_view_format(&state.surface_config.format);
+        }
+        panic!("GraphicsSystem is not ready!");
+    }
+
+    pub fn get_game_view_format(&self) -> wgpu::TextureFormat {
+        if let GraphicsSystemState::Ready(state) = &self.state {
+            return self
+                .ctx
+                .get::<AssetSystem>()
+                .get(self.game_texture_handle.as_ref().unwrap())
+                .unwrap()
+                .view()
+                .texture()
+                .format();
         }
         panic!("GraphicsSystem is not ready!");
     }

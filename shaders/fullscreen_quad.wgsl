@@ -1,4 +1,4 @@
-@export struct Params {
+struct Params {
     surface_size: vec2f,
     time: f32,
     _pad: f32
@@ -136,6 +136,13 @@ fn topologize(noise: f32) -> f32 {
            smoothFloor * 0.75 / 11.0;
 }
 
+fn srgb_to_linear(c: vec3f) -> vec3f {
+    return select(
+        c / 12.92,
+        pow((c + 0.055) / 1.055, vec3f(2.4)),
+        c > vec3f(0.04045)
+    );
+}
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4f {
@@ -184,8 +191,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4f {
 
 
     let color = mix(
-        vec3f(0.11),
-        vec3f(0.18),
+        srgb_to_linear(vec3f(0.11)),
+        srgb_to_linear(vec3f(0.18)),
         weight
     );
 

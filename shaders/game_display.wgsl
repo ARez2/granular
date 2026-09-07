@@ -1,4 +1,4 @@
-@export struct Params {
+struct Params {
     // xy = position, zw = size
     viewport_rect: vec4f,
     surface_size: vec2f,

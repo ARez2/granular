@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use encase::UniformBuffer;
+use encase::{ShaderType, UniformBuffer};
 use glam::{IVec4, Vec2, Vec4};
 use wgpu::{BindGroup, BindGroupLayout, Device, RenderPipeline, ShaderModule};
 
@@ -11,11 +11,18 @@ use crate::{
     utils::*,
 };
 
-#[include_wgsl_oil::include_wgsl_oil("../../../shaders/game_display.wgsl")]
-pub mod display_shader {}
+#[derive(Debug, Clone, Copy, ShaderType)]
+struct DisplayParams {
+    viewport_rect: Vec4,
+    surface_size: Vec2,
+}
 
-#[include_wgsl_oil::include_wgsl_oil("../../../shaders/fullscreen_quad.wgsl")]
-pub mod background_shader {}
+#[derive(Debug, Clone, Copy, ShaderType)]
+struct BackgroundParams {
+    surface_size: Vec2,
+    time: f32,
+    _pad: f32,
+}
 
 pub(crate) struct GameRenderer {
     ctx: GeeseContextHandle<Self>,
@@ -24,15 +31,15 @@ pub(crate) struct GameRenderer {
     display_pipeline: RenderPipeline,
     params_bind_group: (BindGroup, BindGroupLayout),
     game_tex_bind_group: (BindGroup, BindGroupLayout),
-    display_params: display_shader::types::Params,
-    display_params_bytes: [u8; size_of::<display_shader::types::Params>()],
+    display_params: DisplayParams,
+    display_params_bytes: [u8; size_of::<DisplayParams>()],
     display_params_buffer: wgpu::Buffer,
 
     bg_shader_handle: AssetHandle<ShaderModule>,
     bg_pipeline: RenderPipeline,
     bg_params_bind_group: (BindGroup, BindGroupLayout),
-    bg_params: background_shader::types::Params,
-    bg_params_bytes: [u8; size_of::<background_shader::types::Params>()],
+    bg_params: BackgroundParams,
+    bg_params_bytes: [u8; size_of::<BackgroundParams>()],
     bg_params_buffer: wgpu::Buffer,
 }
 impl GameRenderer {
@@ -59,7 +66,7 @@ impl GameRenderer {
         let context = graphics_sys.render_context();
 
         {
-            self.bg_params = background_shader::types::Params {
+            self.bg_params = BackgroundParams {
                 surface_size: Vec2::new(surface_size.width as f32, surface_size.height as f32),
                 time,
                 _pad: 0.0,
@@ -101,7 +108,7 @@ impl GameRenderer {
             rpass.draw(0..6, 0..1);
         }
         {
-            self.display_params = display_shader::types::Params {
+            self.display_params = DisplayParams {
                 viewport_rect,
                 surface_size: Vec2::new(surface_size.width as f32, surface_size.height as f32),
             };
@@ -231,24 +238,14 @@ impl GeeseSystem for GameRenderer {
         .with(Self::on_assetchange);
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
-        let display_shader = {
-            let graphics_sys = ctx.get::<GraphicsSystem>();
-            let device = graphics_sys.device();
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("GameRenderer display shader"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(display_shader::SOURCE)),
-            })
-        };
-        let display_shader_handle = ctx.get_mut::<AssetSystem>().register(display_shader);
-        let bg_shader = {
-            let graphics_sys = ctx.get::<GraphicsSystem>();
-            let device = graphics_sys.device();
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("GameRenderer background shader"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(background_shader::SOURCE)),
-            })
-        };
-        let bg_shader_handle = ctx.get_mut::<AssetSystem>().register(bg_shader);
+        let display_shader_handle = ctx
+            .get_mut::<AssetSystem>()
+            .load(asset_source!("../shaders/game_display.wgsl"), ())
+            .unwrap();
+        let bg_shader_handle = ctx
+            .get_mut::<AssetSystem>()
+            .load(asset_source!("../shaders/fullscreen_quad.wgsl"), ())
+            .unwrap();
 
         let graphics_sys = ctx.get::<GraphicsSystem>();
         let device = graphics_sys.device();
@@ -264,11 +261,11 @@ impl GeeseSystem for GameRenderer {
         .as_vec4();
         let surface_size = graphics_sys.get_surface_resolution();
 
-        let display_params = display_shader::types::Params {
+        let display_params = DisplayParams {
             viewport_rect,
             surface_size: Vec2::new(surface_size.width as f32, surface_size.height as f32),
         };
-        let mut display_params_bytes = [0u8; size_of::<display_shader::types::Params>()];
+        let mut display_params_bytes = [0u8; size_of::<DisplayParams>()];
         let display_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("GameRenderer display Params buffer"),
             size: display_params_bytes.len() as u64,
@@ -329,12 +326,12 @@ impl GeeseSystem for GameRenderer {
             graphics_sys.get_surface_view_format(),
         );
 
-        let bg_params = background_shader::types::Params {
+        let bg_params = BackgroundParams {
             surface_size: Vec2::new(surface_size.width as f32, surface_size.height as f32),
             time: 0.0,
             _pad: 0.0,
         };
-        let mut bg_params_bytes = [0u8; size_of::<background_shader::types::Params>()];
+        let mut bg_params_bytes = [0u8; size_of::<BackgroundParams>()];
         let bg_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("GameRenderer background Params buffer"),
             size: bg_params_bytes.len() as u64,
