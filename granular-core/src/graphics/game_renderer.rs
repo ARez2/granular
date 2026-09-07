@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use encase::{ShaderType, UniformBuffer};
 use glam::{IVec4, Vec2, Vec4};
 use wgpu::{BindGroup, BindGroupLayout, Device, RenderPipeline, ShaderModule};

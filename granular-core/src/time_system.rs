@@ -2,7 +2,7 @@ use crate::utils::*;
 use web_time::{Duration, Instant};
 
 pub struct TimeSystem {
-    ctx: GeeseContextHandle<Self>,
+    _ctx: GeeseContextHandle<Self>,
     engine_start: Instant,
     last_frame: Instant,
 }
@@ -22,7 +22,7 @@ impl TimeSystem {
 impl GeeseSystem for TimeSystem {
     fn new(ctx: GeeseContextHandle<Self>) -> Self {
         Self {
-            ctx,
+            _ctx: ctx,
             engine_start: Instant::now(),
             last_frame: Instant::now(),
         }
