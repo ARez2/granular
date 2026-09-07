@@ -1,6 +1,9 @@
 use fern::colors::{Color, ColoredLevelConfig};
 use granular::prelude::*;
-use winit::keyboard::{KeyCode, ModifiersState};
+use winit::{
+    dpi::LogicalSize,
+    keyboard::{KeyCode, ModifiersState},
+};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -16,7 +19,7 @@ pub fn run_wasm() -> Result<(), wasm_bindgen::JsValue> {
 
 pub fn run() {
     set_up_logging();
-    let engine = GranularEngine::<Game>::new();
+    let engine = GranularEngine::<Game>::new(LogicalSize::new(640, 480));
     engine.run();
 }
 
@@ -62,11 +65,12 @@ impl Game {
         drop(input);
         let mut camera = self.ctx.get_mut::<Camera>();
         camera.translate(vector * 10);
+        camera.set_bottomleft_position(IVec2::new(0, 0));
         let _pos = camera.position();
         drop(camera);
     }
 
-    fn on_draw(&mut self, _: &granular::graphics::events::PrepareToRender) {
+    fn on_draw(&mut self, _: &granular::graphics::events::RecordGameRenderingCommands) {
         let mut renderer = self.ctx.get_mut::<BatchRenderer>();
         renderer.draw_quad_with_center(
             IVec2::new(0, 0),

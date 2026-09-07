@@ -220,7 +220,6 @@ impl BatchRenderer {
         });
     }
 
-    // if this would be an event handler to PrepareToRender, then the user wouldnt have a way to submit quads before this
     fn prepare_to_render(&mut self) {
         if self.quads_to_draw.is_empty() {
             return;
@@ -265,7 +264,11 @@ impl BatchRenderer {
         }
     }
 
-    fn render_batch_layers(&mut self, _: &graphics::events::Render) {
+    fn on_game_render(&mut self, _: &graphics::events::RenderGame) {
+        self.render_batch_layers();
+    }
+
+    fn render_batch_layers(&mut self) {
         if self.quads_to_draw.is_empty() {
             return;
         }
@@ -329,8 +332,12 @@ impl BatchRenderer {
             });
     }
 
+    fn on_game_render_done(&mut self, _: &graphics::events::GameRenderingDone) {
+        self.end_frame();
+    }
+
     /// Performs clean-up at the end of the frame
-    fn end_frame(&mut self, _: &graphics::events::PostRender) {
+    fn end_frame(&mut self) {
         self.batches.clear();
         self.quads_to_draw.clear();
         self.changed_asset_ids.clear();
@@ -626,13 +633,14 @@ impl GeeseSystem for BatchRenderer {
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::render_batch_layers)
         .with(Self::on_resize)
-        .with(Self::end_frame);
+        .with(Self::on_game_render)
+        .with(Self::on_game_render_done);
     #[cfg(not(target_arch = "wasm32"))]
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::on_assetchange)
         .with(Self::on_resize)
-        .with(Self::render_batch_layers)
-        .with(Self::end_frame);
+        .with(Self::on_game_render)
+        .with(Self::on_game_render_done);
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
         let graphics_sys = ctx.get::<GraphicsSystem>();

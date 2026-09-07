@@ -38,7 +38,7 @@ pub struct Simulation {
     display_tex_handle: AssetHandle<TextureBundle>,
 }
 impl Simulation {
-    fn update(&mut self, _: &granular_core::graphics::events::PrepareToRender) {
+    fn update(&mut self, _: &granular_core::graphics::events::RecordGameRenderingCommands) {
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         let context = graphics_sys.render_context();
 

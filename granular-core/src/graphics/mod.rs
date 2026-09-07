@@ -22,6 +22,9 @@ pub use camera::Camera;
 mod batchrenderer;
 pub use batchrenderer::BatchRenderer;
 
+mod game_renderer;
+pub(crate) use game_renderer::GameRenderer;
+
 // mod simulation_renderer;
 // pub use simulation_renderer::SimulationRenderer;
 

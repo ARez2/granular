@@ -15,7 +15,7 @@ use wgpu::{
 #[cfg(feature = "trace")]
 use wgpu_profiler::{GpuProfiler, GpuProfilerSettings, GpuTimerQueryResult};
 use winit::{
-    dpi::PhysicalSize,
+    dpi::{LogicalSize, PhysicalSize},
     event_loop::{ActiveEventLoop, EventLoopProxy},
     window::Window,
 };
@@ -23,21 +23,24 @@ use winit::{
 use super::WindowSystem;
 use crate::{
     AssetSystem, CustomWinitEvent,
-    graphics::{Texture2D, TextureBundle},
+    graphics::{Texture2D, TextureBundle, TextureHandle},
     utils::*,
 };
 
 pub mod events {
-    pub struct PrepareToRender {}
-    pub struct Render {}
-    pub struct PostRender {}
-    pub(super) struct RenderingDone {}
+    pub struct RecordGameRenderingCommands {}
+    pub struct RenderGame {}
+    pub struct GameRenderingDone {}
+    pub(crate) struct DisplayGameRender {}
+    pub struct RecordUiRenderingCommands {}
+    pub struct RenderUi {}
+    pub(crate) struct UiRenderingDone {}
 }
 
 pub struct RenderContext {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    pub frame: SurfaceTexture,
+    frame: SurfaceTexture,
     pub view: TextureView,
     pub encoder: CommandEncoder,
     #[cfg(feature = "trace")]
@@ -70,23 +73,27 @@ pub struct GraphicsSystem {
     ctx: GeeseContextHandle<Self>,
     state: GraphicsSystemState,
     context: Option<RenderContext>,
+    game_resolution: LogicalSize<u32>,
+    game_texture_handle: Option<TextureHandle>,
 }
 #[profiling::all_functions]
 impl GraphicsSystem {
-    pub fn init(&mut self, event_loop: &ActiveEventLoop, proxy: EventLoopProxy<CustomWinitEvent>) {
+    pub(crate) fn init(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        proxy: EventLoopProxy<CustomWinitEvent>,
+        game_resolution: LogicalSize<u32>,
+    ) {
         if !matches!(self.state, GraphicsSystemState::Uninitialized) {
             return;
         }
         self.state = GraphicsSystemState::Loading;
+        self.game_resolution = game_resolution;
 
         let window_sys = self.ctx.get::<WindowSystem>();
         let window = window_sys.window_handle();
         drop(window_sys);
         let display_handle = event_loop.owned_display_handle();
-
-        let mut size = window.inner_size();
-        size.width = size.width.max(1);
-        size.height = size.height.max(1);
 
         let mut executor = self.ctx.get_mut::<FutureExecutor>();
         executor.spawn_oneshot(async move {
@@ -129,7 +136,11 @@ impl GraphicsSystem {
                 .expect("Failed to create device");
 
             let mut surface_config = surface
-                .get_default_config(&adapter, size.width, size.height)
+                .get_default_config(
+                    &adapter,
+                    window.inner_size().width,
+                    window.inner_size().height,
+                )
                 .unwrap();
             surface_config.present_mode = wgpu::PresentMode::AutoNoVsync;
             let f = Self::calculate_surface_view_format(&surface_config.format);
@@ -154,23 +165,26 @@ impl GraphicsSystem {
                 }
             });
 
-            let _ = proxy.send_event(CustomWinitEvent::GraphicsSystemInitialized(GraphicsState {
-                instance,
-                adapter,
-                surface_config,
-                surface,
-                device,
-                queue,
-                #[cfg(feature = "trace")]
-                profiler: Arc::new(Mutex::new(profiler)),
-                #[cfg(feature = "trace")]
-                latest_profiler_results: Default::default(),
-            }));
+            let _ = proxy.send_event(CustomWinitEvent::GraphicsSystemInitialized {
+                state: GraphicsState {
+                    instance,
+                    adapter,
+                    surface_config,
+                    surface,
+                    device,
+                    queue,
+                    #[cfg(feature = "trace")]
+                    profiler: Arc::new(Mutex::new(profiler)),
+                    #[cfg(feature = "trace")]
+                    latest_profiler_results: Default::default(),
+                },
+            });
         });
     }
 
-    pub fn initialize_callback(&mut self, state: GraphicsState) {
+    pub(crate) fn initialize_callback(&mut self, state: GraphicsState) {
         self.state = GraphicsSystemState::Ready(state);
+        self.set_game_resolution(self.game_resolution);
 
         let window_sys = self.ctx.get::<WindowSystem>();
         let window_size = window_sys.window_handle().inner_size();
@@ -240,11 +254,93 @@ impl GraphicsSystem {
         }
     }
 
-    pub fn request_redraw(&self) {
+    pub(crate) fn request_redraw(&self) {
         self.ctx
             .get::<WindowSystem>()
             .window_handle()
             .request_redraw();
+    }
+
+    /// Creates a new TextureBundle which the game will render to
+    fn create_game_render_target(
+        device: &Device,
+        queue: &Queue,
+        format: wgpu::TextureFormat,
+        game_resolution: LogicalSize<u32>,
+    ) -> TextureBundle {
+        TextureBundle::new(
+            &device,
+            &queue,
+            "Game render target",
+            wgpu::TextureDescriptor {
+                label: Some("Game render target desc"),
+                size: wgpu::Extent3d {
+                    width: game_resolution.width,
+                    height: game_resolution.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            &wgpu::TextureViewDescriptor::default(),
+            &wgpu::SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                ..Default::default()
+            },
+            None,
+        )
+    }
+
+    pub fn get_game_render_target(&self) -> TextureHandle {
+        self.game_texture_handle.clone().expect("Should exist")
+    }
+
+    pub fn get_surface_resolution(&self) -> PhysicalSize<u32> {
+        if let GraphicsSystemState::Ready(state) = &self.state {
+            return PhysicalSize::new(state.surface_config.width, state.surface_config.height);
+        }
+        panic!("GraphicsSystem is not ready!");
+    }
+
+    /// Gets the resolution at which the game will render at. This resolution will then be scaled to the display resolution using the camera
+    pub fn get_game_resolution(&self) -> LogicalSize<u32> {
+        self.game_resolution
+    }
+
+    /// Sets the resolution at which the game will render at. This resolution will then be scaled to the display resolution using the camera
+    pub fn set_game_resolution(&mut self, mut game_resolution: LogicalSize<u32>) {
+        game_resolution = game_resolution.max(LogicalSize::new(1, 1));
+
+        self.game_resolution = game_resolution;
+        let GraphicsSystemState::Ready(state) = &mut self.state else {
+            return;
+        };
+        let mut texture = None;
+        if let GraphicsSystemState::Ready(state) = &mut self.state {
+            texture = Some(Self::create_game_render_target(
+                &state.device,
+                &state.queue,
+                state.surface_config.format,
+                game_resolution,
+            ));
+        }
+        if let Some(tex) = texture {
+            let handle = {
+                let mut asset_sys = self.ctx.get_mut::<AssetSystem>();
+                asset_sys.register(tex)
+            };
+            self.game_texture_handle = Some(handle);
+        }
     }
 
     pub fn resize_surface(&mut self, new_size: PhysicalSize<u32>) {
@@ -271,7 +367,7 @@ impl GraphicsSystem {
             .configure(&state.device, &state.surface_config);
     }
 
-    pub fn begin_frame(&mut self) {
+    pub(crate) fn begin_frame(&mut self, existing_ctx: Option<RenderContext>) {
         self.device().poll(wgpu::wgt::PollType::Poll);
         let GraphicsSystemState::Ready(state) = &mut self.state else {
             error!("GraphicsSystem is not ready!");
@@ -280,65 +376,84 @@ impl GraphicsSystem {
 
         let window = self.ctx.get::<WindowSystem>().window_handle();
 
-        let frame = match state.surface.get_current_texture() {
-            CurrentSurfaceTexture::Success(frame) => frame,
-            CurrentSurfaceTexture::Timeout | CurrentSurfaceTexture::Occluded => {
-                // Try again later
-                window.request_redraw();
-                error!("Surface got a timeout or is occluded. Try again later.");
-                return;
-            }
-            CurrentSurfaceTexture::Suboptimal(texture) => {
-                drop(texture);
-
-                state
-                    .surface
-                    .configure(&state.device, &state.surface_config);
-                window.request_redraw();
-                error!("Surface isnt optimal. Try again next frame.");
-                return;
-            }
-            CurrentSurfaceTexture::Outdated => {
-                state
-                    .surface
-                    .configure(&state.device, &state.surface_config);
-                window.request_redraw();
-                error!("The surface is outdated. Try again next frame.");
-                return;
-            }
-            CurrentSurfaceTexture::Validation => {
-                unreachable!("No error scope registered, so validation errors will panic")
-            }
-            CurrentSurfaceTexture::Lost => {
-                state.surface = state.instance.create_surface(window.clone()).unwrap();
-                state
-                    .surface
-                    .configure(&state.device, &state.surface_config);
-                window.request_redraw();
-                error!("The surface has been lost. Try again next frame.");
-                return;
-            }
-        };
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
-            format: Some(Self::calculate_surface_view_format(
-                &state.surface_config.format,
-            )),
-            ..Default::default()
-        });
-        let encoder = state
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor {
-                label: Some("Command encoder"),
+        if let Some(ctx) = existing_ctx {
+            let frame = ctx.frame;
+            let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(Self::calculate_surface_view_format(
+                    &state.surface_config.format,
+                )),
+                ..Default::default()
             });
-        self.context = Some(RenderContext {
-            device: state.device.clone(),
-            queue: state.queue.clone(),
-            frame,
-            view,
-            encoder,
-            #[cfg(feature = "trace")]
-            profiler: state.profiler.clone(),
-        });
+            self.context = Some(RenderContext {
+                device: ctx.device,
+                queue: ctx.queue,
+                frame,
+                view,
+                encoder: ctx.encoder,
+                #[cfg(feature = "trace")]
+                profiler: ctx.profiler,
+            });
+        } else {
+            let frame = match state.surface.get_current_texture() {
+                CurrentSurfaceTexture::Success(frame) => frame,
+                CurrentSurfaceTexture::Timeout | CurrentSurfaceTexture::Occluded => {
+                    // Try again later
+                    window.request_redraw();
+                    error!("Surface got a timeout or is occluded. Try again later.");
+                    return;
+                }
+                CurrentSurfaceTexture::Suboptimal(texture) => {
+                    drop(texture);
+
+                    state
+                        .surface
+                        .configure(&state.device, &state.surface_config);
+                    window.request_redraw();
+                    error!("Surface isnt optimal. Try again next frame.");
+                    return;
+                }
+                CurrentSurfaceTexture::Outdated => {
+                    state
+                        .surface
+                        .configure(&state.device, &state.surface_config);
+                    window.request_redraw();
+                    error!("The surface is outdated. Try again next frame.");
+                    return;
+                }
+                CurrentSurfaceTexture::Validation => {
+                    unreachable!("No error scope registered, so validation errors will panic")
+                }
+                CurrentSurfaceTexture::Lost => {
+                    state.surface = state.instance.create_surface(window.clone()).unwrap();
+                    state
+                        .surface
+                        .configure(&state.device, &state.surface_config);
+                    window.request_redraw();
+                    error!("The surface has been lost. Try again next frame.");
+                    return;
+                }
+            };
+            let asset_sys = self.ctx.get::<AssetSystem>();
+            let tex = asset_sys
+                .get(self.game_texture_handle.as_ref().unwrap())
+                .unwrap();
+            let view = tex.view().clone();
+            let encoder = state
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor {
+                    label: Some("Command encoder"),
+                });
+
+            self.context = Some(RenderContext {
+                device: state.device.clone(),
+                queue: state.queue.clone(),
+                frame,
+                view,
+                encoder,
+                #[cfg(feature = "trace")]
+                profiler: state.profiler.clone(),
+            });
+        }
     }
 
     pub fn device(&self) -> &Device {
@@ -352,19 +467,76 @@ impl GraphicsSystem {
         self.context.as_mut().expect("Context must exist")
     }
 
-    pub(crate) fn render(&mut self) {
+    pub(crate) fn start_rendering(&mut self) {
+        self.begin_frame(None);
         if !matches!(self.state, GraphicsSystemState::Ready(_)) || self.context.is_none() {
             return;
         }
         self.ctx.raise_event(
             geese::notify::flush()
-                .with(geese::notify::flush().with(events::PrepareToRender {}))
-                .with(geese::notify::flush().with(events::Render {}))
-                .with(geese::notify::flush().with(events::PostRender {})),
+                .with(geese::notify::flush().with(events::RecordGameRenderingCommands {}))
+                .with(geese::notify::flush().with(events::RenderGame {})),
         );
         self.ctx.raise_event(
-            geese::notify::flush().with(geese::notify::flush().with(events::RenderingDone {})),
+            geese::notify::flush().with(geese::notify::flush().with(events::GameRenderingDone {})),
         );
+        self.ctx.raise_event(
+            geese::notify::flush().with(geese::notify::flush().with(events::DisplayGameRender {})),
+        );
+    }
+
+    fn finish_game_render(&mut self, _: &events::GameRenderingDone) {
+        let ctx = self.context.take();
+        self.begin_frame(ctx);
+    }
+
+    fn display_game_render(&mut self, _: &events::DisplayGameRender) {
+        self.ctx.raise_event(
+            geese::notify::flush()
+                .with(geese::notify::flush().with(events::RecordUiRenderingCommands {}))
+                .with(geese::notify::flush().with(events::RenderUi {})),
+        );
+        self.ctx.raise_event(
+            geese::notify::flush().with(geese::notify::flush().with(events::UiRenderingDone {})),
+        );
+    }
+
+    fn finish_ui_render(&mut self, _: &events::UiRenderingDone) {
+        if let GraphicsSystemState::Ready(state) = &mut self.state {
+            let mut context = self.context.take().unwrap();
+
+            #[cfg(feature = "trace")]
+            let mut prof_lock = state
+                .profiler
+                .lock()
+                .expect("Nothing should lock the mutex now");
+            #[cfg(feature = "trace")]
+            prof_lock.resolve_queries(&mut context.encoder);
+
+            {
+                profiling::scope!("wgpu queue submit");
+                state.queue.submit(Some(context.encoder.finish()));
+            }
+            {
+                profiling::scope!("wgpu queue present");
+                self.ctx
+                    .get::<WindowSystem>()
+                    .window_handle()
+                    .pre_present_notify();
+                state.queue.present(context.frame);
+            }
+
+            #[cfg(feature = "trace")]
+            {
+                // Signal to the profiler that the frame is finished.
+                prof_lock.end_frame().unwrap();
+                // Query for oldest finished frame (this is almost certainly not the one we just submitted!) and display results in the command line.
+                state.latest_profiler_results =
+                    prof_lock.process_finished_frame(state.queue.get_timestamp_period());
+            }
+        }
+
+        self.request_redraw();
     }
 
     pub fn surface_config(&self) -> &SurfaceConfiguration {
@@ -402,44 +574,6 @@ impl GraphicsSystem {
         }
         panic!("GraphicsSystem is not ready!");
     }
-
-    pub fn present_frame(&mut self, _: &events::RenderingDone) {
-        if let GraphicsSystemState::Ready(state) = &mut self.state {
-            let mut context = self.context.take().unwrap();
-
-            #[cfg(feature = "trace")]
-            let mut prof_lock = state
-                .profiler
-                .lock()
-                .expect("Nothing should lock the mutex now");
-            #[cfg(feature = "trace")]
-            prof_lock.resolve_queries(&mut context.encoder);
-
-            {
-                profiling::scope!("wgpu queue submit");
-                state.queue.submit(Some(context.encoder.finish()));
-            }
-            {
-                profiling::scope!("wgpu queue present");
-                self.ctx
-                    .get::<WindowSystem>()
-                    .window_handle()
-                    .pre_present_notify();
-                state.queue.present(context.frame);
-            }
-
-            #[cfg(feature = "trace")]
-            {
-                // Signal to the profiler that the frame is finished.
-                prof_lock.end_frame().unwrap();
-                // Query for oldest finished frame (this is almost certainly not the one we just submitted!) and display results in the command line.
-                state.latest_profiler_results =
-                    prof_lock.process_finished_frame(state.queue.get_timestamp_period());
-            }
-        }
-
-        self.request_redraw();
-    }
 }
 #[profiling::all_functions]
 impl GeeseSystem for GraphicsSystem {
@@ -448,13 +582,18 @@ impl GeeseSystem for GraphicsSystem {
         .with::<WindowSystem>()
         .with::<Mut<AssetSystem>>();
 
-    const EVENT_HANDLERS: EventHandlers<Self> = event_handlers().with(Self::present_frame);
+    const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
+        .with(Self::finish_game_render)
+        .with(Self::display_game_render)
+        .with(Self::finish_ui_render);
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         Self {
             ctx,
             state: GraphicsSystemState::Uninitialized,
             context: None,
+            game_resolution: LogicalSize::new(1, 1),
+            game_texture_handle: None,
         }
     }
 }

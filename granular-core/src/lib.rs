@@ -6,7 +6,7 @@ use std::{
 use web_time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
-    dpi::PhysicalSize,
+    dpi::{LogicalSize, PhysicalSize},
     event::{DeviceEvent, DeviceId, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     window::WindowId,
@@ -14,8 +14,14 @@ use winit::{
 
 pub mod future_executor;
 
+mod rect;
+pub use rect::Rect;
+
 pub mod utils;
 pub use utils::*;
+
+mod time_system;
+pub use time_system::TimeSystem;
 
 pub mod assets;
 pub use assets::AssetSystem;
@@ -23,7 +29,7 @@ pub use assets::AssetSystem;
 //mod tick;
 pub mod graphics;
 pub use graphics::{BatchRenderer, Camera};
-use graphics::{GraphicsSystem, WindowSystem};
+use graphics::{GameRenderer, GraphicsSystem, WindowSystem};
 
 mod filewatcher;
 use filewatcher::FileWatcher;
@@ -38,6 +44,8 @@ pub mod prelude {
         events,
         graphics::{self, GraphicsSystem, TextureBundle, TextureBundleLoadSettings, WindowSystem},
         input_system::*,
+        rect::Rect,
+        time_system::TimeSystem,
         utils::*,
     };
 }
@@ -64,7 +72,7 @@ pub mod events {
 }
 
 enum CustomWinitEvent {
-    GraphicsSystemInitialized(graphics::GraphicsState),
+    GraphicsSystemInitialized { state: graphics::GraphicsState },
     WindowResized(PhysicalSize<u32>),
     InitDone,
 }
@@ -88,6 +96,7 @@ enum EngineState {
 
 pub struct GranularEngine<AppSystem: GeeseSystem + std::fmt::Debug> {
     ctx: GeeseContext,
+    game_resolution: LogicalSize<u32>,
     event_loop: Option<EventLoop<CustomWinitEvent>>,
     event_loop_proxy: EventLoopProxy<CustomWinitEvent>,
     state: EngineState,
@@ -100,14 +109,10 @@ pub struct GranularEngine<AppSystem: GeeseSystem + std::fmt::Debug> {
     application: PhantomData<AppSystem>,
     last_handled_resize: Option<PhysicalSize<u32>>,
 }
-impl<AppSystem: GeeseSystem + std::fmt::Debug> Default for GranularEngine<AppSystem> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 #[profiling::all_functions]
 impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
-    pub fn new() -> Self {
+    // This game resolution is the size that the game renders at (<= display/ window size)
+    pub fn new(game_resolution: LogicalSize<u32>) -> Self {
         let now = Instant::now();
         let mut last_ticks = HashMap::default();
         for fixed_tick in events::timing::FIXED_TICKS {
@@ -120,6 +125,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
             .with(geese::notify::add_system::<GraphicsSystem>())
             .with(geese::notify::add_system::<FutureExecutor>())
             .with(geese::notify::add_system::<FileWatcher>())
+            .with(geese::notify::add_system::<TimeSystem>())
             .with(geese::notify::add_system::<InputSystem>());
 
         trace!("Core systems added.");
@@ -130,6 +136,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
 
         Self {
             ctx,
+            game_resolution,
             event_loop: Some(event_loop),
             event_loop_proxy: proxy,
             state: EngineState::Uninitialized,
@@ -242,16 +249,20 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
         }
         {
             let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
-            graphics_sys.init(event_loop, self.event_loop_proxy.clone());
+            graphics_sys.init(
+                event_loop,
+                self.event_loop_proxy.clone(),
+                self.game_resolution,
+            );
         }
         self.state = EngineState::PrepareGraphics;
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: CustomWinitEvent) {
         match event {
-            CustomWinitEvent::GraphicsSystemInitialized(graphics_state) => {
+            CustomWinitEvent::GraphicsSystemInitialized { state } => {
                 let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
-                graphics_sys.initialize_callback(graphics_state);
+                graphics_sys.initialize_callback(state);
                 drop(graphics_sys);
 
                 self.state = EngineState::PreparingBeforeRun;
@@ -261,6 +272,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
                     .flush()
                     .with(geese::notify::add_system::<AssetSystem>())
                     .with(geese::notify::add_system::<Camera>())
+                    .with(geese::notify::add_system::<GameRenderer>())
                     .with(geese::notify::delayed(
                         geese::notify::add_system::<AppSystem>(),
                     ));
@@ -316,6 +328,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
         }
         self.update();
         self.handle_scheduling();
+        self.ctx.get_mut::<TimeSystem>().mark_frame();
         self.frame += 1;
     }
 
@@ -347,8 +360,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
                 }
                 {
                     let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
-                    graphics_sys.begin_frame();
-                    graphics_sys.render();
+                    graphics_sys.start_rendering();
                 }
 
                 profiling::finish_frame!();

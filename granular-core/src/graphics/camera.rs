@@ -1,14 +1,19 @@
 #![allow(unused)]
 use glam::{Affine2, IVec2, Mat2, Mat4, Quat, Vec2, Vec3};
 use wgpu::{Buffer, BufferUsages, util::DeviceExt};
+use winit::dpi::{LogicalSize, PhysicalSize};
 
 use super::GraphicsSystem;
-use crate::utils::*;
+use crate::{Rect, utils::*};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ScalingMode {
-    Keep,
+    /// Preserve aspect ratio, adding letterboxes verticall or horizontally as needed.
+    KeepAspect,
+    /// Fill the entire window, ignoring aspect ratio.
     Stretch,
+    /// Preserve aspect ratio and use an integer scale.
+    Integer,
 }
 
 pub struct Camera {
@@ -21,6 +26,7 @@ pub struct Camera {
     screen_size: IVec2,
     scaling_mode: ScalingMode,
     zoom: f32,
+    viewport: Rect,
 
     // ortho_proj * view
     canvas_transform: Mat4,
@@ -81,7 +87,7 @@ impl Camera {
         info!("Camera screen size: {}", self.screen_size);
 
         self.recalc_ortho();
-        self.recalc_view();
+        self.recalc_viewport_rect();
     }
 
     /// Gets the canvas transform
@@ -102,29 +108,18 @@ impl Camera {
         &self.shader_buffer
     }
 
+    pub fn set_scaling_mode(&mut self, scaling_mode: ScalingMode) {
+        self.scaling_mode = scaling_mode;
+        self.recalc_viewport_rect();
+    }
+
     fn recalc_ortho(&mut self) {
-        self.ortho_proj = Self::_recalc_ortho(
-            self.scaling_mode,
-            self.screen_size,
-            self.zoom,
-            self.near,
-            self.far,
-        );
+        self.ortho_proj = Self::_recalc_ortho(self.screen_size, self.zoom, self.near, self.far);
         self.canvas_transform = self.ortho_proj * self.view;
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn _recalc_ortho(
-        scaling_mode: ScalingMode,
-        screen_size: IVec2,
-        zoom: f32,
-        near: f32,
-        far: f32,
-    ) -> Mat4 {
-        let aspect_ratio = match scaling_mode {
-            ScalingMode::Keep => 1.0,
-            ScalingMode::Stretch => screen_size.y as f32 / screen_size.x as f32,
-        };
+    fn _recalc_ortho(screen_size: IVec2, zoom: f32, near: f32, far: f32) -> Mat4 {
         let half_width = screen_size.x as f32 / (2.0 * zoom);
         let half_height = screen_size.y as f32 / (2.0 * zoom);
 
@@ -146,12 +141,65 @@ impl Camera {
             Vec3::new(-position.x as f32, -position.y as f32, 0.0),
         )
     }
+
+    pub fn get_viewport_rect(&self) -> Rect {
+        self.viewport
+    }
+
+    fn recalc_viewport_rect(&mut self) {
+        let game_size = self.ctx.get::<GraphicsSystem>().get_game_resolution();
+        self.viewport = Self::_calc_viewport_rect(
+            self.scaling_mode,
+            PhysicalSize::from(self.screen_size.to_array()),
+            game_size,
+        )
+    }
+
+    fn _calc_viewport_rect(
+        scaling_mode: ScalingMode,
+        screen_size: PhysicalSize<u32>,
+        game_size: LogicalSize<u32>,
+    ) -> Rect {
+        let logical_w = game_size.width as f32;
+        let logical_h = game_size.height as f32;
+
+        let screen_w = screen_size.width as f32;
+        let screen_h = screen_size.height as f32;
+
+        let scale_x = screen_w / logical_w;
+        let scale_y = screen_h / logical_h;
+
+        let scale = match scaling_mode {
+            // Special case: handled below.
+            ScalingMode::Stretch => 1.0,
+            ScalingMode::KeepAspect => scale_x.min(scale_y),
+            ScalingMode::Integer => scale_x.min(scale_y).floor().max(1.0),
+        };
+
+        if matches!(scaling_mode, ScalingMode::Stretch) {
+            return Rect {
+                position: IVec2::ZERO,
+                size: IVec2::new(screen_size.width as i32, screen_size.height as i32),
+            };
+        }
+
+        let width = (logical_w * scale).round() as u32;
+        let height = (logical_h * scale).round() as u32;
+
+        Rect {
+            position: IVec2::new(
+                (screen_size.width.saturating_sub(width)) as i32 / 2,
+                (screen_size.height.saturating_sub(height)) as i32 / 2,
+            ),
+            size: IVec2::new(width as i32, height as i32),
+        }
+    }
 }
 impl GeeseSystem for Camera {
     const DEPENDENCIES: geese::Dependencies = dependencies().with::<GraphicsSystem>();
 
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
-        let scaling_mode = ScalingMode::Keep;
+        let scaling_mode = ScalingMode::Integer;
         let position = IVec2::ZERO;
         let angle = 0.0;
         let zoom = 1.0;
@@ -161,13 +209,18 @@ impl GeeseSystem for Camera {
             graphics_sys.surface_config().width as i32,
             graphics_sys.surface_config().height as i32,
         );
+        let viewport = Self::_calc_viewport_rect(
+            scaling_mode,
+            PhysicalSize::from(screen_size.to_array()),
+            graphics_sys.get_game_resolution(),
+        );
         let left = (position.x - screen_size.x) as f32 / (2.0 * zoom);
         let right = (position.x + screen_size.x) as f32 / (2.0 * zoom);
         let bottom = (position.y - screen_size.y) as f32 / (2.0 * zoom);
         let top = (position.y + screen_size.y) as f32 / (2.0 * zoom);
         let near = -1.0;
         let far = 1.0;
-        let ortho_proj = Self::_recalc_ortho(scaling_mode, screen_size, zoom, near, far);
+        let ortho_proj = Self::_recalc_ortho(screen_size, zoom, near, far);
         let view = Self::_recalc_view(position, angle);
         let canvas_transform = ortho_proj * view;
 
@@ -190,9 +243,9 @@ impl GeeseSystem for Camera {
             screen_size,
             scaling_mode,
             zoom,
+            viewport,
 
             canvas_transform,
-
             view,
             ortho_proj,
             near,
