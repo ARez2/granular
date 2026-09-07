@@ -99,9 +99,10 @@ impl Simulation {
 
     fn render(&mut self) {
         let mut renderer = self.ctx.get_mut::<BatchRenderer>();
-        renderer.draw_quad(
+        let size = renderer.get_screen_size();
+        renderer.draw_quad_with_bottomleft(
             IVec2::new(0, 0),
-            IVec2::new(450, 450),
+            size,
             palette::named::WHITE,
             Some(self.display_tex_handle.clone()),
             -10,

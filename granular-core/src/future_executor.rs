@@ -46,7 +46,7 @@ impl FutureExecutor {
     }
 
     /// Event handler which polls all running tasks each time to run them to completion
-    fn poll_futures(&mut self, _event: &crate::events::timing::Tick<1>) {
+    fn poll_futures(&mut self, _event: &crate::events::timing::InternalTick) {
         let waker = Waker::noop();
         let mut cx = Context::from_waker(waker);
 

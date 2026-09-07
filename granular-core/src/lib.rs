@@ -1,5 +1,8 @@
 use rustc_hash::FxHashMap as HashMap;
-use std::marker::PhantomData;
+use std::{
+    marker::PhantomData,
+    sync::{Arc, atomic::AtomicBool},
+};
 use web_time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
@@ -40,6 +43,8 @@ pub mod prelude {
 }
 
 pub mod events {
+    use winit::dpi::PhysicalSize;
+
     pub struct Initialized {}
 
     pub mod timing {
@@ -49,17 +54,35 @@ pub mod events {
         /// Gets sent out every T milliseconds
         pub struct FixedTick<const N: u64>;
         pub const FIXED_TICKS: [u64; 5] = [5000, 2500, 1000, 16, 1];
+        // Emitted every frame and used to let things tick without the outer application seeing it
+        pub(crate) struct InternalTick;
+    }
+
+    pub struct Resized {
+        pub new_size: PhysicalSize<u32>,
     }
 }
 
 enum CustomWinitEvent {
     GraphicsSystemInitialized(graphics::GraphicsState),
+    WindowResized(PhysicalSize<u32>),
+    InitDone,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+/// Control flow:
+///     On winit resumed:  Uninitialized => Preparing
+///     if user called WindowSystem::set_window_size() in their Game::new():
+///         On CustomWinitEvent::WindowResized:   Preparing => Running
+///     else:
+///         On winit::new_events (with cause = Poll):  Preparing => Running
+///
+/// Note: This "if" ensures that the surface/ camera resize is already done by the time the user
+/// receives its event::Initialized, so he can use the correct window/surface size from there
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
 enum EngineState {
     Uninitialized,
-    Preparing,
+    PrepareGraphics,
+    PreparingBeforeRun,
     Running,
 }
 
@@ -68,11 +91,14 @@ pub struct GranularEngine<AppSystem: GeeseSystem + std::fmt::Debug> {
     event_loop: Option<EventLoop<CustomWinitEvent>>,
     event_loop_proxy: EventLoopProxy<CustomWinitEvent>,
     state: EngineState,
+    /// See explanation on `EngineState`
+    waiting_for_window_event: Arc<AtomicBool>,
     /// Current frame
     frame: u64,
     /// When each tick (in ms) last occured
     last_ticks: HashMap<Duration, Instant>,
     application: PhantomData<AppSystem>,
+    last_handled_resize: Option<PhysicalSize<u32>>,
 }
 impl<AppSystem: GeeseSystem + std::fmt::Debug> Default for GranularEngine<AppSystem> {
     fn default() -> Self {
@@ -96,7 +122,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
             .with(geese::notify::add_system::<FileWatcher>())
             .with(geese::notify::add_system::<InputSystem>());
 
-        info!("Core systems added.");
+        trace!("Core systems added.");
 
         let event_loop = EventLoop::with_user_event().build().unwrap();
         event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
@@ -107,9 +133,11 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
             event_loop: Some(event_loop),
             event_loop_proxy: proxy,
             state: EngineState::Uninitialized,
+            waiting_for_window_event: Arc::new(AtomicBool::new(false)),
             frame: 0,
             last_ticks,
             application: PhantomData,
+            last_handled_resize: None,
         }
     }
 
@@ -178,6 +206,12 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
 
     /// Resizes the surface with the new_size
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
+        if let Some(size) = self.last_handled_resize
+            && size == new_size
+        {
+            trace!("Resize of this size was already handled before! Returning...");
+            return;
+        }
         {
             let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
             graphics_sys.resize_surface(new_size);
@@ -188,6 +222,8 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
             let mut camera = self.ctx.get_mut::<Camera>();
             camera.set_screen_size((new_size.width, new_size.height));
         }
+        self.last_handled_resize = Some(new_size);
+        self.ctx.flush().with(events::Resized { new_size });
     }
 }
 #[profiling::all_functions]
@@ -196,16 +232,19 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
     for GranularEngine<AppSystem>
 {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.state = EngineState::Preparing;
-
         {
             let mut window_sys = self.ctx.get_mut::<WindowSystem>();
-            window_sys.init(event_loop);
+            window_sys.init(
+                event_loop,
+                self.event_loop_proxy.clone(),
+                self.waiting_for_window_event.clone(),
+            );
         }
         {
             let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
             graphics_sys.init(event_loop, self.event_loop_proxy.clone());
         }
+        self.state = EngineState::PrepareGraphics;
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: CustomWinitEvent) {
@@ -215,18 +254,33 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
                 graphics_sys.initialize_callback(graphics_state);
                 drop(graphics_sys);
 
+                self.state = EngineState::PreparingBeforeRun;
+                trace!("Graphics initialized");
+
                 self.ctx
                     .flush()
                     .with(geese::notify::add_system::<AssetSystem>())
-                    // .with(geese::notify::add_system::<Simulation>())
-                    .with(geese::notify::add_system::<AppSystem>())
-                    .with(events::Initialized {});
-                self.state = EngineState::Running;
-                info!("Everything is initialized.");
-
+                    .with(geese::notify::add_system::<Camera>())
+                    .with(geese::notify::delayed(
+                        geese::notify::add_system::<AppSystem>(),
+                    ));
+            }
+            CustomWinitEvent::WindowResized(new_size) => {
+                self.resize(new_size);
+                // See explanation on `EngineState`
+                if self.state != EngineState::Running
+                    && self
+                        .waiting_for_window_event
+                        .load(std::sync::atomic::Ordering::Relaxed)
                 {
-                    let new_size = self.ctx.get::<WindowSystem>().window_handle().inner_size();
-                    self.resize(new_size);
+                    debug!("Send initDone from resized");
+                    let _ = self.event_loop_proxy.send_event(CustomWinitEvent::InitDone);
+                }
+            }
+            CustomWinitEvent::InitDone => {
+                if self.state == EngineState::PreparingBeforeRun {
+                    self.ctx.flush().with(events::Initialized {});
+                    self.state = EngineState::Running;
                 }
             }
         }
@@ -236,12 +290,26 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
         info!("Exiting...");
     }
 
+    // This cause will pretty much always be winit::event::StartCause::Poll
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: winit::event::StartCause) {
-        // We still need the scheduling to drive for example the FutureExecutor
+        self.ctx.flush().with(events::timing::InternalTick);
+        // Only run the following if the Graphics, Window etc. are initialized
         if self.state != EngineState::Running {
-            self.handle_scheduling();
+            // See explanation on `EngineState`
+            if self.state == EngineState::PreparingBeforeRun {
+                {
+                    self.ctx.get::<GraphicsSystem>().request_redraw();
+                }
+                if !self
+                    .waiting_for_window_event
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    let _ = self.event_loop_proxy.send_event(CustomWinitEvent::InitDone);
+                }
+            }
             return;
         }
+
         {
             let mut input = self.ctx.get_mut::<InputSystem>();
             input.reset_just_pressed();
@@ -257,7 +325,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        if self.state != EngineState::Running {
+        if self.state < EngineState::PreparingBeforeRun {
             return;
         }
 

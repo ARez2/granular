@@ -32,7 +32,7 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq)]
 struct Quad {
-    pub center: IVec2,
+    pub topleft: IVec2,
     pub size: IVec2,
     /// If there is a texture set, this tints the texture, otherwise the quad will have this color
     pub color: [f32; 4],
@@ -75,6 +75,8 @@ struct Batch {
 /// A simple batch renderer that supports layering of quads
 pub struct BatchRenderer {
     ctx: GeeseContextHandle<Self>,
+
+    screen_size: IVec2,
 
     vertex_buffer: Buffer,
     index_buffer: Buffer,
@@ -151,8 +153,7 @@ impl BatchRenderer {
                 num_quads_in_batch = 0;
             }
 
-            let quad_pos = quad.center;
-            //info!("Old quad pos: {}   New pos: {}", quad.center, quad_pos);
+            let quad_pos = quad.topleft;
             let x = quad_pos.x;
             let y = quad_pos.y;
             let w = quad.size.x;
@@ -176,23 +177,27 @@ impl BatchRenderer {
 
             // Add the vertices of the quad to vertices, respecting size and attributes
             self.vertices_to_draw.reserve(4);
+            // Top left
             self.vertices_to_draw.push(Vertex::new(
-                IVec2::new(x - w, y - h),
+                quad.topleft,
                 quad.color,
                 atlas_tex_coords_start,
             ));
+            // Bottom left
             self.vertices_to_draw.push(Vertex::new(
-                IVec2::new(x - w, y + h),
+                quad.topleft - IVec2::new(0, quad.size.y),
                 quad.color,
                 Vec2::new(atlas_tex_coords_start.x, atlas_tex_coords_end.y),
             ));
+            // Bottom right
             self.vertices_to_draw.push(Vertex::new(
-                IVec2::new(x + w, y + h),
+                quad.topleft + IVec2::new(quad.size.x, -quad.size.y),
                 quad.color,
                 atlas_tex_coords_end,
             ));
+            // Top right
             self.vertices_to_draw.push(Vertex::new(
-                IVec2::new(x + w, y - h),
+                quad.topleft + IVec2::new(quad.size.x, 0),
                 quad.color,
                 Vec2::new(atlas_tex_coords_end.x, atlas_tex_coords_start.y),
             ));
@@ -335,7 +340,7 @@ impl BatchRenderer {
     /// Records a new quad that needs to be drawn this frame
     pub fn draw_quad<C: IntoGpuColor>(
         &mut self,
-        center: IVec2,
+        topleft: IVec2,
         size: IVec2,
         color: C,
         texture: Option<AssetHandle<TextureBundle>>,
@@ -370,12 +375,38 @@ impl BatchRenderer {
             layer,
             used_texture_atlas_idx,
             quad: Quad {
-                center,
+                topleft,
                 size,
                 color: rgba,
                 texture,
             },
         }));
+    }
+
+    /// Records a new quad that needs to be drawn this frame. Draws the quad with its center at the `center` position and extending `size/2` to either side
+    pub fn draw_quad_with_center<C: IntoGpuColor>(
+        &mut self,
+        center: IVec2,
+        size: IVec2,
+        color: C,
+        texture: Option<AssetHandle<TextureBundle>>,
+        layer: i32,
+    ) {
+        let topleft = center + IVec2::new(-size.x, size.y) / 2;
+        self.draw_quad(topleft, size, color, texture, layer);
+    }
+
+    /// Records a new quad that needs to be drawn this frame.
+    pub fn draw_quad_with_bottomleft<C: IntoGpuColor>(
+        &mut self,
+        bottomleft: IVec2,
+        size: IVec2,
+        color: C,
+        texture: Option<AssetHandle<TextureBundle>>,
+        layer: i32,
+    ) {
+        let topleft = bottomleft + IVec2::new(0, size.y);
+        self.draw_quad(topleft, size, color, texture, layer);
     }
 
     /// Notifies the BatchRenderer that this texture has changed it's content and needs to be updated
@@ -423,6 +454,14 @@ impl BatchRenderer {
         } else {
             self.changed_asset_ids.insert(event.asset_id);
         }
+    }
+
+    fn on_resize(&mut self, event: &crate::events::Resized) {
+        self.screen_size = IVec2::new(event.new_size.width as i32, event.new_size.height as i32);
+    }
+
+    pub fn get_screen_size(&self) -> IVec2 {
+        self.screen_size
     }
 
     /// Helper function for creating a new render pipeline
@@ -586,10 +625,12 @@ impl GeeseSystem for BatchRenderer {
     #[cfg(target_arch = "wasm32")]
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::render_batch_layers)
+        .with(Self::on_resize)
         .with(Self::end_frame);
     #[cfg(not(target_arch = "wasm32"))]
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::on_assetchange)
+        .with(Self::on_resize)
         .with(Self::render_batch_layers)
         .with(Self::end_frame);
 
@@ -688,10 +729,16 @@ impl GeeseSystem for BatchRenderer {
             ctx.get::<AssetSystem>().get(&shader_handle).unwrap(),
             graphics_sys.get_surface_view_format(),
         );
+        let screen_size = IVec2::new(
+            graphics_sys.surface_config().width as i32,
+            graphics_sys.surface_config().height as i32,
+        );
         drop(graphics_sys);
 
         Self {
             ctx,
+
+            screen_size,
 
             vertex_buffer,
             index_buffer,

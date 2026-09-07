@@ -30,7 +30,6 @@ impl FileWatcher {
         self.filewatcher
             .watch(path.as_ref(), rec)
             .unwrap_or_else(|_| warn!("Cannot watch: {:?}", path.as_ref().display()));
-        info!("Watching {}", path.as_ref().display());
     }
 
     fn poll(&mut self, _event: &crate::events::timing::Tick<30>) {

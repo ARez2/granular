@@ -1,6 +1,5 @@
 use fern::colors::{Color, ColoredLevelConfig};
-use granular::prelude::{graphics::GraphicsSystem, *};
-use palette::{Srgba, WithAlpha};
+use granular::prelude::*;
 use winit::keyboard::{KeyCode, ModifiersState};
 
 #[cfg(target_arch = "wasm32")]
@@ -51,12 +50,10 @@ struct Game {
 }
 impl Game {
     fn init(&mut self, _event: &events::Initialized) {
-        let win_sys = self.ctx.get::<WindowSystem>();
-        let window = win_sys.window_handle();
-        window.set_visible(true);
-        let s = window.request_inner_size(winit::dpi::PhysicalSize::new(640, 480));
-        debug!("Game set_min_inner_size {:?}", s);
-        window.set_title("Granular engine testbed");
+        {
+            let mut camera = self.ctx.get_mut::<Camera>();
+            camera.set_bottomleft_position(IVec2::new(0, 0));
+        }
     }
 
     fn on_update(&mut self, _: &events::timing::FixedTick<16>) {
@@ -71,7 +68,14 @@ impl Game {
 
     fn on_draw(&mut self, _: &granular::graphics::events::PrepareToRender) {
         let mut renderer = self.ctx.get_mut::<BatchRenderer>();
-        renderer.draw_quad(
+        renderer.draw_quad_with_center(
+            IVec2::new(0, 0),
+            IVec2::new(10, 10),
+            palette::named::RED,
+            None,
+            0,
+        );
+        renderer.draw_quad_with_center(
             IVec2::new(0, 250),
             IVec2::new(50, 50),
             palette::named::WHITE,
@@ -79,7 +83,7 @@ impl Game {
             -2,
         );
 
-        renderer.draw_quad(
+        renderer.draw_quad_with_center(
             IVec2::new(50, 300),
             IVec2::new(50, 50),
             palette::named::WHITE,
@@ -97,8 +101,7 @@ impl GeeseSystem for Game {
     const EVENT_HANDLERS: EventHandlers<Self> = Self::EVENT_HANDLERS_SHARED;
 
     const DEPENDENCIES: Dependencies = dependencies()
-        .with::<WindowSystem>()
-        .with::<GraphicsSystem>()
+        .with::<Mut<WindowSystem>>()
         .with::<Mut<InputSystem>>()
         .with::<Mut<Camera>>()
         .with::<Mut<AssetSystem>>()
@@ -109,24 +112,25 @@ impl GeeseSystem for Game {
 
         ctx.raise_event(geese::notify::flush().with(geese::notify::add_system::<Simulation>()));
 
-        let mut input = ctx.get_mut::<InputSystem>();
-        input.add_action(
-            "cam_left",
-            InputActionTrigger::new_key(KeyCode::ArrowLeft, ModifiersState::empty()),
-        );
-        input.add_action(
-            "cam_right",
-            InputActionTrigger::new_key(KeyCode::ArrowRight, ModifiersState::empty()),
-        );
-        input.add_action(
-            "cam_up",
-            InputActionTrigger::new_key(KeyCode::ArrowUp, ModifiersState::empty()),
-        );
-        input.add_action(
-            "cam_down",
-            InputActionTrigger::new_key(KeyCode::ArrowDown, ModifiersState::empty()),
-        );
-        drop(input);
+        {
+            let mut input = ctx.get_mut::<InputSystem>();
+            input.add_action(
+                "cam_left",
+                InputActionTrigger::new_key(KeyCode::ArrowLeft, ModifiersState::empty()),
+            );
+            input.add_action(
+                "cam_right",
+                InputActionTrigger::new_key(KeyCode::ArrowRight, ModifiersState::empty()),
+            );
+            input.add_action(
+                "cam_up",
+                InputActionTrigger::new_key(KeyCode::ArrowUp, ModifiersState::empty()),
+            );
+            input.add_action(
+                "cam_down",
+                InputActionTrigger::new_key(KeyCode::ArrowDown, ModifiersState::empty()),
+            );
+        }
 
         let (texture_handle, texture2_handle) = {
             let mut asset_sys = ctx.get_mut::<AssetSystem>();
@@ -150,6 +154,12 @@ impl GeeseSystem for Game {
                 .unwrap();
             (texture_handle, texture2_handle)
         };
+
+        {
+            let mut win_sys = ctx.get_mut::<WindowSystem>();
+            // win_sys.set_window_size(winit::dpi::PhysicalSize::new(640, 480));
+            win_sys.set_title("Granular engine testbed");
+        }
 
         Self {
             ctx,
@@ -223,6 +233,7 @@ fn set_up_logging() {
         // parameter:
         // `info!(target="special_target", "This log message is about special_target");`
         .level_for("wgpu", log::LevelFilter::Error)
+        .level_for("simulation", log::LevelFilter::Trace)
         .level_for("granular_core", log::LevelFilter::Trace)
         .level_for(
             "granular_core::graphics::batchrenderer",
