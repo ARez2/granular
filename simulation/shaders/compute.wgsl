@@ -136,17 +136,20 @@ fn display(@builtin(global_invocation_id) gid: vec3u) {
 
     var color = cell.color;
     if any(material.tex_coords_start != material.tex_coords_end) {
-        let pos_x_ratio = f32(gid.x) / f32(Shared::GRID_WIDTH);
-        let pos_y_ratio = f32(gid.y) / f32(Shared::GRID_HEIGHT);
+        let atlas_size = vec2i(textureDimensions(Shared::material_texture_atlas));
+        let atlas_pos_start = vec2i(material.tex_coords_start * vec2f(atlas_size));
+        let atlas_pos_end = vec2i(material.tex_coords_end * vec2f(atlas_size));
+        let mat_tex_size = atlas_pos_end - atlas_pos_start;
+        let texture_sample_pos =
+            atlas_pos_start + vec2i(
+                i32(gid.x) % mat_tex_size.x,
+                i32(gid.y) % mat_tex_size.y
+            );
         // textureSample is forbidden
-        color = textureSampleLevel(
+        color = textureLoad(
             Shared::material_texture_atlas,
-            Shared::material_texture_atlas_sampler,
-            vec2<f32>(
-                mix(material.tex_coords_start.x, material.tex_coords_end.x, pos_x_ratio),
-                mix(material.tex_coords_start.y, material.tex_coords_end.y, pos_y_ratio)
-            ),
-            0.0
+            texture_sample_pos,
+            0
         );
     } else {
         color = material.color;

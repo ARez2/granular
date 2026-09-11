@@ -271,3 +271,17 @@ fn linear_to_srgb4(c: vec4<f32>) -> vec4<f32> {
         c.a
     );
 }
+
+
+fn map_rangef(val: f32, input_start: f32, input_end: f32, output_start: f32, output_end: f32) -> f32 {
+    let slope = (output_end - output_start) / (input_end - input_start);
+    return output_start + slope * (val - input_start);
+}
+
+fn map_rangei(val: i32, input_start: i32, input_end: i32, output_start: i32, output_end: i32) -> i32 {
+    return i32(map_rangef(f32(val), f32(input_start), f32(input_end), f32(output_start), f32(output_end)));
+}
+
+fn map_rangeu(val: u32, input_start: u32, input_end: u32, output_start: u32, output_end: u32) -> u32 {
+    return u32(map_rangef(f32(val), f32(input_start), f32(input_end), f32(output_start), f32(output_end)));
+}
