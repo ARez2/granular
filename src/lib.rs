@@ -6,4 +6,5 @@ pub mod prelude {
 }
 
 pub use granular_core::*;
+pub use simulation;
 pub use wgpu;

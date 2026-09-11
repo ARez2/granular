@@ -44,6 +44,14 @@ impl Default for TextureSettings {
     }
 }
 
+#[derive(Hash, Debug, PartialEq, Eq)]
+enum Materials {
+    Empty,
+    Sand,
+    Water,
+    Rock,
+}
+
 #[derive(Debug)]
 struct Game {
     ctx: GeeseContextHandle<Self>,
@@ -109,12 +117,91 @@ impl GeeseSystem for Game {
         .with::<Mut<InputSystem>>()
         .with::<Mut<Camera>>()
         .with::<Mut<AssetSystem>>()
-        .with::<Mut<BatchRenderer>>();
+        .with::<Mut<BatchRenderer>>()
+        .with::<Mut<Simulation<Materials>>>();
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         info!("Game created");
 
-        ctx.raise_event(geese::notify::flush().with(geese::notify::add_system::<Simulation>()));
+        // ctx.raise_event(
+        //     geese::notify::flush().with(geese::notify::add_system::<Simulation<Materials>>()),
+        // );
+
+        {
+            let (sand_tex, bg_tex, rock_tex) = {
+                let mut asset_sys = ctx.get_mut::<AssetSystem>();
+                (
+                    asset_sys
+                        .load(
+                            asset_source!("../../assets/noita/sand.png"),
+                            TextureBundleLoadSettings {
+                                format: granular::wgpu::TextureFormat::Rgba8Unorm,
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap(),
+                    asset_sys
+                        .load(
+                            asset_source!("../../assets/noita/background_wandcave.png"),
+                            TextureBundleLoadSettings {
+                                format: granular::wgpu::TextureFormat::Rgba8Unorm,
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap(),
+                    asset_sys
+                        .load(
+                            asset_source!("../../assets/noita/rock.png"),
+                            TextureBundleLoadSettings {
+                                format: granular::wgpu::TextureFormat::Rgba8Unorm,
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap(),
+                )
+            };
+            let mut sim = ctx.get_mut::<Simulation<Materials>>();
+            sim.add_material(
+                Materials::Empty,
+                granular::simulation::material_shader::types::Material {
+                    tex_coords_start: Vec2::ZERO,
+                    tex_coords_end: Vec2::ZERO,
+                    color: vec4(0.0, 0.0, 0.0, 1.0),
+                    density: 0.0,
+                },
+                Some(bg_tex),
+            );
+            sim.add_material(
+                Materials::Sand,
+                granular::simulation::material_shader::types::Material {
+                    tex_coords_start: Vec2::ZERO,
+                    tex_coords_end: Vec2::ZERO,
+                    color: vec4(1.0, 1.0, 0.0, 1.0),
+                    density: 2.0,
+                },
+                Some(sand_tex),
+            );
+            sim.add_material(
+                Materials::Water,
+                granular::simulation::material_shader::types::Material {
+                    tex_coords_start: Vec2::ZERO,
+                    tex_coords_end: Vec2::ZERO,
+                    color: vec4(0.0, 0.0, 1.0, 1.0),
+                    density: 1.0,
+                },
+                None,
+            );
+            sim.add_material(
+                Materials::Rock,
+                granular::simulation::material_shader::types::Material {
+                    tex_coords_start: Vec2::ZERO,
+                    tex_coords_end: Vec2::ZERO,
+                    color: vec4(0.2, 0.2, 0.2, 1.0),
+                    density: 2.0,
+                },
+                Some(rock_tex),
+            );
+        }
 
         {
             let mut input = ctx.get_mut::<InputSystem>();

@@ -199,7 +199,7 @@ impl GeeseSystem for Camera {
     const DEPENDENCIES: geese::Dependencies = dependencies().with::<GraphicsSystem>();
 
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
-        let scaling_mode = ScalingMode::Integer;
+        let scaling_mode = ScalingMode::KeepAspect;
         let position = IVec2::ZERO;
         let angle = 0.0;
         let zoom = 1.0;

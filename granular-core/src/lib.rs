@@ -42,7 +42,9 @@ pub mod prelude {
         AssetSystem, BatchRenderer, Camera, GranularEngine,
         assets::{self, AssetHandle},
         events,
-        graphics::{self, GraphicsSystem, TextureBundle, TextureBundleLoadSettings, WindowSystem},
+        graphics::{
+            self, GraphicsSystem, Texture2D, TextureBundle, TextureBundleLoadSettings, WindowSystem,
+        },
         input_system::*,
         rect::Rect,
         time_system::TimeSystem,

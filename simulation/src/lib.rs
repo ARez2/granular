@@ -1,10 +1,16 @@
-use std::borrow::Cow;
+#![feature(trait_alias)]
 
 use encase::{DynamicStorageBuffer, UniformBuffer};
 use glam::prelude::*;
-use granular_core::{graphics::BindGroupBuilder, prelude::*};
+use granular_core::{
+    graphics::{BindGroupBuilder, DynamicTextureAtlas, IntoGpuColor, TextureHandle},
+    prelude::*,
+};
+use rustc_hash::FxHashMap as HashMap;
+use std::borrow::Cow;
+use std::hash::Hash;
 use web_time::{Duration, Instant};
-use wgpu::util::DeviceExt;
+use wgpu::{BindGroup, BindGroupLayout, Buffer, util::DeviceExt};
 
 #[include_wgsl_oil::include_wgsl_oil("../shaders/shared.wgsl")]
 pub mod shared_shader {}
@@ -15,7 +21,12 @@ pub mod cell_shader {}
 #[include_wgsl_oil::include_wgsl_oil("../shaders/compute.wgsl")]
 mod compute_shader {}
 
-pub struct Simulation {
+#[include_wgsl_oil::include_wgsl_oil("../shaders/material.wgsl")]
+pub mod material_shader {}
+
+pub trait MaterialSet = Sized + 'static + Hash + PartialEq + Eq;
+
+pub struct Simulation<M: MaterialSet> {
     ctx: GeeseContextHandle<Self>,
     pub frame: u64,
     pub tickrate: Duration,
@@ -36,8 +47,20 @@ pub struct Simulation {
     params_buffer: wgpu::Buffer,
 
     display_tex_handle: AssetHandle<TextureBundle>,
+
+    /// Maps the enum values to an index in `materials`
+    material_names: HashMap<M, usize>,
+    material_tex_atlas: DynamicTextureAtlas,
+    /// Stores if a new material texture was added and the atlas needs to be rebuilt
+    material_atlas_dirty: bool,
+    /// Contains the materials, like they would be laid out in GPU memory
+    materials: Vec<Option<material_shader::types::Material>>,
+    /// The GPU memory containing the materials
+    materials_ssbo: Buffer,
+    dirty_materials: Vec<usize>,
+    materials_bg: (BindGroup, BindGroupLayout),
 }
-impl Simulation {
+impl<M: MaterialSet> Simulation<M> {
     fn update(&mut self, _: &granular_core::graphics::events::RecordGameRenderingCommands) {
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         let context = graphics_sys.render_context();
@@ -72,8 +95,9 @@ impl Simulation {
                 } else {
                     compute_pass.set_bind_group(0, &self.bind_group_b, &[]);
                 }
-                compute_pass.set_bind_group(1, &self.debug_bind_group, &[]);
-                compute_pass.set_bind_group(2, &self.display_bind_group, &[]);
+                compute_pass.set_bind_group(1, &self.display_bind_group, &[]);
+                compute_pass.set_bind_group(2, &self.materials_bg.0, &[]);
+                compute_pass.set_bind_group(4, &self.debug_bind_group, &[]);
                 compute_pass.dispatch_workgroups(
                     shared_shader::constants::GRID_WIDTH::VALUE / 8,
                     shared_shader::constants::GRID_WIDTH::VALUE / 8,
@@ -93,11 +117,59 @@ impl Simulation {
 
         self.last_tick = Instant::now();
         drop(graphics_sys);
-
-        self.render();
     }
 
-    fn render(&mut self) {
+    fn on_render(&mut self, _: &graphics::events::RecordGameRenderingCommands) {
+        let device = self.ctx.get_mut::<GraphicsSystem>().device().clone();
+
+        if self.material_atlas_dirty {
+            let mut atlas_encoder =
+                device.create_command_encoder(&wgpu::wgt::CommandEncoderDescriptor {
+                    label: Some("Simulation atlas command encoder"),
+                });
+
+            let asset_sys = self.ctx.get::<AssetSystem>();
+            self.material_tex_atlas.rebuild_atlas(
+                |handle| asset_sys.get(handle).unwrap().texture(),
+                &mut atlas_encoder,
+            );
+            drop(asset_sys);
+            {
+                let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+                let context = graphics_sys.render_context();
+                context.queue.submit(Some(atlas_encoder.finish()));
+            }
+            self.material_atlas_dirty = false;
+        }
+
+        let default_mat = material_shader::types::Material {
+            tex_coords_start: Vec2::ZERO,
+            tex_coords_end: Vec2::ZERO,
+            color: Vec4::new(1.0, 0.0, 1.0, 1.0),
+            density: 0.0,
+        };
+        let mut materials_buffer = encase::StorageBuffer::new(Vec::<u8>::new());
+        let mats = self
+            .materials
+            .clone()
+            .iter_mut()
+            .map(|v| {
+                if v.is_none() {
+                    default_mat.clone()
+                } else {
+                    v.clone().unwrap()
+                }
+            })
+            .collect::<Vec<material_shader::types::Material>>();
+        let _ = materials_buffer.write(&mats);
+        {
+            let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+            let context = graphics_sys.render_context();
+            context
+                .queue
+                .write_buffer(&self.materials_ssbo, 0, &materials_buffer.into_inner());
+        }
+
         let mut renderer = self.ctx.get_mut::<BatchRenderer>();
         let size = renderer.get_screen_size();
         renderer.draw_quad_with_bottomleft(
@@ -109,13 +181,63 @@ impl Simulation {
         );
         renderer.mark_quad_texture_dirty(self.display_tex_handle.clone());
     }
+
+    pub fn add_material(
+        &mut self,
+        material_name: M,
+        mut material_def: material_shader::types::Material,
+        material_tex: Option<TextureHandle>,
+    ) {
+        let mut tex_coords_start = Vec2::ZERO;
+        let mut tex_coords_end = Vec2::ZERO;
+        if let Some(tex) = material_tex {
+            let texture_size = {
+                let asset_sys = self.ctx.get::<AssetSystem>();
+                let tex = asset_sys.get(&tex).unwrap().texture();
+                UVec2::new(tex.size().width, tex.size().height)
+            };
+
+            if !self.material_tex_atlas.contains_texture(&tex) {
+                self.material_atlas_dirty = true;
+                let res = self
+                    .material_tex_atlas
+                    .add_texture(tex.clone(), texture_size);
+                if res.is_ok() {
+                    (tex_coords_start, tex_coords_end) =
+                        self.material_tex_atlas.get_texture_coords(&tex).unwrap();
+                } else {
+                    error!("Cannot insert material texture into atlas!");
+                }
+            }
+        }
+
+        material_def.tex_coords_start = tex_coords_start;
+        material_def.tex_coords_end = tex_coords_end;
+
+        let index = if let Some((i, slot)) = self
+            .materials
+            .iter_mut()
+            .enumerate()
+            .find(|(_, mat)| mat.is_none())
+        {
+            *slot = Some(material_def);
+            i
+        } else {
+            let i = self.materials.len();
+            self.materials.push(Some(material_def));
+            i
+        };
+        self.material_names.insert(material_name, index);
+        self.dirty_materials.push(index);
+    }
 }
-impl GeeseSystem for Simulation {
+impl<M: MaterialSet> GeeseSystem for Simulation<M> {
     const DEPENDENCIES: Dependencies = dependencies()
         .with::<Mut<GraphicsSystem>>()
         .with::<Mut<BatchRenderer>>()
         .with::<Mut<AssetSystem>>();
-    const EVENT_HANDLERS: EventHandlers<Self> = event_handlers().with(Self::update);
+    const EVENT_HANDLERS: EventHandlers<Self> =
+        event_handlers().with(Self::update).with(Self::on_render);
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         let graphics_sys = ctx.get::<GraphicsSystem>();
@@ -171,7 +293,7 @@ impl GeeseSystem for Simulation {
         let mut cells_buffer = DynamicStorageBuffer::new(&mut cells_byte_buffer);
         let mut cells = vec![
             cell_shader::types::Cell {
-                material: cell_shader::constants::MAT_EMPTY::VALUE,
+                material: material_shader::constants::MAT_EMPTY::VALUE,
                 velocity: Vec2::ZERO,
                 _pad: 0.1234,
                 color: Vec4::new(0.0, 0.0, 0.0, 1.0)
@@ -184,21 +306,21 @@ impl GeeseSystem for Simulation {
         let fith_h = GR_H / 5;
         for y in (third_h - fith_h)..(third_h + fith_h) {
             for x in (half_w - quart_w)..(half_w + quart_w) {
-                cells[y * GR_W + x].material = cell_shader::constants::MAT_SAND::VALUE;
+                cells[y * GR_W + x].material = material_shader::constants::MAT_SAND::VALUE;
                 cells[y * GR_W + x].color = Vec4::new(1.0, 1.0, 0.0, 1.0);
             }
         }
 
-        for y in 40..41 {
+        for y in 40..47 {
             for x in 0..half_w {
-                cells[y * GR_W + x].material = cell_shader::constants::MAT_STONE::VALUE;
+                cells[y * GR_W + x].material = material_shader::constants::MAT_STONE::VALUE;
                 cells[y * GR_W + x].color = Vec4::new(0.2, 0.2, 0.2, 1.0);
             }
         }
 
         for y in (GR_H - 3)..GR_H {
             for x in 0..GR_W {
-                cells[y * GR_W + x].material = cell_shader::constants::MAT_WATER::VALUE;
+                cells[y * GR_W + x].material = material_shader::constants::MAT_WATER::VALUE;
                 cells[y * GR_W + x].color = Vec4::new(0.0, 0.0, 1.0, 1.0);
             }
         }
@@ -338,6 +460,44 @@ impl GeeseSystem for Simulation {
             .add_resource_to_binding(4, cells_read_ssbo.as_entire_binding())
             .build("compute bind group B", device);
 
+        let material_tex_atlas =
+            DynamicTextureAtlas::new(device, queue, 2048, 2048, wgpu::FilterMode::Nearest);
+        let materials_ssbo = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("materials buffer"),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+            size: size_of::<material_shader::types::Material>() as u64 * 10,
+        });
+        let (material_bgl, material_bg) = BindGroupBuilder::new()
+            .add_binding_with_resource(
+                0,
+                wgpu::ShaderStages::COMPUTE,
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                materials_ssbo.as_entire_binding(),
+            )
+            .add_binding_with_resource(
+                1,
+                wgpu::ShaderStages::COMPUTE,
+                wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                wgpu::BindingResource::TextureView(material_tex_atlas.view()),
+            )
+            .add_binding_with_resource(
+                2,
+                wgpu::ShaderStages::COMPUTE,
+                wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                wgpu::BindingResource::Sampler(material_tex_atlas.sampler()),
+            )
+            .build("Materials bind group", device);
+        let materials_bg = (material_bg, material_bgl);
+
         let (debug_bgl, debug_bind_group) = BindGroupBuilder::new()
             .add_binding_with_resource(
                 0,
@@ -400,8 +560,10 @@ impl GeeseSystem for Simulation {
             label: Some("compute pipeline layout"),
             bind_group_layouts: &[
                 Some(&bind_group_layout_a_b),
-                Some(&debug_bgl),
                 Some(&display_bgl),
+                Some(&materials_bg.1),
+                None,
+                Some(&debug_bgl),
             ],
             immediate_size: 0,
         });
@@ -491,6 +653,14 @@ impl GeeseSystem for Simulation {
             params_buffer,
 
             display_tex_handle,
+
+            material_names: HashMap::default(),
+            material_tex_atlas,
+            material_atlas_dirty: false,
+            materials: vec![],
+            materials_ssbo,
+            dirty_materials: vec![],
+            materials_bg,
         }
     }
 }

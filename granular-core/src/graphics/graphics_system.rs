@@ -114,7 +114,7 @@ impl GraphicsSystem {
                 .await
                 .expect("Failed to find an appropriate adapter");
 
-            debug!("{:?}", surface.get_capabilities(&adapter).formats);
+            // debug!("{:?}", surface.get_capabilities(&adapter).formats);
 
             let mut features = wgpu::Features::empty();
             #[cfg(feature = "trace")]

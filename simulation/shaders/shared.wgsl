@@ -6,6 +6,7 @@ const WORKGROUP_SIZE_Y: u32 = 8;
 
 #import cell.wgsl as CellMod;
 #import debug_print.wgsl as DebugPrint;
+#import material.wgsl as MaterialMod;
 
 @export struct Params {
     tick: u32,
@@ -36,11 +37,18 @@ var<uniform> params: Params;
 var<storage, read_write> desired_cells: array<CellMod::Cell>;
 
 @group(1) @binding(0)
-var debug_tex0: texture_storage_2d<rgba8unorm, write>;
-
-@group(2) @binding(0)
 var display_texture : texture_storage_2d<rgba8unorm, write>;
 
+@group(2) @binding(0)
+var<storage, read_write> materials: array<MaterialMod::Material>;
+@group(2) @binding(1)
+var material_texture_atlas: texture_2d<f32>;
+@group(2) @binding(2)
+var material_texture_atlas_sampler: sampler;
+
+
+@group(4) @binding(0)
+var debug_tex0: texture_storage_2d<rgba8unorm, write>;
 
 fn print_value_with_font_size(
     prev_color: vec4f,
@@ -244,4 +252,22 @@ fn propose_interaction(
     // The interaction must win ownership of both cells (happens in resolve)
     atomicMin(&winners[source_idx], encoded_key);
     atomicMin(&winners[destination_idx], encoded_key);
+}
+
+
+fn linear_to_srgb(x: f32) -> f32 {
+    if x <= 0.0031308 {
+        return 12.92 * x;
+    }
+
+    return 1.055 * pow(x, 1.0 / 2.4) - 0.055;
+}
+
+fn linear_to_srgb4(c: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(
+        linear_to_srgb(c.r),
+        linear_to_srgb(c.g),
+        linear_to_srgb(c.b),
+        c.a
+    );
 }

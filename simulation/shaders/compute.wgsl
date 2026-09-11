@@ -132,5 +132,26 @@ fn display(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     let cell = Shared::current_cells[source_idx];
-    textureStore(Shared::display_texture, vec2i(gid.xy), cell.color);
+    let material = Shared::materials[cell.material];
+
+    var color = cell.color;
+    if any(material.tex_coords_start != material.tex_coords_end) {
+        let pos_x_ratio = f32(gid.x) / f32(Shared::GRID_WIDTH);
+        let pos_y_ratio = f32(gid.y) / f32(Shared::GRID_HEIGHT);
+        // textureSample is forbidden
+        color = textureSampleLevel(
+            Shared::material_texture_atlas,
+            Shared::material_texture_atlas_sampler,
+            vec2<f32>(
+                mix(material.tex_coords_start.x, material.tex_coords_end.x, pos_x_ratio),
+                mix(material.tex_coords_start.y, material.tex_coords_end.y, pos_y_ratio)
+            ),
+            0.0
+        );
+    } else {
+        color = material.color;
+    }
+
+    let srgb_color = Shared::linear_to_srgb4(color);
+    textureStore(Shared::display_texture, vec2i(gid.xy), srgb_color);
 }

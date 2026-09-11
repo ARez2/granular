@@ -1,5 +1,6 @@
 #import ../shared.wgsl as Shared
 #import ../cell.wgsl as CellMod;
+#import ../material.wgsl as Mats;
 #import actions.wgsl::{move_to, swap, modify_own, modify_other}
 
 
@@ -16,7 +17,7 @@ fn create_cell(source_idx: u32, cell_idx: u32, cell: CellMod::Cell) -> CellMod::
 }
 
 fn is_empty(idx: u32) -> bool {
-    return Shared::current_cells[idx].material == CellMod::MAT_EMPTY;
+    return Shared::current_cells[idx].material == Mats::MAT_EMPTY;
 }
 
 
@@ -33,7 +34,7 @@ fn pos_inside_grid(pos: vec2i) -> bool {
 
 fn move_or_swap(source_idx: u32, destination_idx: u32) {
     let destination_cell = Shared::current_cells[destination_idx];
-    if destination_cell.material == CellMod::MAT_EMPTY {
+    if destination_cell.material == Mats::MAT_EMPTY {
         move_to(source_idx, destination_idx);
     } else {
         swap(source_idx, destination_idx);
@@ -41,9 +42,9 @@ fn move_or_swap(source_idx: u32, destination_idx: u32) {
 }
 
 fn try_density_move_or_swap(source_idx: u32, destination_idx: u32) -> bool {
-    let own_density = CellMod::get_density(Shared::current_cells[source_idx].material);
+    let own_density = Mats::get_density(Shared::current_cells[source_idx].material);
     let destination = Shared::current_cells[destination_idx];
-    let destination_density = CellMod::get_density(destination.material);
+    let destination_density = Mats::get_density(destination.material);
     if destination_density < own_density {
         move_or_swap(source_idx, destination_idx);
         return true;
@@ -53,7 +54,7 @@ fn try_density_move_or_swap(source_idx: u32, destination_idx: u32) -> bool {
 
 
 fn sweep_density(source_idx: u32, start_pos: vec2i, end_pos: vec2i) -> vec2i {
-    let own_density = CellMod::get_density(Shared::current_cells[source_idx].material);
+    let own_density = Mats::get_density(Shared::current_cells[source_idx].material);
     let line = Shared::bresenham(start_pos, end_pos);
 
     var last_valid: vec2i = start_pos;
@@ -71,7 +72,7 @@ fn sweep_density(source_idx: u32, start_pos: vec2i, end_pos: vec2i) -> vec2i {
         }
         let dest_idx = idx_res.index;
         let destination = Shared::current_cells[dest_idx];
-        let destination_density = CellMod::get_density(destination.material);
+        let destination_density = Mats::get_density(destination.material);
         if destination_density < own_density {
             last_valid = p;
         } else {
@@ -165,15 +166,15 @@ fn process_cell(cell: CellMod::Cell, cell_idx: u32) {
 
     var local_cell = cell;
     switch cell.material {
-        case CellMod::MAT_SAND {
+        case Mats::MAT_SAND {
             let r = process_movable_solid(&local_cell, cell_idx);
         }
-        case CellMod::MAT_WATER {
+        case Mats::MAT_WATER {
             if !process_movable_solid(&local_cell, cell_idx) {
                 let r = process_liquid(&local_cell, cell_idx);
             }
         }
-        case CellMod::MAT_EMPTY {
+        case Mats::MAT_EMPTY {
         }
         default {
 

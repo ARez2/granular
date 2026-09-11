@@ -2557,6 +2557,7 @@ dependencies = [
  "include-wgsl-oil",
  "palette",
  "profiling",
+ "rustc-hash",
  "tracy-client",
  "web-time",
  "wgpu",

@@ -31,7 +31,7 @@ pub(crate) use game_renderer::GameRenderer;
 pub type TextureHandle = AssetHandle<TextureBundle>;
 
 mod texture_atlas;
-pub use texture_atlas::TextureAtlas;
+pub use texture_atlas::{AtlasSubregionHandle, *};
 
 use crate::assets::AssetHandle;
 
