@@ -287,7 +287,6 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
                         .waiting_for_window_event
                         .load(std::sync::atomic::Ordering::Relaxed)
                 {
-                    debug!("Send initDone from resized");
                     let _ = self.event_loop_proxy.send_event(CustomWinitEvent::InitDone);
                 }
             }
