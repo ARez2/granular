@@ -124,7 +124,10 @@ impl InputSystem {
         match self.actions.get(name) {
             Some(action) => action.pressed,
             None => {
-                warn!("is_action_pressed: Action '{}' does not exist. Create it by calling add_action.", name);
+                warn!(
+                    "is_action_pressed: Action '{}' does not exist. Create it by calling add_action.",
+                    name
+                );
                 false
             }
         }
@@ -136,7 +139,10 @@ impl InputSystem {
         match self.actions.get(name) {
             Some(action) => action.just_pressed,
             None => {
-                warn!("is_action_just_pressed: Action '{}' does not exist. Create it by calling add_action.", name);
+                warn!(
+                    "is_action_just_pressed: Action '{}' does not exist. Create it by calling add_action.",
+                    name
+                );
                 false
             }
         }
@@ -183,14 +189,12 @@ impl InputSystem {
     pub(crate) fn handle_keyevent(&mut self, event: &KeyEvent) {
         self.actions.iter_mut().for_each(|(key, action)| {
             action.triggers.iter().for_each(|trigger| {
-                if let InputActionTriggerReason::Key(trigger_key) = trigger.reason {
-                    if event.physical_key == trigger_key
-                        && self.current_modifiers == trigger.modifiers
-                    {
-                        action.just_pressed =
-                            event.state == ElementState::Pressed && event.repeat == false;
-                        action.pressed = event.state == ElementState::Pressed;
-                    };
+                if let InputActionTriggerReason::Key(trigger_key) = trigger.reason
+                    && event.physical_key == trigger_key
+                    && self.current_modifiers == trigger.modifiers
+                {
+                    action.just_pressed = event.state == ElementState::Pressed && !event.repeat;
+                    action.pressed = event.state == ElementState::Pressed;
                 };
             });
         });
@@ -200,11 +204,12 @@ impl InputSystem {
     pub(crate) fn handle_mouse_input(&mut self, button: MouseButton, state: ElementState) {
         self.actions.values_mut().for_each(|action| {
             action.triggers.iter().for_each(|trigger| {
-                if let InputActionTriggerReason::Mouse(trigger_button) = trigger.reason {
-                    if button == trigger_button && self.current_modifiers == trigger.modifiers {
-                        action.just_pressed = state == ElementState::Pressed;
-                        action.pressed = state == ElementState::Pressed;
-                    };
+                if let InputActionTriggerReason::Mouse(trigger_button) = trigger.reason
+                    && button == trigger_button
+                    && self.current_modifiers == trigger.modifiers
+                {
+                    action.just_pressed = state == ElementState::Pressed;
+                    action.pressed = state == ElementState::Pressed;
                 };
             });
         });

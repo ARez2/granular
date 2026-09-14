@@ -2,14 +2,12 @@ struct VertexInput {
     @location(0) position: vec2<i32>,
     @location(1) color: vec4<f32>,
     @location(2) tex_coords: vec2<f32>,
-    @location(3) tex_index: i32,
 }
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) tex_coords: vec2<f32>,
-    @location(2) tex_index: i32,
 }
 
 struct Globals {
@@ -27,18 +25,24 @@ fn vert_main(in: VertexInput) -> VertexOutput {
     out.clip_position = globals.canvas_transform * vec4<f32>(vec2<f32>(in.position), 0.0, 1.0);
     out.color = in.color;
     out.tex_coords = in.tex_coords;
-    out.tex_index = in.tex_index;
     return out;
 }
 
-@group(0) @binding(1)
-var textures: binding_array<texture_2d<f32>>;
-@group(0) @binding(2)
-var samplers: binding_array<sampler>;
+@group(1) @binding(0)
+var texture_atlas: texture_2d<f32>;
+@group(1) @binding(1)
+var texture_atlas_sampler: sampler;
 
 
 @fragment
-fn uniform_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    var index: i32 = in.tex_index;
-    return textureSample(textures[index], samplers[index], vec2<f32>(in.tex_coords.x, 1.0 - in.tex_coords.y)) * in.color;
+fn fragment_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let tex_color = textureSample(
+        texture_atlas,
+        texture_atlas_sampler,
+        vec2<f32>(
+            in.tex_coords.x,
+            in.tex_coords.y
+        )
+    );
+    return tex_color * in.color;
 }

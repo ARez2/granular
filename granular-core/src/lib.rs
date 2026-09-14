@@ -1,20 +1,27 @@
 use rustc_hash::FxHashMap as HashMap;
 use std::{
     marker::PhantomData,
-    time::{Duration, Instant},
+    sync::{Arc, atomic::AtomicBool},
 };
+use web_time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
+    dpi::{LogicalSize, PhysicalSize},
     event::{DeviceEvent, DeviceId, WindowEvent},
-    event_loop::ActiveEventLoop,
+    event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     window::WindowId,
 };
 
-pub mod utils;
-use utils::*;
+pub mod future_executor;
 
-#[cfg(feature = "trace")]
-use tracing_tracy::client::frame_mark;
+mod rect;
+pub use rect::Rect;
+
+pub mod utils;
+pub use utils::*;
+
+mod time_system;
+pub use time_system::TimeSystem;
 
 pub mod assets;
 pub use assets::AssetSystem;
@@ -22,21 +29,32 @@ pub use assets::AssetSystem;
 //mod tick;
 pub mod graphics;
 pub use graphics::{BatchRenderer, Camera};
-use graphics::{Renderer, WindowSystem};
+use graphics::{GameRenderer, GraphicsSystem, WindowSystem};
 
-mod eventloop_system;
-pub use eventloop_system::EventLoopSystem;
-
-mod filewatcher;
+pub mod filewatcher;
 use filewatcher::FileWatcher;
 
 pub mod input_system;
 pub use input_system::{InputAction, InputActionTrigger, InputSystem};
 
-pub mod simulation;
-pub use simulation::*;
+pub mod prelude {
+    pub use super::{
+        AssetSystem, BatchRenderer, Camera, GranularEngine,
+        assets::{self, AssetHandle},
+        events,
+        graphics::{
+            self, GraphicsSystem, Texture2D, TextureBundle, TextureBundleLoadSettings, WindowSystem,
+        },
+        input_system::*,
+        rect::Rect,
+        time_system::TimeSystem,
+        utils::*,
+    };
+}
 
 pub mod events {
+    use winit::dpi::PhysicalSize;
+
     pub struct Initialized {}
 
     pub mod timing {
@@ -45,103 +63,147 @@ pub mod events {
 
         /// Gets sent out every T milliseconds
         pub struct FixedTick<const N: u64>;
-        pub const FIXED_TICKS: [u64; 4] = [5000, 2500, 1000, 16];
+        pub const FIXED_TICKS: [u64; 5] = [5000, 2500, 1000, 16, 1];
+        // Emitted every frame and used to let things tick without the outer application seeing it
+        pub(crate) struct InternalTick;
     }
 
-    pub struct Draw;
+    pub struct Resized {
+        pub new_size: PhysicalSize<u32>,
+    }
 }
 
-#[derive(Debug)]
+enum CustomWinitEvent {
+    GraphicsSystemInitialized { state: graphics::GraphicsState },
+    WindowResized(PhysicalSize<u32>),
+    InitDone,
+}
+
+/// Control flow:
+///     On winit resumed:  Uninitialized => Preparing
+///     if user called WindowSystem::set_window_size() in their Game::new():
+///         On CustomWinitEvent::WindowResized:   Preparing => Running
+///     else:
+///         On winit::new_events (with cause = Poll):  Preparing => Running
+///
+/// Note: This "if" ensures that the surface/ camera resize is already done by the time the user
+/// receives its event::Initialized, so he can use the correct window/surface size from there
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
+enum EngineState {
+    Uninitialized,
+    PrepareGraphics,
+    PreparingBeforeRun,
+    Running,
+}
+
 pub struct GranularEngine<AppSystem: GeeseSystem + std::fmt::Debug> {
     ctx: GeeseContext,
+    game_resolution: LogicalSize<u32>,
+    event_loop: Option<EventLoop<CustomWinitEvent>>,
+    event_loop_proxy: EventLoopProxy<CustomWinitEvent>,
+    state: EngineState,
+    /// See explanation on `EngineState`
+    waiting_for_window_event: Arc<AtomicBool>,
     /// Current frame
     frame: u64,
     /// When each tick (in ms) last occured
     last_ticks: HashMap<Duration, Instant>,
     application: PhantomData<AppSystem>,
+    last_handled_resize: Option<PhysicalSize<u32>>,
 }
-impl<AppSystem: GeeseSystem + std::fmt::Debug> Default for GranularEngine<AppSystem> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+#[profiling::all_functions]
 impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
-    pub fn new() -> Self {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GranularEngine::new").entered();
-
-        let mut ctx: GeeseContext = GeeseContext::default();
-        ctx.flush()
-            .with(geese::notify::add_system::<WindowSystem>())
-            .with(geese::notify::add_system::<EventLoopSystem>())
-            .with(geese::notify::add_system::<FileWatcher>())
-            .with(geese::notify::add_system::<InputSystem>());
-
+    // This game resolution is the size that the game renders at (<= display/ window size)
+    pub fn new(game_resolution: LogicalSize<u32>) -> Self {
         let now = Instant::now();
         let mut last_ticks = HashMap::default();
         for fixed_tick in events::timing::FIXED_TICKS {
             last_ticks.insert(Duration::from_millis(fixed_tick), now);
         }
 
+        let mut ctx = GeeseContext::default();
+        ctx.flush()
+            .with(geese::notify::add_system::<WindowSystem>())
+            .with(geese::notify::add_system::<GraphicsSystem>())
+            .with(geese::notify::add_system::<FutureExecutor>())
+            .with(geese::notify::add_system::<FileWatcher>())
+            .with(geese::notify::add_system::<TimeSystem>())
+            .with(geese::notify::add_system::<InputSystem>());
+
+        trace!("Core systems added.");
+
+        let event_loop = EventLoop::with_user_event().build().unwrap();
+        event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+        let proxy = event_loop.create_proxy();
+
         Self {
             ctx,
+            game_resolution,
+            event_loop: Some(event_loop),
+            event_loop_proxy: proxy,
+            state: EngineState::Uninitialized,
+            waiting_for_window_event: Arc::new(AtomicBool::new(false)),
             frame: 0,
             last_ticks,
             application: PhantomData,
+            last_handled_resize: None,
         }
     }
 
+    #[profiling::skip]
     pub fn get_ctx(&mut self) -> &mut GeeseContext {
         &mut self.ctx
     }
 
-    pub fn run(&mut self) {
-        info!("GranularEngine run");
-        let mut event_loop_sys = self.ctx.get_mut::<EventLoopSystem>();
-        let event_loop = event_loop_sys.take();
-        drop(event_loop_sys);
-        event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
-        let _ = event_loop.run_app(self);
-    }
-
-    pub fn update(&mut self) {
+    /// Invokes the main loop
+    #[profiling::skip]
+    pub fn run(mut self) {
         #[cfg(feature = "trace")]
-        let _span = info_span!("GranularEngine::update").entered();
+        tracy_client::Client::start();
+
+        let event_loop = self
+            .event_loop
+            .take()
+            .expect("Event loop was already taken!");
+        #[cfg(target_arch = "wasm32")]
+        {
+            use winit::platform::web::EventLoopExtWebSys;
+            event_loop.spawn_app(self);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        event_loop.run_app(&mut self).unwrap();
     }
 
+    pub fn update(&mut self) {}
+
+    /// Responsible for emitting the right `events::timing::Tick` or `events::timing::FixedTick`
     pub fn handle_scheduling(&mut self) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GranularEngine::handle_scheduling").entered();
         let mut buffer = geese::EventBuffer::default().with(events::timing::Tick::<1>);
 
         let now = Instant::now();
-        self.last_ticks.iter_mut().for_each(|(tickrate, last)| {
+        for (tickrate, last) in &mut self.last_ticks {
             if *last + *tickrate < now {
                 *last = now;
-                let tickrate_millis = tickrate.as_millis() as u64;
-                match tickrate_millis {
-                    16 => {
-                        self.ctx.flush().with(events::timing::FixedTick::<16>);
-                    }
-                    1000 => {
-                        self.ctx.flush().with(events::timing::FixedTick::<1000>);
-                    }
-                    2500 => {
-                        self.ctx.flush().with(events::timing::FixedTick::<2500>);
-                    }
-                    5000 => {
-                        self.ctx.flush().with(events::timing::FixedTick::<5000>);
-                    }
-                    _ => (),
-                };
+
+                match tickrate.as_millis() as u64 {
+                    1 => buffer = buffer.with(events::timing::FixedTick::<1>),
+                    16 => buffer = buffer.with(events::timing::FixedTick::<16>),
+                    1000 => buffer = buffer.with(events::timing::FixedTick::<1000>),
+                    2500 => buffer = buffer.with(events::timing::FixedTick::<2500>),
+                    5000 => buffer = buffer.with(events::timing::FixedTick::<5000>),
+                    _ => {}
+                }
             }
-        });
+        }
 
         if self.frame.is_multiple_of(60) {
             buffer = buffer.with(events::timing::Tick::<60>);
         };
         if self.frame.is_multiple_of(30) {
             buffer = buffer.with(events::timing::Tick::<30>);
+        };
+        if self.frame.is_multiple_of(10) {
+            buffer = buffer.with(events::timing::Tick::<10>);
         };
         if self.frame.is_multiple_of(2) {
             buffer = buffer.with(events::timing::Tick::<2>);
@@ -150,41 +212,124 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
 
         self.ctx.flush().with_buffer(buffer);
     }
+
+    /// Resizes the surface with the new_size
+    fn resize(&mut self, new_size: PhysicalSize<u32>) {
+        if let Some(size) = self.last_handled_resize
+            && size == new_size
+        {
+            trace!("Resize of this size was already handled before! Returning...");
+            return;
+        }
+        {
+            let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+            graphics_sys.resize_surface(new_size);
+            #[cfg(target_os = "macos")]
+            graphics_sys.request_redraw();
+        }
+        {
+            let mut camera = self.ctx.get_mut::<Camera>();
+            camera.set_screen_size((new_size.width, new_size.height));
+        }
+        self.last_handled_resize = Some(new_size);
+        self.ctx.flush().with(events::Resized { new_size });
+    }
 }
+#[profiling::all_functions]
 // Implement the winit::ApplicationHandler trait
-impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler for GranularEngine<AppSystem> {
+impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEvent>
+    for GranularEngine<AppSystem>
+{
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GranularEngine::resumed").entered();
-        info!("Resumed!");
         {
             let mut window_sys = self.ctx.get_mut::<WindowSystem>();
-            window_sys.init(event_loop);
+            window_sys.init(
+                event_loop,
+                self.event_loop_proxy.clone(),
+                self.waiting_for_window_event.clone(),
+            );
         }
-        self.ctx
-            .flush()
-            .with(geese::notify::add_system::<Renderer>())
-            .with(geese::notify::add_system::<AssetSystem>())
-            .with(geese::notify::add_system::<Simulation>())
-            .with(geese::notify::add_system::<AppSystem>())
-            .with(events::Initialized {});
+        {
+            let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+            graphics_sys.init(
+                event_loop,
+                self.event_loop_proxy.clone(),
+                self.game_resolution,
+            );
+        }
+        self.state = EngineState::PrepareGraphics;
+    }
+
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: CustomWinitEvent) {
+        match event {
+            CustomWinitEvent::GraphicsSystemInitialized { state } => {
+                let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+                graphics_sys.initialize_callback(state);
+                drop(graphics_sys);
+
+                self.state = EngineState::PreparingBeforeRun;
+                trace!("Graphics initialized");
+
+                self.ctx
+                    .flush()
+                    .with(geese::notify::add_system::<AssetSystem>())
+                    .with(geese::notify::add_system::<Camera>())
+                    .with(geese::notify::add_system::<GameRenderer>())
+                    .with(geese::notify::delayed(
+                        geese::notify::add_system::<AppSystem>(),
+                    ));
+            }
+            CustomWinitEvent::WindowResized(new_size) => {
+                self.resize(new_size);
+                // See explanation on `EngineState`
+                if self.state != EngineState::Running
+                    && self
+                        .waiting_for_window_event
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    let _ = self.event_loop_proxy.send_event(CustomWinitEvent::InitDone);
+                }
+            }
+            CustomWinitEvent::InitDone => {
+                if self.state == EngineState::PreparingBeforeRun {
+                    self.ctx.flush().with(events::Initialized {});
+                    self.state = EngineState::Running;
+                }
+            }
+        }
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GranularEngine::exiting").entered();
         info!("Exiting...");
     }
 
+    // This cause will pretty much always be winit::event::StartCause::Poll
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: winit::event::StartCause) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GranularEngine::new_events").entered();
+        self.ctx.flush().with(events::timing::InternalTick);
+        // Only run the following if the Graphics, Window etc. are initialized
+        if self.state != EngineState::Running {
+            // See explanation on `EngineState`
+            if self.state == EngineState::PreparingBeforeRun {
+                {
+                    self.ctx.get::<GraphicsSystem>().request_redraw();
+                }
+                if !self
+                    .waiting_for_window_event
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    let _ = self.event_loop_proxy.send_event(CustomWinitEvent::InitDone);
+                }
+            }
+            return;
+        }
+
         {
             let mut input = self.ctx.get_mut::<InputSystem>();
             input.reset_just_pressed();
         }
         self.update();
         self.handle_scheduling();
+        self.ctx.get_mut::<TimeSystem>().mark_frame();
         self.frame += 1;
     }
 
@@ -194,59 +339,46 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler for GranularEn
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        #[cfg(feature = "trace")]
-        let _span = info_span!("GranularEngine::window_event").entered();
+        if self.state < EngineState::PreparingBeforeRun {
+            return;
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {
-                #[cfg(feature = "trace")]
-                let _span = info_span!("WindowEvent::Resized").entered();
-                let mut renderer = self.ctx.get_mut::<Renderer>();
-                renderer.resize(new_size);
-                #[cfg(target_os = "macos")]
-                graphics.request_redraw();
+                self.resize(new_size);
             }
             WindowEvent::ModifiersChanged(modifiers) => {
-                #[cfg(feature = "trace")]
-                let _span = info_span!("WindowEvent::ModifiersChanged").entered();
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.update_modifiers(&modifiers);
             }
             WindowEvent::RedrawRequested => {
-                #[cfg(feature = "trace")]
-                let _span = info_span!("WindowEvent::RedrawRequested").entered();
+                {
+                    let camera = self.ctx.get::<Camera>();
+                    camera.write_canvas_transform_buffer();
+                }
+                {
+                    let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+                    graphics_sys.start_rendering();
+                }
 
-                self.ctx.flush().with(events::Draw);
-                let mut renderer = self.ctx.get_mut::<Renderer>();
-                renderer.start_frame();
-                renderer.render();
-                renderer.end_frame();
-                renderer.request_redraw();
-
-                #[cfg(feature = "trace")]
-                frame_mark();
+                profiling::finish_frame!();
             }
             WindowEvent::KeyboardInput {
                 event,
                 is_synthetic: false,
                 ..
             } => {
-                #[cfg(feature = "trace")]
-                let _span = info_span!("WindowEvent::KeyboardInput").entered();
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.handle_keyevent(&event);
             }
             WindowEvent::CursorMoved { position, .. } => {
-                #[cfg(feature = "trace")]
-                let _span = info_span!("WindowEvent::CursorMoved").entered();
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.handle_cursor_movement(position);
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                #[cfg(feature = "trace")]
-                let _span = info_span!("WindowEvent::MouseInput").entered();
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.handle_mouse_input(button, state);
             }
@@ -279,13 +411,12 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler for GranularEn
             | WindowEvent::Focused(_)
             | WindowEvent::ScaleFactorChanged { .. }
             | WindowEvent::ThemeChanged(_) => {
-                #[cfg(feature = "trace")]
-                let _span = info_span!("Other WindowEvent").entered();
                 self.ctx.flush().with(event);
             }
         };
     }
 
+    #[profiling::skip]
     fn device_event(
         &mut self,
         _event_loop: &ActiveEventLoop,

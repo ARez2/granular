@@ -1,0 +1,37 @@
+[package]
+name = "simulation"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+trace = [
+    "dep:tracy-client",
+    "dep:wgpu-profiler",
+    "profiling/profile-with-tracy",
+]
+
+[dependencies]
+granular-core = { path = "../granular-core" }
+proc_macros.workspace = true
+encase.workspace = true
+wgpu.workspace = true
+glam.workspace = true
+web-time.workspace = true
+anyhow.workspace = true
+bytemuck.workspace = true
+palette.workspace = true
+rustc-hash = "1.1.0"
+wgsl_preprocessor.workspace = true
+strum.workspace = true
+num_enum.workspace = true
+
+# Profiling
+profiling.workspace = true
+naga = { version = "30.0.1", features = ["wgsl-in"] }
+
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Profiling
+wgpu-profiler = { workspace = true, optional = true }
+tracy-client = { workspace = true, optional = true }

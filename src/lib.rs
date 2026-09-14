@@ -1,10 +1,12 @@
 pub mod prelude {
-    pub use granular_core::{
-        assets::{AssetHandle, TextureAsset},
-        events,
-        graphics::{self, WindowSystem},
-        input_system::*,
-        utils::*,
-        AssetSystem, BatchRenderer, Camera, GranularEngine, Simulation,
-    };
+    pub use glam::prelude::*;
+    pub use granular_core::prelude::*;
+    pub use simulation::Simulation;
+    pub use wgpu::{Extent3d, FilterMode, TextureFormat};
+    pub use wgsl_preprocessor;
 }
+
+pub use glam;
+pub use granular_core::*;
+pub use simulation;
+pub use wgpu;
