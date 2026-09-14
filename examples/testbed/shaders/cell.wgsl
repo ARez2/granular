@@ -7,12 +7,8 @@ struct Cell {
     color: vec4f
 }
 
-fn new_cell(material: u32, velocity: vec2f) -> Cell {
-    return Cell(material, velocity, 0.1234, get_material_color(material));
-}
-
 fn new_empty() -> Cell {
-    return new_cell(0, vec2f(0.0));
+    return Cell(MAT_EMPTY, vec2f(0.0), 0.1234, vec4f(0.0, 0.0, 0.0, 1.0));
 }
 
 /// Checks for equality between two cells. Remember to update this!

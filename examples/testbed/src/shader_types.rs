@@ -1,10 +1,10 @@
 use encase::ShaderType;
 use granular::prelude::*;
+use granular::simulation::prelude::*;
 
-#[repr(u32)]
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[MatName]
 pub enum MaterialName {
-    Empty,
+    Empty, // Needs to exist
     Sand,
     Water,
     Rock,

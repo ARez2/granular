@@ -2,6 +2,7 @@ use fern::colors::{Color, ColoredLevelConfig};
 use granular::{
     graphics::{BindGroupBuilder, DynamicTextureAtlas, TextureHandle},
     prelude::*,
+    simulation::prelude::*,
 };
 use winit::{
     dpi::LogicalSize,
@@ -25,9 +26,6 @@ pub fn run() {
     let engine = GranularEngine::<Game>::new(LogicalSize::new(640, 480));
     engine.run();
 }
-
-#[include_wgsl_oil::include_wgsl_oil("../shaders/material.wgsl")]
-pub mod material_shader {}
 
 type MySimulation =
     Simulation<shader_types::MaterialName, shader_types::Material, shader_types::Cell>;
@@ -98,7 +96,7 @@ impl Game {
             );
             self.add_material(
                 shader_types::MaterialName::Sand,
-                shader_types::Material::new(0.0),
+                shader_types::Material::new(2.0),
                 MatColor::Tex(sand_tex),
             );
             self.add_material(
@@ -108,21 +106,21 @@ impl Game {
             );
             self.add_material(
                 shader_types::MaterialName::Rock,
-                shader_types::Material::new(0.0),
+                shader_types::Material::new(5.0),
                 MatColor::Tex(rock_tex),
             );
 
             let mut simulation = self.ctx.get_mut::<MySimulation>();
             simulation.init_simulation(
                 granular::simulation::UserShaderInput {
-                    main_shader: granular::simulation::include_file!("shaders/definitions.wgsl"),
+                    main_shader: include_file!("shaders/definitions.wgsl"),
                     includes: vec![
-                        granular::simulation::include_file!("shaders/cell.wgsl"),
-                        granular::simulation::include_file!("shaders/material.wgsl"),
+                        include_file!("shaders/cell.wgsl"),
+                        include_file!("shaders/material.wgsl"),
                     ],
                 },
                 granular::simulation::UserShaderInput {
-                    main_shader: granular::simulation::include_file!("shaders/display.wgsl"),
+                    main_shader: include_file!("shaders/display.wgsl"),
                     includes: vec![],
                 },
                 self.materials_bg.take().unwrap(),
@@ -334,7 +332,7 @@ impl GeeseSystem for Game {
 
         {
             let mut win_sys = ctx.get_mut::<WindowSystem>();
-            // win_sys.set_window_size(winit::dpi::PhysicalSize::new(640, 480));
+            win_sys.set_window_size(winit::dpi::PhysicalSize::new(865, 559));
             win_sys.set_title("Granular engine testbed");
         }
 

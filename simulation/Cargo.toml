@@ -13,7 +13,7 @@ trace = [
 
 [dependencies]
 granular-core = { path = "../granular-core" }
-include-wgsl-oil.workspace = true
+proc_macros.workspace = true
 encase.workspace = true
 wgpu.workspace = true
 glam.workspace = true
@@ -23,9 +23,12 @@ bytemuck.workspace = true
 palette.workspace = true
 rustc-hash = "1.1.0"
 wgsl_preprocessor.workspace = true
+strum.workspace = true
+num_enum.workspace = true
 
 # Profiling
 profiling.workspace = true
+naga = { version = "30.0.1", features = ["wgsl-in"] }
 
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

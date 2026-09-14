@@ -1,38 +1,67 @@
 #![feature(trait_alias)]
 
-use encase::{DynamicStorageBuffer, ShaderType, UniformBuffer};
+use encase::{ShaderType, UniformBuffer};
 use glam::prelude::*;
 use granular_core::{
     filewatcher::{self, FileWatcher},
-    graphics::{BindGroupBuilder, DynamicTextureAtlas, TextureHandle},
+    graphics::BindGroupBuilder,
     prelude::*,
 };
+use naga::valid::{Capabilities, ValidationFlags, Validator};
 use rustc_hash::FxHashMap as HashMap;
-use std::borrow::Cow;
-use std::hash::Hash;
 #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
 use std::path::PathBuf;
+use std::{borrow::Cow, fmt::Display};
 use web_time::{Duration, Instant};
-use wgpu::{BindGroup, BindGroupLayout, Buffer, util::DeviceExt};
-pub use wgsl_preprocessor::include_file;
+use wgpu::{Buffer, util::DeviceExt};
+use wgsl_preprocessor::include_file;
+
+pub mod prelude {
+    pub use super::UserShaderInput;
+    pub use num_enum::IntoPrimitive;
+    pub use proc_macros::MatName;
+    pub use strum;
+    pub use wgsl_preprocessor::include_file;
+}
+
+#[doc(hidden)]
+pub mod __macro_support {
+    pub use num_enum;
+    pub use strum;
+}
 
 pub const GRID_WIDTH: u32 = 128;
 pub const GRID_HEIGHT: u32 = 128;
 
 mod shader_types;
 
-pub trait MaterialName = Sized + 'static + Hash + PartialEq + Eq;
+/// Is automatically implemented when you add `#[MatName]` (from `granular::simulation::prelude`) to your material name enum
+pub trait MatName:
+    'static
+    + core::fmt::Debug
+    + Display
+    + Clone
+    + Copy
+    + core::hash::Hash
+    + PartialEq
+    + Eq
+    + strum::IntoEnumIterator
+    + Into<u32>
+{
+}
+/// Needs `#[derive(ShaderType, Clone)]` and a `Default` implementation
+pub trait MaterialShaderStruct = 'static
+    + Default
+    + Clone
+    + encase::ShaderType
+    + encase::ShaderSize
+    + encase::internal::WriteInto;
+/// Needs `#[derive(ShaderType, Clone, Copy)]` and a `Default` implementation
 pub trait CellStruct = Sized
     + 'static
     + Default
     + Clone
     + Copy
-    + encase::ShaderType
-    + encase::ShaderSize
-    + encase::internal::WriteInto;
-pub trait MaterialShaderStruct = 'static
-    + Default
-    + Clone
     + encase::ShaderType
     + encase::ShaderSize
     + encase::internal::WriteInto;
@@ -60,8 +89,19 @@ impl encase::internal::BufferMut for EncaseStaging<'_> {
     }
 }
 
+fn validate_wgsl(source: &str) -> Result<(), String> {
+    let module =
+        naga::front::wgsl::parse_str(source).map_err(|error| error.emit_to_string(source))?;
+
+    Validator::new(ValidationFlags::all(), Capabilities::default())
+        .validate(&module)
+        .map_err(|error| error.emit_to_string(source))?;
+
+    Ok(())
+}
+
 /// A falling sand simulation framework. Call `init_simulation` ASAP to initialize the simulation! Otherwise it will not run!
-pub struct Simulation<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> {
+pub struct Simulation<N: MatName, M: MaterialShaderStruct, C: CellStruct> {
     ctx: GeeseContextHandle<Self>,
     pub frame: u64,
     pub tickrate: Duration,
@@ -105,7 +145,7 @@ pub struct Simulation<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> {
     /// The GPU memory containing the materials
     materials_ssbo: Buffer,
 }
-impl<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
+impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
     fn update(&mut self, _: &granular_core::graphics::events::RecordGameRenderingCommands) {
         if self.compute_pipelines.is_empty() {
             return;
@@ -161,7 +201,9 @@ impl<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C
             .queue
             .write_buffer(&self.params_buffer, 0, &self.params_bytes);
 
-        self.last_tick = Instant::now();
+        if !dt.is_zero() {
+            self.last_tick = Instant::now();
+        }
         drop(graphics_sys);
     }
 
@@ -290,35 +332,19 @@ impl<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C
                     immediate_size: 0,
                 }),
         );
-        let compute_shader_res = Self::build_compute_shader(
-            self.user_definitions_shader.clone().unwrap(),
-            self.user_display_shader.clone().unwrap(),
-        );
-        if let Ok((compute_shader_source, deps)) = compute_shader_res {
-            #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
-            {
-                self.shader_paths = deps;
-            }
-
-            let graphics_sys = self.ctx.get::<GraphicsSystem>();
-            let device = graphics_sys.device();
-            let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("Simulation main compute shader"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Owned(compute_shader_source)),
-            });
-            self.compute_pipelines = Self::create_compute_pipelines(
-                device,
-                self.compute_pl_layout.as_ref().unwrap(),
-                &shader_module,
-            )
-        }
+        self.build_compute_shader();
     }
 
     /// Assembles the compute shader and returns the shader source as well as a list of dependencies
-    fn build_compute_shader(
-        definitions_shader: UserShaderInput,
-        display_shader: UserShaderInput,
-    ) -> anyhow::Result<(String, Vec<PathBuf>)> {
+    fn build_compute_shader(&mut self) {
+        let Some(definitions_shader) = self.user_definitions_shader.clone() else {
+            error!("User definitions shader not set!");
+            return;
+        };
+        let Some(display_shader) = self.user_display_shader.clone() else {
+            error!("User display shader not set!");
+            return;
+        };
         let definitions_shader_res = wgsl_preprocessor::Preprocessor::new(
             definitions_shader.main_shader,
             definitions_shader.includes,
@@ -326,10 +352,33 @@ impl<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C
         .build();
 
         if let Err(e) = definitions_shader_res {
-            error!("Error while processing users definition shader: {}", e);
-            return Err(e.into());
+            error!("Error while preprocessing users definition shader: {}", e);
+            return;
         }
         let mut definitions_shader = definitions_shader_res.unwrap();
+
+        let mut material_constants = String::new();
+        for mat_name in N::iter() {
+            let mat_idx: u32 = mat_name.into();
+            let wgsl_string = format!(
+                "const MAT_{}: u32 = {};\n",
+                mat_name.to_string().to_uppercase(),
+                mat_idx
+            );
+
+            material_constants.push_str(&wgsl_string);
+        }
+        material_constants.push('\n');
+        definitions_shader.source.insert_str(0, &material_constants);
+
+        if let Err(e) = validate_wgsl(&definitions_shader.source) {
+            error!(
+                "Error while validating user definitions shader with inserted material name constants: {}",
+                e
+            );
+            error!("Shader source: \n{}", definitions_shader.source);
+            return;
+        }
 
         let display_shader_res = wgsl_preprocessor::Preprocessor::new(
             display_shader.main_shader,
@@ -338,11 +387,10 @@ impl<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C
         .build();
 
         if let Err(e) = display_shader_res {
-            error!("Error while processing users definition shader: {}", e);
-            return Err(e.into());
+            error!("Error while preprocessing users definition shader: {}", e);
+            return;
         }
         let mut display_shader = display_shader_res.unwrap();
-
         let mut compute_shader = wgsl_preprocessor::Preprocessor::new(
             include_file!("shaders/compute.wgsl"),
             vec![
@@ -360,10 +408,10 @@ impl<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C
 
         if let Err(e) = compute_shader_res {
             error!(
-                "Error while processing simulation main compute shader: {}",
+                "Error while preprocessing simulation main compute shader: {}",
                 e
             );
-            return Err(e.into());
+            return;
         }
         let mut compute_shader = compute_shader_res.unwrap();
         compute_shader
@@ -373,7 +421,22 @@ impl<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C
             .dependencies
             .append(&mut display_shader.dependencies);
 
-        Ok((compute_shader.source, compute_shader.dependencies))
+        #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+        {
+            self.shader_paths = compute_shader.dependencies;
+        }
+
+        let graphics_sys = self.ctx.get::<GraphicsSystem>();
+        let device = graphics_sys.device();
+        let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Simulation main compute shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(compute_shader.source)),
+        });
+        self.compute_pipelines = Self::create_compute_pipelines(
+            device,
+            self.compute_pl_layout.as_ref().unwrap(),
+            &shader_module,
+        )
     }
 
     fn create_compute_pipelines(
@@ -440,7 +503,7 @@ impl<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C
         ]
     }
 }
-impl<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulation<N, M, C> {
+impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulation<N, M, C> {
     const DEPENDENCIES: Dependencies = dependencies()
         .with::<Mut<GraphicsSystem>>()
         .with::<Mut<BatchRenderer>>()
@@ -732,8 +795,8 @@ impl<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Si
         Self {
             ctx,
             frame: 0,
-            tickrate: Duration::from_millis(16),
-            last_tick: Instant::now() - Duration::from_secs(1),
+            tickrate: Duration::from_millis(16 * 3),
+            last_tick: Instant::now() + Duration::from_secs_f32(1.0),
             accumulator: Duration::ZERO,
 
             cells_read_ssbo,

@@ -35,10 +35,11 @@ fn move_or_swap(source_idx: u32, destination_idx: u32) {
 }
 
 fn try_density_move_or_swap(source_idx: u32, destination_idx: u32) -> bool {
-    let own_density = get_density(current_cells[source_idx].material);
+    let source = current_cells[source_idx];
+    let own_material = materials[source.material];
     let destination = current_cells[destination_idx];
-    let destination_density = get_density(destination.material);
-    if destination_density < own_density {
+    let destination_material = materials[destination.material];
+    if destination_material.density < own_material.density {
         move_or_swap(source_idx, destination_idx);
         return true;
     }
@@ -47,7 +48,8 @@ fn try_density_move_or_swap(source_idx: u32, destination_idx: u32) -> bool {
 
 
 fn sweep_density(source_idx: u32, start_pos: vec2i, end_pos: vec2i) -> vec2i {
-    let own_density = get_density(current_cells[source_idx].material);
+    let source = current_cells[source_idx];
+    let own_material = materials[source.material];
     let line = bresenham(start_pos, end_pos);
 
     var last_valid: vec2i = start_pos;
@@ -65,8 +67,8 @@ fn sweep_density(source_idx: u32, start_pos: vec2i, end_pos: vec2i) -> vec2i {
         }
         let dest_idx = idx_res.index;
         let destination = current_cells[dest_idx];
-        let destination_density = get_density(destination.material);
-        if destination_density < own_density {
+        let destination_material = materials[destination.material];
+        if destination_material.density < own_material.density {
             last_valid = p;
         } else {
             break;
