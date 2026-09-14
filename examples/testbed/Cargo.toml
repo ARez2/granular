@@ -14,6 +14,8 @@ geese.workspace = true
 palette.workspace = true
 # web-time.workspace = true
 winit.workspace = true
+include-wgsl-oil.workspace = true
+encase.workspace = true
 
 fern = { version = "0.7.1", features = ["colored"] }
 regex = "1.10.3"

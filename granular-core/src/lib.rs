@@ -31,7 +31,7 @@ pub mod graphics;
 pub use graphics::{BatchRenderer, Camera};
 use graphics::{GameRenderer, GraphicsSystem, WindowSystem};
 
-mod filewatcher;
+pub mod filewatcher;
 use filewatcher::FileWatcher;
 
 pub mod input_system;

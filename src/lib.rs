@@ -3,8 +3,10 @@ pub mod prelude {
     pub use granular_core::prelude::*;
     pub use simulation::Simulation;
     pub use wgpu::{Extent3d, FilterMode, TextureFormat};
+    pub use wgsl_preprocessor;
 }
 
+pub use glam;
 pub use granular_core::*;
 pub use simulation;
 pub use wgpu;

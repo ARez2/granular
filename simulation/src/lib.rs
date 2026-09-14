@@ -1,67 +1,115 @@
 #![feature(trait_alias)]
 
-use encase::{DynamicStorageBuffer, UniformBuffer};
+use encase::{DynamicStorageBuffer, ShaderType, UniformBuffer};
 use glam::prelude::*;
 use granular_core::{
-    graphics::{BindGroupBuilder, DynamicTextureAtlas, IntoGpuColor, TextureHandle},
+    filewatcher::{self, FileWatcher},
+    graphics::{BindGroupBuilder, DynamicTextureAtlas, TextureHandle},
     prelude::*,
 };
 use rustc_hash::FxHashMap as HashMap;
 use std::borrow::Cow;
 use std::hash::Hash;
+#[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+use std::path::PathBuf;
 use web_time::{Duration, Instant};
 use wgpu::{BindGroup, BindGroupLayout, Buffer, util::DeviceExt};
+pub use wgsl_preprocessor::include_file;
 
-#[include_wgsl_oil::include_wgsl_oil("../shaders/shared.wgsl")]
-pub mod shared_shader {}
+pub const GRID_WIDTH: u32 = 128;
+pub const GRID_HEIGHT: u32 = 128;
 
-#[include_wgsl_oil::include_wgsl_oil("../shaders/cell.wgsl")]
-pub mod cell_shader {}
+mod shader_types;
 
-#[include_wgsl_oil::include_wgsl_oil("../shaders/compute.wgsl")]
-mod compute_shader {}
+pub trait MaterialName = Sized + 'static + Hash + PartialEq + Eq;
+pub trait CellStruct = Sized
+    + 'static
+    + Default
+    + Clone
+    + Copy
+    + encase::ShaderType
+    + encase::ShaderSize
+    + encase::internal::WriteInto;
+pub trait MaterialShaderStruct = 'static
+    + Default
+    + Clone
+    + encase::ShaderType
+    + encase::ShaderSize
+    + encase::internal::WriteInto;
 
-#[include_wgsl_oil::include_wgsl_oil("../shaders/material.wgsl")]
-pub mod material_shader {}
+#[derive(Debug, Clone)]
+pub struct UserShaderInput {
+    pub main_shader: wgsl_preprocessor::IncludedFile,
+    pub includes: Vec<wgsl_preprocessor::IncludedFile>,
+}
 
-pub trait MaterialSet = Sized + 'static + Hash + PartialEq + Eq;
+struct EncaseStaging<'a>(&'a mut wgpu::QueueWriteBufferView);
+impl encase::internal::BufferMut for EncaseStaging<'_> {
+    fn capacity(&self) -> usize {
+        self.0.len()
+    }
 
-pub struct Simulation<M: MaterialSet> {
+    fn write<const N: usize>(&mut self, offset: usize, value: &[u8; N]) {
+        self.0.slice(offset..offset + N).copy_from_slice(value);
+    }
+
+    fn write_slice(&mut self, offset: usize, value: &[u8]) {
+        self.0
+            .slice(offset..offset + value.len())
+            .copy_from_slice(value);
+    }
+}
+
+/// A falling sand simulation framework. Call `init_simulation` ASAP to initialize the simulation! Otherwise it will not run!
+pub struct Simulation<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> {
     ctx: GeeseContextHandle<Self>,
     pub frame: u64,
     pub tickrate: Duration,
     last_tick: Instant,
     accumulator: Duration,
 
-    _cells_read_ssbo: wgpu::Buffer,
-    _cells_write_ssbo: wgpu::Buffer,
+    cells_read_ssbo: wgpu::Buffer,
+    cells_write_ssbo: wgpu::Buffer,
 
+    cells_cpu_buffer: Box<[C]>,
+    cells_cpu_buffer_dirty: bool,
+
+    /// Shader which **must** contain a definition for `struct Material` and `struct Cell` (with those names)
+    user_definitions_shader: Option<UserShaderInput>,
+    /// Shader, which is run to display the sim
+    user_display_shader: Option<UserShaderInput>,
+
+    /// Is initialized after the user calls init
     compute_pipelines: Vec<(String, wgpu::ComputePipeline)>,
-    bind_group_a: wgpu::BindGroup,
-    bind_group_b: wgpu::BindGroup,
-    debug_bind_group: wgpu::BindGroup,
-    display_bind_group: wgpu::BindGroup,
+    #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+    shader_paths: Vec<PathBuf>,
+    compute_pl_layout: Option<wgpu::PipelineLayout>,
 
-    params: shared_shader::types::Params,
-    params_bytes: [u8; size_of::<shared_shader::types::Params>()],
+    sim_bgl_a_b: wgpu::BindGroupLayout,
+    sim_bind_group1_a: wgpu::BindGroup,
+    sim_bind_group1_b: wgpu::BindGroup,
+    debug_bind_group: (wgpu::BindGroup, wgpu::BindGroupLayout),
+    sim_bind_group2: (wgpu::BindGroup, wgpu::BindGroupLayout),
+    user_bind_group: Option<(wgpu::BindGroup, wgpu::BindGroupLayout)>,
+
+    params: shader_types::Params,
+    params_bytes: [u8; size_of::<shader_types::Params>()],
     params_buffer: wgpu::Buffer,
 
     display_tex_handle: AssetHandle<TextureBundle>,
 
     /// Maps the enum values to an index in `materials`
-    material_names: HashMap<M, usize>,
-    material_tex_atlas: DynamicTextureAtlas,
-    /// Stores if a new material texture was added and the atlas needs to be rebuilt
-    material_atlas_dirty: bool,
+    material_names: HashMap<N, usize>,
     /// Contains the materials, like they would be laid out in GPU memory
-    materials: Vec<Option<material_shader::types::Material>>,
+    materials: Vec<Option<M>>,
     /// The GPU memory containing the materials
     materials_ssbo: Buffer,
-    dirty_materials: Vec<usize>,
-    materials_bg: (BindGroup, BindGroupLayout),
 }
-impl<M: MaterialSet> Simulation<M> {
+impl<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
     fn update(&mut self, _: &granular_core::graphics::events::RecordGameRenderingCommands) {
+        if self.compute_pipelines.is_empty() {
+            return;
+        }
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         let context = graphics_sys.render_context();
 
@@ -91,18 +139,16 @@ impl<M: MaterialSet> Simulation<M> {
                         });
                 compute_pass.set_pipeline(pipeline);
                 if self.frame.is_multiple_of(2) {
-                    compute_pass.set_bind_group(0, &self.bind_group_a, &[]);
+                    compute_pass.set_bind_group(0, &self.sim_bind_group1_a, &[]);
                 } else {
-                    compute_pass.set_bind_group(0, &self.bind_group_b, &[]);
+                    compute_pass.set_bind_group(0, &self.sim_bind_group1_b, &[]);
                 }
-                compute_pass.set_bind_group(1, &self.display_bind_group, &[]);
-                compute_pass.set_bind_group(2, &self.materials_bg.0, &[]);
-                compute_pass.set_bind_group(4, &self.debug_bind_group, &[]);
-                compute_pass.dispatch_workgroups(
-                    shared_shader::constants::GRID_WIDTH::VALUE / 8,
-                    shared_shader::constants::GRID_WIDTH::VALUE / 8,
-                    1,
-                );
+                compute_pass.set_bind_group(1, &self.sim_bind_group2.0, &[]);
+                if let Some(user_bg) = &self.user_bind_group {
+                    compute_pass.set_bind_group(2, &user_bg.0, &[]);
+                }
+                compute_pass.set_bind_group(4, &self.debug_bind_group.0, &[]);
+                compute_pass.dispatch_workgroups(GRID_WIDTH / 8, GRID_WIDTH / 8, 1);
             }
             self.accumulator -= self.tickrate;
             self.frame += 1;
@@ -120,34 +166,7 @@ impl<M: MaterialSet> Simulation<M> {
     }
 
     fn on_render(&mut self, _: &graphics::events::RecordGameRenderingCommands) {
-        let device = self.ctx.get_mut::<GraphicsSystem>().device().clone();
-
-        if self.material_atlas_dirty {
-            let mut atlas_encoder =
-                device.create_command_encoder(&wgpu::wgt::CommandEncoderDescriptor {
-                    label: Some("Simulation atlas command encoder"),
-                });
-
-            let asset_sys = self.ctx.get::<AssetSystem>();
-            self.material_tex_atlas.rebuild_atlas(
-                |handle| asset_sys.get(handle).unwrap().texture(),
-                &mut atlas_encoder,
-            );
-            drop(asset_sys);
-            {
-                let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
-                let context = graphics_sys.render_context();
-                context.queue.submit(Some(atlas_encoder.finish()));
-            }
-            self.material_atlas_dirty = false;
-        }
-
-        let default_mat = material_shader::types::Material {
-            tex_coords_start: Vec2::ZERO,
-            tex_coords_end: Vec2::ZERO,
-            color: Vec4::new(1.0, 0.0, 1.0, 1.0),
-            density: 0.0,
-        };
+        let default_mat = M::default();
         let mut materials_buffer = encase::StorageBuffer::new(Vec::<u8>::new());
         let mats = self
             .materials
@@ -160,7 +179,7 @@ impl<M: MaterialSet> Simulation<M> {
                     v.clone().unwrap()
                 }
             })
-            .collect::<Vec<material_shader::types::Material>>();
+            .collect::<Vec<M>>();
         let _ = materials_buffer.write(&mats);
         {
             let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
@@ -168,6 +187,26 @@ impl<M: MaterialSet> Simulation<M> {
             context
                 .queue
                 .write_buffer(&self.materials_ssbo, 0, &materials_buffer.into_inner());
+
+            if self.cells_cpu_buffer_dirty {
+                let buffer = if self.frame.is_multiple_of(2) {
+                    // write into self.cells_read_buffer
+                    &self.cells_read_ssbo
+                } else {
+                    &self.cells_write_ssbo
+                };
+
+                let mut staging = context
+                    .queue
+                    .write_buffer_with(buffer, 0, self.cells_cpu_buffer.size())
+                    .expect("Ungültiger Buffer-Schreibbereich");
+
+                encase::StorageBuffer::new(EncaseStaging(&mut staging))
+                    .write(self.cells_cpu_buffer.as_ref())
+                    .expect("encase serialization failed");
+
+                self.cells_cpu_buffer_dirty = false;
+            }
         }
 
         let mut renderer = self.ctx.get_mut::<BatchRenderer>();
@@ -182,38 +221,23 @@ impl<M: MaterialSet> Simulation<M> {
         renderer.mark_quad_texture_dirty(self.display_tex_handle.clone());
     }
 
-    pub fn add_material(
+    /// Call this to initialize the simulation. Before calling this, the simulation will not run!
+    /// `definitions_shader` **must** contain a definition for `struct Material` and `struct Cell` (with those names)
+    pub fn init_simulation(
         &mut self,
-        material_name: M,
-        mut material_def: material_shader::types::Material,
-        material_tex: Option<TextureHandle>,
+        definitions_shader: UserShaderInput,
+        display_shader: UserShaderInput,
+        bindgroup: (wgpu::BindGroup, wgpu::BindGroupLayout),
     ) {
-        let mut tex_coords_start = Vec2::ZERO;
-        let mut tex_coords_end = Vec2::ZERO;
-        if let Some(tex) = material_tex {
-            let texture_size = {
-                let asset_sys = self.ctx.get::<AssetSystem>();
-                let tex = asset_sys.get(&tex).unwrap().texture();
-                UVec2::new(tex.size().width, tex.size().height)
-            };
+        self.user_definitions_shader = Some(definitions_shader);
+        self.user_display_shader = Some(display_shader);
+        self.user_bind_group = Some(bindgroup);
+        self.rebuild_pipelines();
+    }
 
-            if !self.material_tex_atlas.contains_texture(&tex) {
-                self.material_atlas_dirty = true;
-                let res = self
-                    .material_tex_atlas
-                    .add_texture(tex.clone(), texture_size);
-                if res.is_ok() {
-                    (tex_coords_start, tex_coords_end) =
-                        self.material_tex_atlas.get_texture_coords(&tex).unwrap();
-                } else {
-                    error!("Cannot insert material texture into atlas!");
-                }
-            }
-        }
-
-        material_def.tex_coords_start = tex_coords_start;
-        material_def.tex_coords_end = tex_coords_end;
-
+    pub fn add_material(&mut self, material_name: N, material_def: M) {
+        // Finds the first None index in self.materials and inserts the material_def there.
+        // If nothing is free, inserts material_def at the end of self.materials
         let index = if let Some((i, slot)) = self
             .materials
             .iter_mut()
@@ -228,14 +252,207 @@ impl<M: MaterialSet> Simulation<M> {
             i
         };
         self.material_names.insert(material_name, index);
-        self.dirty_materials.push(index);
+    }
+
+    #[inline(always)]
+    fn pos_to_idx(&self, pos: IVec2) -> usize {
+        (pos.y * GRID_WIDTH as i32 + pos.x) as usize
+    }
+
+    pub fn set_cell(&mut self, pos: IVec2, cell: C) {
+        self.cells_cpu_buffer[self.pos_to_idx(pos)] = cell;
+        self.cells_cpu_buffer_dirty = true;
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+    fn on_filechange(&mut self, event: &filewatcher::events::FilesChanged) {
+        for path in &event.paths {
+            if self.shader_paths.contains(path) {
+                self.rebuild_pipelines();
+            }
+        }
+    }
+
+    fn rebuild_pipelines(&mut self) {
+        self.compute_pl_layout = Some(
+            self.ctx
+                .get::<GraphicsSystem>()
+                .device()
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("compute pipeline layout"),
+                    bind_group_layouts: &[
+                        Some(&self.sim_bgl_a_b),
+                        Some(&self.sim_bind_group2.1),
+                        self.user_bind_group.as_ref().map(|v| &v.1),
+                        None,
+                        Some(&self.debug_bind_group.1),
+                    ],
+                    immediate_size: 0,
+                }),
+        );
+        let compute_shader_res = Self::build_compute_shader(
+            self.user_definitions_shader.clone().unwrap(),
+            self.user_display_shader.clone().unwrap(),
+        );
+        if let Ok((compute_shader_source, deps)) = compute_shader_res {
+            #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+            {
+                self.shader_paths = deps;
+            }
+
+            let graphics_sys = self.ctx.get::<GraphicsSystem>();
+            let device = graphics_sys.device();
+            let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Simulation main compute shader"),
+                source: wgpu::ShaderSource::Wgsl(Cow::Owned(compute_shader_source)),
+            });
+            self.compute_pipelines = Self::create_compute_pipelines(
+                device,
+                self.compute_pl_layout.as_ref().unwrap(),
+                &shader_module,
+            )
+        }
+    }
+
+    /// Assembles the compute shader and returns the shader source as well as a list of dependencies
+    fn build_compute_shader(
+        definitions_shader: UserShaderInput,
+        display_shader: UserShaderInput,
+    ) -> anyhow::Result<(String, Vec<PathBuf>)> {
+        let definitions_shader_res = wgsl_preprocessor::Preprocessor::new(
+            definitions_shader.main_shader,
+            definitions_shader.includes,
+        )
+        .build();
+
+        if let Err(e) = definitions_shader_res {
+            error!("Error while processing users definition shader: {}", e);
+            return Err(e.into());
+        }
+        let mut definitions_shader = definitions_shader_res.unwrap();
+
+        let display_shader_res = wgsl_preprocessor::Preprocessor::new(
+            display_shader.main_shader,
+            display_shader.includes,
+        )
+        .build();
+
+        if let Err(e) = display_shader_res {
+            error!("Error while processing users definition shader: {}", e);
+            return Err(e.into());
+        }
+        let mut display_shader = display_shader_res.unwrap();
+
+        let mut compute_shader = wgsl_preprocessor::Preprocessor::new(
+            include_file!("shaders/compute.wgsl"),
+            vec![
+                include_file!("shaders/shared.wgsl"),
+                include_file!("shaders/debug_print.wgsl"),
+                include_file!("shaders/cell_logic/actions.wgsl"),
+                include_file!("shaders/cell_logic/cell_logic.wgsl"),
+            ],
+        );
+        compute_shader.define_value("GRID_WIDTH", GRID_WIDTH);
+        compute_shader.define_value("GRID_HEIGHT", GRID_HEIGHT);
+        compute_shader.define_value("USER_DEFINITIONS_SHADER", definitions_shader.source);
+        compute_shader.define_value("USER_DISPLAY_SHADER", display_shader.source);
+        let compute_shader_res = compute_shader.build();
+
+        if let Err(e) = compute_shader_res {
+            error!(
+                "Error while processing simulation main compute shader: {}",
+                e
+            );
+            return Err(e.into());
+        }
+        let mut compute_shader = compute_shader_res.unwrap();
+        compute_shader
+            .dependencies
+            .append(&mut definitions_shader.dependencies);
+        compute_shader
+            .dependencies
+            .append(&mut display_shader.dependencies);
+
+        Ok((compute_shader.source, compute_shader.dependencies))
+    }
+
+    fn create_compute_pipelines(
+        device: &wgpu::Device,
+        layout: &wgpu::PipelineLayout,
+        compute_shader: &wgpu::ShaderModule,
+    ) -> Vec<(String, wgpu::ComputePipeline)> {
+        vec![
+            (
+                String::from("prepare compute pass"),
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("prepare compute pipeline"),
+                    layout: Some(layout),
+                    module: compute_shader,
+                    entry_point: Some("prepare"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                }),
+            ),
+            (
+                String::from("propose compute pass"),
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("propose compute pipeline"),
+                    layout: Some(layout),
+                    module: compute_shader,
+                    entry_point: Some("propose"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                }),
+            ),
+            (
+                String::from("resolve compute pass"),
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("resolve compute pipeline"),
+                    layout: Some(layout),
+                    module: compute_shader,
+                    entry_point: Some("resolve"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                }),
+            ),
+            (
+                String::from("commit compute pass"),
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("commit compute pipeline"),
+                    layout: Some(layout),
+                    module: compute_shader,
+                    entry_point: Some("commit"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                }),
+            ),
+            (
+                String::from("display compute pass"),
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("display compute pipeline"),
+                    layout: Some(layout),
+                    module: compute_shader,
+                    entry_point: Some("display"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                }),
+            ),
+        ]
     }
 }
-impl<M: MaterialSet> GeeseSystem for Simulation<M> {
+impl<N: MaterialName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulation<N, M, C> {
     const DEPENDENCIES: Dependencies = dependencies()
         .with::<Mut<GraphicsSystem>>()
         .with::<Mut<BatchRenderer>>()
-        .with::<Mut<AssetSystem>>();
+        .with::<Mut<AssetSystem>>()
+        .with::<Mut<FileWatcher>>();
+
+    #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+    const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
+        .with(Self::update)
+        .with(Self::on_render)
+        .with(Self::on_filechange);
+    #[cfg(any(target_arch = "wasm32", not(debug_assertions)))]
     const EVENT_HANDLERS: EventHandlers<Self> =
         event_handlers().with(Self::update).with(Self::on_render);
 
@@ -244,8 +461,8 @@ impl<M: MaterialSet> GeeseSystem for Simulation<M> {
         let device = graphics_sys.device();
         let queue = graphics_sys.queue();
 
-        let params = shared_shader::types::Params { tick: 0 };
-        let params_bytes = [0u8; size_of::<shared_shader::types::Params>()];
+        let params = shader_types::Params { tick: 0 };
+        let params_bytes = [0u8; size_of::<shader_types::Params>()];
         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Params buffer"),
             size: params_bytes.len() as u64,
@@ -286,63 +503,38 @@ impl<M: MaterialSet> GeeseSystem for Simulation<M> {
             None,
         );
 
-        const GR_W: usize = shared_shader::constants::GRID_WIDTH::VALUE as usize;
-        const GR_H: usize = shared_shader::constants::GRID_HEIGHT::VALUE as usize;
+        const GR_W: usize = GRID_WIDTH as usize;
+        const GR_H: usize = GRID_HEIGHT as usize;
 
-        let mut cells_byte_buffer: Vec<u8> = Vec::new();
-        let mut cells_buffer = DynamicStorageBuffer::new(&mut cells_byte_buffer);
-        let mut cells = vec![
-            cell_shader::types::Cell {
-                material: material_shader::constants::MAT_EMPTY::VALUE,
-                velocity: Vec2::ZERO,
-                _pad: 0.1234,
-                color: Vec4::new(0.0, 0.0, 0.0, 1.0)
-            };
-            GR_W * GR_H
-        ];
-        let half_w = GR_W / 2;
-        let quart_w = GR_W / 4;
-        let third_h = GR_H / 3;
-        let fith_h = GR_H / 5;
-        for y in (third_h - fith_h)..(third_h + fith_h) {
-            for x in (half_w - quart_w)..(half_w + quart_w) {
-                cells[y * GR_W + x].material = material_shader::constants::MAT_SAND::VALUE;
-                cells[y * GR_W + x].color = Vec4::new(1.0, 1.0, 0.0, 1.0);
-            }
-        }
+        // Heap-Slice erzeugen, ohne ein großes lokales Array aufzubauen.
+        // resize_with benötigt für C nur Default, kein Copy oder Clone.
+        let count = (GRID_WIDTH * GRID_HEIGHT) as usize;
+        let mut cells = Vec::with_capacity(count);
+        cells.resize_with(count, C::default);
+        let cells_cpu_buffer = cells.into_boxed_slice();
 
-        for y in 40..47 {
-            for x in 0..half_w {
-                cells[y * GR_W + x].material = material_shader::constants::MAT_STONE::VALUE;
-                cells[y * GR_W + x].color = Vec4::new(0.2, 0.2, 0.2, 1.0);
-            }
-        }
-
-        for y in (GR_H - 3)..GR_H {
-            for x in 0..GR_W {
-                cells[y * GR_W + x].material = material_shader::constants::MAT_WATER::VALUE;
-                cells[y * GR_W + x].color = Vec4::new(0.0, 0.0, 1.0, 1.0);
-            }
-        }
-        cells_buffer.write(&cells).unwrap();
+        let mut encase_cells_buffer = encase::StorageBuffer::new(Vec::<u8>::new());
+        encase_cells_buffer
+            .write(cells_cpu_buffer.as_ref())
+            .unwrap();
 
         let cells_read_ssbo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("cells read buffer"),
-            contents: bytemuck::cast_slice(&cells_byte_buffer),
+            contents: encase_cells_buffer.as_ref(),
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
         });
         let cells_write_ssbo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("cells write buffer"),
-            contents: bytemuck::cast_slice(&cells_byte_buffer),
+            contents: encase_cells_buffer.as_ref(),
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
         });
         let cells_desired_ssbo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("cells desired buffer"),
-            contents: bytemuck::cast_slice(&cells_byte_buffer),
+            contents: encase_cells_buffer.as_ref(),
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -352,7 +544,7 @@ impl<M: MaterialSet> GeeseSystem for Simulation<M> {
             label: Some("intents buffer"),
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
-            size: size_of::<shared_shader::types::Intent>() as u64 * (GR_W * GR_H) as u64,
+            size: size_of::<shader_types::Intent>() as u64 * (GR_W * GR_H) as u64,
         });
         let winners_ssbo = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("winners buffer"),
@@ -367,12 +559,7 @@ impl<M: MaterialSet> GeeseSystem for Simulation<M> {
             size: size_of::<[u32; GR_W * GR_H]>() as u64,
         });
 
-        let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("compute shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(compute_shader::SOURCE)),
-        });
-
-        let bind_group_builder = BindGroupBuilder::new()
+        let sim_bind_group1_builder = BindGroupBuilder::new()
             // current_cells
             .add_binding(
                 0,
@@ -449,54 +636,16 @@ impl<M: MaterialSet> GeeseSystem for Simulation<M> {
                 cells_desired_ssbo.as_entire_binding(),
             );
 
-        let (bind_group_layout_a_b, bind_group_a) = bind_group_builder
+        let (sim_bgl_a_b, sim_bind_group1_a) = sim_bind_group1_builder
             .clone()
             .add_resource_to_binding(0, cells_read_ssbo.as_entire_binding())
             .add_resource_to_binding(4, cells_write_ssbo.as_entire_binding())
             .build("compute bind group A", device);
-        let (_, bind_group_b) = bind_group_builder
+        let (_, sim_bind_group1_b) = sim_bind_group1_builder
             .clone()
             .add_resource_to_binding(0, cells_write_ssbo.as_entire_binding())
             .add_resource_to_binding(4, cells_read_ssbo.as_entire_binding())
             .build("compute bind group B", device);
-
-        let material_tex_atlas =
-            DynamicTextureAtlas::new(device, queue, 2048, 2048, wgpu::FilterMode::Nearest);
-        let materials_ssbo = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("materials buffer"),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-            size: size_of::<material_shader::types::Material>() as u64 * 10,
-        });
-        let (material_bgl, material_bg) = BindGroupBuilder::new()
-            .add_binding_with_resource(
-                0,
-                wgpu::ShaderStages::COMPUTE,
-                wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                materials_ssbo.as_entire_binding(),
-            )
-            .add_binding_with_resource(
-                1,
-                wgpu::ShaderStages::COMPUTE,
-                wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                wgpu::BindingResource::TextureView(material_tex_atlas.view()),
-            )
-            .add_binding_with_resource(
-                2,
-                wgpu::ShaderStages::COMPUTE,
-                wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                wgpu::BindingResource::Sampler(material_tex_atlas.sampler()),
-            )
-            .build("Materials bind group", device);
-        let materials_bg = (material_bg, material_bgl);
 
         let (debug_bgl, debug_bind_group) = BindGroupBuilder::new()
             .add_binding_with_resource(
@@ -510,6 +659,7 @@ impl<M: MaterialSet> GeeseSystem for Simulation<M> {
                 wgpu::BindingResource::TextureView(debug_tex.view()),
             )
             .build("debug compute bind group", device);
+        let debug_bind_group = (debug_bind_group, debug_bgl);
 
         let display_tex = TextureBundle::new(
             device,
@@ -543,7 +693,13 @@ impl<M: MaterialSet> GeeseSystem for Simulation<M> {
             },
             None,
         );
-        let (display_bgl, display_bind_group) = BindGroupBuilder::new()
+        let materials_ssbo = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("materials buffer"),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+            size: size_of::<M>() as u64 * 10,
+        });
+        let (sim_bgl2, sim_bind_group2) = BindGroupBuilder::new()
             .add_binding_with_resource(
                 0,
                 wgpu::ShaderStages::COMPUTE,
@@ -554,77 +710,18 @@ impl<M: MaterialSet> GeeseSystem for Simulation<M> {
                 },
                 wgpu::BindingResource::TextureView(display_tex.view()),
             )
-            .build("display compute bind group", device);
-
-        let compute_pl_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("compute pipeline layout"),
-            bind_group_layouts: &[
-                Some(&bind_group_layout_a_b),
-                Some(&display_bgl),
-                Some(&materials_bg.1),
-                None,
-                Some(&debug_bgl),
-            ],
-            immediate_size: 0,
-        });
-
-        let compute_pipelines = vec![
-            (
-                String::from("prepare compute pass"),
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("prepare compute pipeline"),
-                    layout: Some(&compute_pl_layout),
-                    module: &compute_shader,
-                    entry_point: Some("prepare"),
-                    compilation_options: Default::default(),
-                    cache: None,
-                }),
-            ),
-            (
-                String::from("propose compute pass"),
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("propose compute pipeline"),
-                    layout: Some(&compute_pl_layout),
-                    module: &compute_shader,
-                    entry_point: Some("propose"),
-                    compilation_options: Default::default(),
-                    cache: None,
-                }),
-            ),
-            (
-                String::from("resolve compute pass"),
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("resolve compute pipeline"),
-                    layout: Some(&compute_pl_layout),
-                    module: &compute_shader,
-                    entry_point: Some("resolve"),
-                    compilation_options: Default::default(),
-                    cache: None,
-                }),
-            ),
-            (
-                String::from("commit compute pass"),
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("commit compute pipeline"),
-                    layout: Some(&compute_pl_layout),
-                    module: &compute_shader,
-                    entry_point: Some("commit"),
-                    compilation_options: Default::default(),
-                    cache: None,
-                }),
-            ),
-            (
-                String::from("display compute pass"),
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("display compute pipeline"),
-                    layout: Some(&compute_pl_layout),
-                    module: &compute_shader,
-                    entry_point: Some("display"),
-                    compilation_options: Default::default(),
-                    cache: None,
-                }),
-            ),
-        ];
+            .add_binding_with_resource(
+                1,
+                wgpu::ShaderStages::COMPUTE,
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                materials_ssbo.as_entire_binding(),
+            )
+            .build("sim bind group 2", device);
+        let sim_bind_group2 = (sim_bind_group2, sim_bgl2);
 
         drop(graphics_sys);
         let display_tex_handle = {
@@ -639,14 +736,26 @@ impl<M: MaterialSet> GeeseSystem for Simulation<M> {
             last_tick: Instant::now() - Duration::from_secs(1),
             accumulator: Duration::ZERO,
 
-            _cells_read_ssbo: cells_read_ssbo,
-            _cells_write_ssbo: cells_write_ssbo,
+            cells_read_ssbo,
+            cells_write_ssbo,
 
-            compute_pipelines,
-            bind_group_a,
-            bind_group_b,
+            cells_cpu_buffer,
+            cells_cpu_buffer_dirty: false,
+
+            user_definitions_shader: None,
+            user_display_shader: None,
+
+            compute_pipelines: vec![],
+            compute_pl_layout: None,
+            #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+            shader_paths: vec![],
+
+            sim_bgl_a_b,
+            sim_bind_group1_a,
+            sim_bind_group1_b,
             debug_bind_group,
-            display_bind_group,
+            sim_bind_group2,
+            user_bind_group: None,
 
             params,
             params_bytes,
@@ -655,12 +764,8 @@ impl<M: MaterialSet> GeeseSystem for Simulation<M> {
             display_tex_handle,
 
             material_names: HashMap::default(),
-            material_tex_atlas,
-            material_atlas_dirty: false,
             materials: vec![],
             materials_ssbo,
-            dirty_materials: vec![],
-            materials_bg,
         }
     }
 }

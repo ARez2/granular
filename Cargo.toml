@@ -24,10 +24,11 @@ proc_macros.workspace = true
 palette.workspace = true
 wgpu.workspace = true
 glam.workspace = true
-
+wgsl_preprocessor.workspace = true
 
 [workspace.dependencies]
 proc_macros = { path = "proc_macros" }
+anyhow = "1.0.79"
 geese = "0.3.11"
 log = "0.4.33"
 winit = { version = "*" }
@@ -41,8 +42,10 @@ wgpu-profiler = { version = "0.28.0", features = ["tracy"] }
 # version 0.18.4 ==> Tracy 13.1 
 tracy-client = { version = "0.18.4", features = ["verify"] }
 
-
 include-wgsl-oil = { version = "0.2.9", features = ["encase", "glam"] }
 encase = "0.12.0"
 bytemuck = "1.14.0"
 bytemuck_derive = "1.5.0"
+wgsl_preprocessor = { git = "ssh://git@github.com/ARez2/wgsl_preprocessor.git", features = [
+    "glam",
+] }

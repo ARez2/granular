@@ -1,4 +1,4 @@
-@export struct Material {
+struct Material {
     tex_coords_start: vec2f,
     tex_coords_end: vec2f,
     color: vec4f,
@@ -56,9 +56,3 @@ fn get_material_color(material: u32) -> vec4f {
     return vec4f(1.0, 0.0, 1.0, 1.0);
 }
 
-
-/// For some reason, the include macro in Rust complains if there is no entry point
-/// but we need Intent from this inside Rust, so we need to add it in Rust
-@compute @workgroup_size(1, 1, 1)
-fn stub() {
-}

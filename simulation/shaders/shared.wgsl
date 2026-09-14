@@ -1,19 +1,17 @@
-const GRID_WIDTH = 128u;
-const GRID_HEIGHT = 128u;
+const GRID_WIDTH = {{GRID_WIDTH}};
+const GRID_HEIGHT = {{GRID_HEIGHT}};
 
 const WORKGROUP_SIZE_X: u32 = 8;
 const WORKGROUP_SIZE_Y: u32 = 8;
 
-#import cell.wgsl as CellMod;
-#import debug_print.wgsl as DebugPrint;
-#import material.wgsl as MaterialMod;
+#include "debug_print.wgsl"
 
-@export struct Params {
+struct Params {
     tick: u32,
 }
 
 @group(0) @binding(0)
-var<storage, read> current_cells: array<CellMod::Cell>;
+var<storage, read> current_cells: array<Cell>;
 
 @group(0) @binding(1)
 var<storage, read_write> intents: array<Intent>;
@@ -27,20 +25,20 @@ var<storage, read_write> winners: array<atomic<u32>>;
 var<storage, read_write> accepted: array<u32>;
 
 @group(0) @binding(4)
-var<storage, read_write> next_cells: array<CellMod::Cell>;
+var<storage, read_write> next_cells: array<Cell>;
 
 @group(0) @binding(5)
 var<uniform> params: Params;
 
 // Each cell can use this buffer to write its next desired state, which will then get copied to next_cells, if that cell won
 @group(0) @binding(6)
-var<storage, read_write> desired_cells: array<CellMod::Cell>;
+var<storage, read_write> desired_cells: array<Cell>;
 
 @group(1) @binding(0)
 var display_texture : texture_storage_2d<rgba8unorm, write>;
 
-@group(2) @binding(0)
-var<storage, read_write> materials: array<MaterialMod::Material>;
+@group(1) @binding(1)
+var<storage, read_write> materials: array<Material>;
 @group(2) @binding(1)
 var material_texture_atlas: texture_2d<f32>;
 @group(2) @binding(2)
@@ -60,8 +58,8 @@ fn print_value_with_font_size(
     fDecimalPlaces: u32,
     font_color: vec4f,
 ) -> vec4f {
-    let fMaxDigits = f32(max(0, DebugPrint::digits_before_decimal(fValue) - 1));
-    let is_digit = DebugPrint::PrintValue(
+    let fMaxDigits = f32(max(0, digits_before_decimal(fValue) - 1));
+    let is_digit = PrintValue(
         vec2f(fragCoord - vPixelCoords) / vFontSize,
         fValue,
         fMaxDigits,
@@ -158,7 +156,7 @@ const INTENT_SWAP: u32 = 2;
 const INTENT_MODIFY_OWN: u32 = 3;
 const INTENT_MODIFY_OTHER: u32 = 4;
 
-@export struct Intent {
+struct Intent {
     // Index, which this Intent targets
     destination_idx: u32,
     encoded_key: u32,

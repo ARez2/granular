@@ -18,9 +18,11 @@ encase.workspace = true
 wgpu.workspace = true
 glam.workspace = true
 web-time.workspace = true
+anyhow.workspace = true
 bytemuck.workspace = true
 palette.workspace = true
 rustc-hash = "1.1.0"
+wgsl_preprocessor.workspace = true
 
 # Profiling
 profiling.workspace = true

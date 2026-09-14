@@ -27,11 +27,6 @@ pub mod events {
     }
 }
 
-#[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
-fn pathbuf_to_string(pathbuf: PathBuf) -> String {
-    pathbuf.as_os_str().to_str().unwrap().to_string()
-}
-
 fn hash_bytes(bytes: &[u8]) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     bytes.hash(&mut hasher);

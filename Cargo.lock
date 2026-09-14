@@ -581,6 +581,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
+name = "duplicate"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0a4be4cd710e92098de6ad258e6e7c24af11c29c5142f3c6f2a545652480ff8"
+dependencies = [
+ "heck 0.4.1",
+ "proc-macro-error",
+]
+
+[[package]]
 name = "either"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -993,6 +1003,7 @@ dependencies = [
  "proc_macros",
  "simulation",
  "wgpu",
+ "wgsl_preprocessor",
 ]
 
 [[package]]
@@ -1069,6 +1080,12 @@ dependencies = [
 
 [[package]]
 name = "heck"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
+
+[[package]]
+name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
@@ -1120,6 +1137,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "regex",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "include_file_macro"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ARez2/wgsl_preprocessor.git#c7e777bd246a6b205647e1e625097b6d9972c727"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "shared_preprocessor_stuff",
  "syn 2.0.119",
 ]
 
@@ -2142,6 +2171,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "preprocessor"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ARez2/wgsl_preprocessor.git#c7e777bd246a6b205647e1e625097b6d9972c727"
+dependencies = [
+ "duplicate",
+ "glam",
+ "include_file_macro",
+ "shared_preprocessor_stuff",
+]
+
+[[package]]
 name = "presser"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2164,6 +2204,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
 dependencies = [
  "toml_edit",
+]
+
+[[package]]
+name = "proc-macro-error"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da25490ff9892aab3fcf7c36f08cfb902dd3e71ca0f9f9517bea02a73a5ce38c"
+dependencies = [
+ "proc-macro-error-attr",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+ "version_check",
+]
+
+[[package]]
+name = "proc-macro-error-attr"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1be40180e52ecc98ad80b184934baf3d0d29f979574e439af5a55274b35f869"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "version_check",
 ]
 
 [[package]]
@@ -2519,6 +2583,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "shared_preprocessor_stuff"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ARez2/wgsl_preprocessor.git#c7e777bd246a6b205647e1e625097b6d9972c727"
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2550,6 +2619,7 @@ checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 name = "simulation"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bytemuck",
  "encase",
  "glam",
@@ -2562,6 +2632,7 @@ dependencies = [
  "web-time",
  "wgpu",
  "wgpu-profiler",
+ "wgsl_preprocessor",
 ]
 
 [[package]]
@@ -2661,11 +2732,21 @@ version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
 dependencies = [
- "heck",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "rustversion",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "syn"
+version = "1.0.109"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
+dependencies = [
+ "proc-macro2",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -2711,9 +2792,11 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "console_log",
+ "encase",
  "fern",
  "geese",
  "granular",
+ "include-wgsl-oil",
  "log",
  "palette",
  "regex",
@@ -3430,6 +3513,16 @@ dependencies = [
  "raw-window-handle",
  "static_assertions",
  "web-sys",
+]
+
+[[package]]
+name = "wgsl_preprocessor"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ARez2/wgsl_preprocessor.git#c7e777bd246a6b205647e1e625097b6d9972c727"
+dependencies = [
+ "include_file_macro",
+ "preprocessor",
+ "shared_preprocessor_stuff",
 ]
 
 [[package]]

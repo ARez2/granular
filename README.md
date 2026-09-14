@@ -32,6 +32,8 @@ cargo run-testbed-trace
 - ✅ Done: Integrate new compute shader based simulation into granular
 - ✅ Done: Integrate `wgpu_profiler` into rendering
 - ✅ Done: Integrate `include-wgsl-oil` (also for `Vertex`)
+- ✅ Done: Composite shader with sub-shaders enum { IncludeShader // works with #include and ReplaceShader // replaces a custom string}
 - Dynamically remove textures from `BatchRenderer` texture atlasses
+- Find way to remove GraphicsSystem dependency from Game?
 - Low priority: Input system: What about touch gestures?
 

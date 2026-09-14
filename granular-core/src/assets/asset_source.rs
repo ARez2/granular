@@ -1,6 +1,9 @@
 #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
 use std::path::PathBuf;
 
+#[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+use crate::pathbuf_to_string;
+
 #[derive(Debug, Clone)]
 pub enum AssetSource {
     Embedded {
@@ -28,7 +31,7 @@ impl std::fmt::Display for AssetSource {
         match &self {
             AssetSource::Embedded { name, bytes: _ } => write!(f, "{name}"),
             #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
-            AssetSource::File { path } => write!(f, "{}", super::pathbuf_to_string(path.clone())),
+            AssetSource::File { path } => write!(f, "{}", pathbuf_to_string(path.clone())),
         }
     }
 }
@@ -36,7 +39,7 @@ impl std::fmt::Display for AssetSource {
 #[macro_export]
 macro_rules! asset_source {
     ($path:literal) => {{
-        $crate::validate_asset!($path);
+        $crate::validate_filepath!($path);
 
         $crate::AssetSource::File {
             path: std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/", $path)),
