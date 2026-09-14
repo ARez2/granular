@@ -60,22 +60,22 @@ struct Game {
 impl Game {
     fn load_shaders(&mut self) -> VecDeque<granular::simulation::UserShaderInput> {
         let mut v = VecDeque::new();
-        v.push_front(granular::simulation::UserShaderInput {
-            main_shader: include_file!("shaders/display.wgsl"),
-            includes: vec![],
-        });
-        v.push_front(granular::simulation::UserShaderInput {
-            main_shader: include_file!("shaders/cell_logic.wgsl"),
-            includes: vec![],
-        });
-
-        v.push_front(granular::simulation::UserShaderInput {
+        v.push_back(granular::simulation::UserShaderInput {
             main_shader: include_file!("shaders/definitions.wgsl"),
             includes: vec![
                 include_file!("shaders/cell.wgsl"),
                 include_file!("shaders/material.wgsl"),
             ],
         });
+        v.push_back(granular::simulation::UserShaderInput {
+            main_shader: include_file!("shaders/cell_logic.wgsl"),
+            includes: vec![],
+        });
+        v.push_back(granular::simulation::UserShaderInput {
+            main_shader: include_file!("shaders/display.wgsl"),
+            includes: vec![],
+        });
+
         #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
         {
             self.shader_paths.clear();
