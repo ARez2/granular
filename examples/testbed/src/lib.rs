@@ -34,6 +34,11 @@ type MySimulation =
 
 mod shader_types;
 
+enum MatColor {
+    Tex(TextureHandle),
+    Col(Vec4),
+}
+
 #[derive(Debug)]
 struct Game {
     ctx: GeeseContextHandle<Self>,
@@ -88,43 +93,23 @@ impl Game {
             };
             self.add_material(
                 shader_types::MaterialName::Empty,
-                shader_types::Material {
-                    tex_coords_start: Vec2::ZERO,
-                    tex_coords_end: Vec2::ZERO,
-                    color: vec4(0.0, 0.0, 0.0, 1.0),
-                    density: 0.0,
-                },
-                Some(bg_tex),
+                shader_types::Material::new(0.0),
+                MatColor::Tex(bg_tex),
             );
             self.add_material(
                 shader_types::MaterialName::Sand,
-                shader_types::Material {
-                    tex_coords_start: Vec2::ZERO,
-                    tex_coords_end: Vec2::ZERO,
-                    color: vec4(1.0, 1.0, 0.0, 1.0),
-                    density: 2.0,
-                },
-                Some(sand_tex),
+                shader_types::Material::new(0.0),
+                MatColor::Tex(sand_tex),
             );
             self.add_material(
                 shader_types::MaterialName::Water,
-                shader_types::Material {
-                    tex_coords_start: Vec2::ZERO,
-                    tex_coords_end: Vec2::ZERO,
-                    color: vec4(0.0, 0.0, 1.0, 1.0),
-                    density: 1.0,
-                },
-                None,
+                shader_types::Material::new(1.0),
+                MatColor::Col(vec4(0.0, 0.0, 1.0, 1.0)),
             );
             self.add_material(
                 shader_types::MaterialName::Rock,
-                shader_types::Material {
-                    tex_coords_start: Vec2::ZERO,
-                    tex_coords_end: Vec2::ZERO,
-                    color: vec4(0.2, 0.2, 0.2, 1.0),
-                    density: 2.0,
-                },
-                Some(rock_tex),
+                shader_types::Material::new(0.0),
+                MatColor::Tex(rock_tex),
             );
 
             let mut simulation = self.ctx.get_mut::<MySimulation>();
@@ -163,7 +148,7 @@ impl Game {
             for y in 40..47 {
                 for x in 0..half_w {
                     simulation.set_cell(
-                        ivec2(x as i32, y as i32),
+                        ivec2(x as i32, y),
                         shader_types::Cell::new(
                             shader_types::MaterialName::Rock,
                             Vec2::ZERO,
@@ -253,33 +238,33 @@ impl Game {
         &mut self,
         material_name: shader_types::MaterialName,
         mut material_def: shader_types::Material,
-        material_tex: Option<TextureHandle>,
+        material_color: MatColor,
     ) {
-        let mut tex_coords_start = Vec2::ZERO;
-        let mut tex_coords_end = Vec2::ZERO;
-        if let Some(tex) = material_tex {
-            let texture_size = {
-                let asset_sys = self.ctx.get::<AssetSystem>();
-                let tex = asset_sys.get(&tex).unwrap().texture();
-                UVec2::new(tex.size().width, tex.size().height)
-            };
+        match material_color {
+            MatColor::Tex(tex) => {
+                let texture_size = {
+                    let asset_sys = self.ctx.get::<AssetSystem>();
+                    let tex = asset_sys.get(&tex).unwrap().texture();
+                    UVec2::new(tex.size().width, tex.size().height)
+                };
 
-            if !self.material_tex_atlas.contains_texture(&tex) {
-                self.material_atlas_dirty = true;
-                let res = self
-                    .material_tex_atlas
-                    .add_texture(tex.clone(), texture_size);
-                if res.is_ok() {
-                    (tex_coords_start, tex_coords_end) =
-                        self.material_tex_atlas.get_texture_coords(&tex).unwrap();
-                } else {
-                    error!("Cannot insert material texture into atlas!");
+                if !self.material_tex_atlas.contains_texture(&tex) {
+                    self.material_atlas_dirty = true;
+                    let res = self
+                        .material_tex_atlas
+                        .add_texture(tex.clone(), texture_size);
+                    if res.is_ok() {
+                        (material_def.tex_coords_start, material_def.tex_coords_end) =
+                            self.material_tex_atlas.get_texture_coords(&tex).unwrap();
+                    } else {
+                        error!("Cannot insert material texture into atlas!");
+                    }
                 }
             }
+            MatColor::Col(col) => {
+                material_def.color = col;
+            }
         }
-        material_def.tex_coords_start = tex_coords_start;
-        material_def.tex_coords_end = tex_coords_end;
-
         let mut simulation = self.ctx.get_mut::<MySimulation>();
         simulation.add_material(material_name, material_def);
     }

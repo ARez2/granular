@@ -18,6 +18,20 @@ pub struct Material {
     pub color: Vec4,
     pub density: f32,
 }
+impl Material {
+    /// Constructs a new material but without the color, to make it quicker (as when using a texture, color is always white)
+    pub fn new(density: f32) -> Self {
+        Self::new_with_color(Vec4::ONE, density)
+    }
+
+    pub fn new_with_color(color: Vec4, density: f32) -> Self {
+        Self {
+            color,
+            density,
+            ..Default::default()
+        }
+    }
+}
 impl Default for Material {
     fn default() -> Self {
         Self {
