@@ -32,6 +32,7 @@ cargo run-testbed-trace
 - Make user provide cell logic (easy)
 - Write some usage information (simulation setup + requirements)
 - Maybe provide a working webpage with the testbed running?
+- Test simulation shader hot reloading
 
 - Low priority: Input system: What about touch gestures?
 
