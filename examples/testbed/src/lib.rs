@@ -1,4 +1,8 @@
+use std::{collections::VecDeque, path::PathBuf};
+
 use fern::colors::{Color, ColoredLevelConfig};
+#[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+use granular::filewatcher;
 use granular::{
     graphics::{BindGroupBuilder, DynamicTextureAtlas, TextureHandle},
     prelude::*,
@@ -49,8 +53,50 @@ struct Game {
     material_atlas_dirty: bool,
     /// will be taken out on sim init
     materials_bg: Option<(granular::wgpu::BindGroup, granular::wgpu::BindGroupLayout)>,
+
+    #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+    shader_paths: Vec<PathBuf>,
 }
 impl Game {
+    fn load_shaders(&mut self) -> VecDeque<granular::simulation::UserShaderInput> {
+        let mut v = VecDeque::new();
+        v.push_front(granular::simulation::UserShaderInput {
+            main_shader: include_file!("shaders/display.wgsl"),
+            includes: vec![],
+        });
+        v.push_front(granular::simulation::UserShaderInput {
+            main_shader: include_file!("shaders/cell_logic.wgsl"),
+            includes: vec![],
+        });
+
+        v.push_front(granular::simulation::UserShaderInput {
+            main_shader: include_file!("shaders/definitions.wgsl"),
+            includes: vec![
+                include_file!("shaders/cell.wgsl"),
+                include_file!("shaders/material.wgsl"),
+            ],
+        });
+        #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+        {
+            self.shader_paths.clear();
+            for shader in &v {
+                let path = PathBuf::from(shader.main_shader.path);
+                self.ctx
+                    .get_mut::<filewatcher::FileWatcher>()
+                    .watch(&path, false);
+                self.shader_paths.push(path);
+                for dep in &shader.includes {
+                    let path = PathBuf::from(dep.path);
+                    self.ctx
+                        .get_mut::<filewatcher::FileWatcher>()
+                        .watch(&path, false);
+                    self.shader_paths.push(path);
+                }
+            }
+        }
+        v
+    }
+
     fn init(&mut self, _event: &events::Initialized) {
         {
             let mut camera = self.ctx.get_mut::<Camera>();
@@ -110,23 +156,12 @@ impl Game {
                 MatColor::Tex(rock_tex),
             );
 
+            let mut shaders = self.load_shaders();
             let mut simulation = self.ctx.get_mut::<MySimulation>();
             simulation.init_simulation(
-                granular::simulation::UserShaderInput {
-                    main_shader: include_file!("shaders/definitions.wgsl"),
-                    includes: vec![
-                        include_file!("shaders/cell.wgsl"),
-                        include_file!("shaders/material.wgsl"),
-                    ],
-                },
-                granular::simulation::UserShaderInput {
-                    main_shader: include_file!("shaders/cell_logic.wgsl"),
-                    includes: vec![],
-                },
-                granular::simulation::UserShaderInput {
-                    main_shader: include_file!("shaders/display.wgsl"),
-                    includes: vec![],
-                },
+                shaders.pop_front().unwrap(),
+                shaders.pop_front().unwrap(),
+                shaders.pop_front().unwrap(),
                 self.materials_bg.take().unwrap(),
             );
 
@@ -175,6 +210,21 @@ impl Game {
         }
     }
 
+    #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+    fn on_filechange(&mut self, event: &filewatcher::events::FilesChanged) {
+        for path in &event.paths {
+            if self.shader_paths.contains(path) {
+                let mut shaders = self.load_shaders();
+                let mut simulation = self.ctx.get_mut::<MySimulation>();
+                simulation.update_user_shaders(
+                    shaders.pop_front().unwrap(),
+                    shaders.pop_front().unwrap(),
+                    shaders.pop_front().unwrap(),
+                );
+            }
+        }
+    }
+
     fn on_update(&mut self, _: &events::timing::FixedTick<16>) {
         let input = self.ctx.get::<InputSystem>();
         let vector = input.get_input_vector("cam_left", "cam_right", "cam_up", "cam_down");
@@ -186,13 +236,6 @@ impl Game {
 
     fn on_draw(&mut self, _: &granular::graphics::events::RecordGameRenderingCommands) {
         let mut renderer = self.ctx.get_mut::<BatchRenderer>();
-        renderer.draw_quad_with_center(
-            IVec2::new(0, 0),
-            IVec2::new(10, 10),
-            palette::named::RED,
-            None,
-            0,
-        );
         renderer.draw_quad_with_center(
             IVec2::new(0, 250),
             IVec2::new(50, 50),
@@ -273,11 +316,8 @@ impl Game {
         .with(Self::init)
         .with(Self::on_update)
         .with(Self::on_draw);
-}
-impl GeeseSystem for Game {
-    const EVENT_HANDLERS: EventHandlers<Self> = Self::EVENT_HANDLERS_SHARED;
 
-    const DEPENDENCIES: Dependencies = dependencies()
+    const SHARED_DEPENDENCIES: Dependencies = dependencies()
         .with::<Mut<WindowSystem>>()
         .with::<Mut<InputSystem>>()
         .with::<Mut<Camera>>()
@@ -285,6 +325,19 @@ impl GeeseSystem for Game {
         .with::<Mut<AssetSystem>>()
         .with::<Mut<BatchRenderer>>()
         .with::<Mut<MySimulation>>();
+}
+impl GeeseSystem for Game {
+    #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+    const EVENT_HANDLERS: EventHandlers<Self> =
+        Self::EVENT_HANDLERS_SHARED.with(Self::on_filechange);
+    #[cfg(any(target_arch = "wasm32", not(debug_assertions)))]
+    const EVENT_HANDLERS: EventHandlers<Self> = Self::EVENT_HANDLERS_SHARED;
+
+    #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+    const DEPENDENCIES: Dependencies =
+        Self::SHARED_DEPENDENCIES.with::<Mut<filewatcher::FileWatcher>>();
+    #[cfg(any(target_arch = "wasm32", not(debug_assertions)))]
+    const DEPENDENCIES: Dependencies = Self::SHARED_DEPENDENCIES;
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         info!("Game created");
@@ -378,6 +431,9 @@ impl GeeseSystem for Game {
             material_tex_atlas,
             material_atlas_dirty: false,
             materials_bg,
+
+            #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+            shader_paths: vec![],
         }
     }
 }

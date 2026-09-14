@@ -32,20 +32,26 @@ impl FileWatcher {
             .unwrap_or_else(|_| warn!("Cannot watch: {:?}", path.as_ref().display()));
     }
 
-    fn poll(&mut self, _event: &crate::events::timing::Tick<30>) {
+    fn poll(&mut self, _event: &crate::events::timing::Tick<1>) {
         if let Ok(event) = self.rx.try_recv() {
             match event {
                 Ok(event) => {
-                    if let notify::EventKind::Modify(kind) = event.kind {
-                        let valid = !matches!(
-                            &kind,
-                            notify::event::ModifyKind::Name(notify::event::RenameMode::To)
-                                | notify::event::ModifyKind::Name(notify::event::RenameMode::From)
-                        );
-                        if valid {
-                            self.ctx
-                                .raise_event(events::FilesChanged::from_event(&event));
+                    if event.kind
+                        != notify::event::EventKind::Remove(notify::event::RemoveKind::Any)
+                    {
+                        if let notify::event::EventKind::Modify(modifykind) = event.kind
+                            && matches!(
+                                &modifykind,
+                                notify::event::ModifyKind::Name(notify::event::RenameMode::To)
+                                    | notify::event::ModifyKind::Name(
+                                        notify::event::RenameMode::From
+                                    )
+                            )
+                        {
+                            return;
                         }
+                        self.ctx
+                            .raise_event(events::FilesChanged::from_event(&event));
                     }
                 }
                 Err(e) => error!("Watch error: {:?}", e),

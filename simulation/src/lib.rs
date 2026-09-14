@@ -281,6 +281,17 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         self.rebuild_pipelines();
     }
 
+    pub fn update_user_shaders(
+        &mut self,
+        definitions_shader: UserShaderInput,
+        cell_process_shader: UserShaderInput,
+        display_shader: UserShaderInput,
+    ) {
+        self.user_definitions_shader = Some(definitions_shader);
+        self.user_cell_process_shader = Some(cell_process_shader);
+        self.user_display_shader = Some(display_shader);
+    }
+
     pub fn add_material(&mut self, material_name: N, material_def: M) {
         // Finds the first None index in self.materials and inserts the material_def there.
         // If nothing is free, inserts material_def at the end of self.materials
@@ -353,6 +364,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
             error!("User display shader not set!");
             return;
         };
+
         let mut all_dependencies = vec![];
         #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
         let shader_dump_dir = std::env::current_exe()
@@ -524,7 +536,10 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
 
         #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
         {
-            self.shader_paths = compute_shader.dependencies;
+            self.shader_paths = all_dependencies.into_iter().flatten().collect();
+            for path in &self.shader_paths {
+                self.ctx.get_mut::<FileWatcher>().watch(path, true);
+            }
         }
 
         let graphics_sys = self.ctx.get::<GraphicsSystem>();
