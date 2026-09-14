@@ -795,8 +795,8 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
         Self {
             ctx,
             frame: 0,
-            tickrate: Duration::from_millis(16 * 3),
-            last_tick: Instant::now() + Duration::from_secs_f32(1.0),
+            tickrate: Duration::from_millis(16 * 2),
+            last_tick: Instant::now() + Duration::from_secs_f32(0.5), // small delay before sim starts
             accumulator: Duration::ZERO,
 
             cells_read_ssbo,

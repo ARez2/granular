@@ -177,8 +177,6 @@ impl Game {
         drop(input);
         let mut camera = self.ctx.get_mut::<Camera>();
         camera.translate(vector * 10);
-        camera.set_bottomleft_position(IVec2::new(0, 0));
-        let _pos = camera.position();
         drop(camera);
     }
 
