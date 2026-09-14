@@ -116,6 +116,8 @@ pub struct Simulation<N: MatName, M: MaterialShaderStruct, C: CellStruct> {
 
     /// Shader which **must** contain a definition for `struct Material` and `struct Cell` (with those names)
     user_definitions_shader: Option<UserShaderInput>,
+    /// Shader which processes all the cells
+    user_cell_process_shader: Option<UserShaderInput>,
     /// Shader, which is run to display the sim
     user_display_shader: Option<UserShaderInput>,
 
@@ -268,10 +270,12 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
     pub fn init_simulation(
         &mut self,
         definitions_shader: UserShaderInput,
+        cell_process_shader: UserShaderInput,
         display_shader: UserShaderInput,
         bindgroup: (wgpu::BindGroup, wgpu::BindGroupLayout),
     ) {
         self.user_definitions_shader = Some(definitions_shader);
+        self.user_cell_process_shader = Some(cell_process_shader);
         self.user_display_shader = Some(display_shader);
         self.user_bind_group = Some(bindgroup);
         self.rebuild_pipelines();
@@ -341,21 +345,33 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
             error!("User definitions shader not set!");
             return;
         };
+        let Some(process_shader) = self.user_cell_process_shader.clone() else {
+            error!("User cell process shader not set!");
+            return;
+        };
         let Some(display_shader) = self.user_display_shader.clone() else {
             error!("User display shader not set!");
             return;
         };
+        let mut all_dependencies = vec![];
+        #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+        let shader_dump_dir = std::env::current_exe()
+            .unwrap()
+            .with_file_name("shader-build");
+        #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+        std::fs::create_dir_all(&shader_dump_dir).unwrap();
+
         let definitions_shader_res = wgsl_preprocessor::Preprocessor::new(
             definitions_shader.main_shader,
             definitions_shader.includes,
         )
         .build();
-
         if let Err(e) = definitions_shader_res {
             error!("Error while preprocessing users definition shader: {}", e);
             return;
         }
         let mut definitions_shader = definitions_shader_res.unwrap();
+        all_dependencies.push(definitions_shader.dependencies.clone());
 
         let mut material_constants = String::new();
         for mat_name in N::iter() {
@@ -371,12 +387,71 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         material_constants.push('\n');
         definitions_shader.source.insert_str(0, &material_constants);
 
+        // Definitions shader is the first shader, so just validate it alone
         if let Err(e) = validate_wgsl(&definitions_shader.source) {
             error!(
                 "Error while validating user definitions shader with inserted material name constants: {}",
                 e
             );
-            error!("Shader source: \n{}", definitions_shader.source);
+            #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+            {
+                let dumppath = shader_dump_dir.join("user_definitions.wgsl");
+                let _ = std::fs::write(&dumppath, definitions_shader.source);
+                #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+                error!("Shader source written to: {}", dumppath.display());
+            }
+            return;
+        }
+
+        let process_shader_res = wgsl_preprocessor::Preprocessor::new(
+            process_shader.main_shader,
+            process_shader.includes,
+        )
+        .build();
+        if let Err(e) = process_shader_res {
+            error!("Error while preprocessing users cell process shader: {}", e);
+            return;
+        }
+        let process_shader = process_shader_res.unwrap();
+        all_dependencies.push(process_shader.dependencies.clone());
+
+        // Since the processing shader can use stuff before it, we need to make sure that stuff exists
+        let mut compute_to_process_preprocessor = wgsl_preprocessor::Preprocessor::new(
+            include_file!("shaders/compute_to_process.wgsl"),
+            vec![
+                include_file!("shaders/shared.wgsl"),
+                include_file!("shaders/debug_print.wgsl"),
+                include_file!("shaders/actions.wgsl"),
+            ],
+        );
+        compute_to_process_preprocessor.define_value("GRID_WIDTH", GRID_WIDTH);
+        compute_to_process_preprocessor.define_value("GRID_HEIGHT", GRID_HEIGHT);
+        compute_to_process_preprocessor
+            .define_value("USER_DEFINITIONS_SHADER", definitions_shader.source);
+        compute_to_process_preprocessor
+            .define_value("USER_CELL_PROCESS_SHADER", process_shader.source);
+        let compute_to_process_res = compute_to_process_preprocessor.build();
+        if let Err(e) = compute_to_process_res {
+            error!(
+                "Error while preprocessing simulation shader until (incl.) users cell process shader: {}",
+                e
+            );
+            return;
+        }
+        let compute_to_process_shader = compute_to_process_res.unwrap();
+        all_dependencies.push(compute_to_process_shader.dependencies.clone());
+        if let Err(e) = validate_wgsl(&compute_to_process_shader.source) {
+            error!(
+                "Error while validating simulation shader until (incl.) users cell process shader: {}",
+                e
+            );
+            #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+            {
+                let dumppath = shader_dump_dir.join("cell_process_shader.wgsl");
+                let _ = std::fs::write(&dumppath, compute_to_process_shader.source);
+                #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+                error!("Shader source written to: {}", dumppath.display());
+            }
             return;
         }
 
@@ -385,41 +460,67 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
             display_shader.includes,
         )
         .build();
-
         if let Err(e) = display_shader_res {
-            error!("Error while preprocessing users definition shader: {}", e);
+            error!("Error while preprocessing users display shader: {}", e);
             return;
         }
-        let mut display_shader = display_shader_res.unwrap();
-        let mut compute_shader = wgsl_preprocessor::Preprocessor::new(
-            include_file!("shaders/compute.wgsl"),
-            vec![
-                include_file!("shaders/shared.wgsl"),
-                include_file!("shaders/debug_print.wgsl"),
-                include_file!("shaders/cell_logic/actions.wgsl"),
-                include_file!("shaders/cell_logic/cell_logic.wgsl"),
-            ],
-        );
-        compute_shader.define_value("GRID_WIDTH", GRID_WIDTH);
-        compute_shader.define_value("GRID_HEIGHT", GRID_HEIGHT);
-        compute_shader.define_value("USER_DEFINITIONS_SHADER", definitions_shader.source);
-        compute_shader.define_value("USER_DISPLAY_SHADER", display_shader.source);
-        let compute_shader_res = compute_shader.build();
+        let display_shader = display_shader_res.unwrap();
+        all_dependencies.push(display_shader.dependencies.clone());
 
-        if let Err(e) = compute_shader_res {
+        let mut compute_to_display_preprocessor = wgsl_preprocessor::Preprocessor::new(
+            include_file!("shaders/compute_to_display.wgsl"),
+            vec![],
+        );
+        compute_to_display_preprocessor.define_value("USER_DISPLAY_SHADER", display_shader.source);
+        let compute_to_display_res = compute_to_display_preprocessor.build();
+        if let Err(e) = compute_to_display_res {
             error!(
-                "Error while preprocessing simulation main compute shader: {}",
+                "Error while preprocessing simulation shader until (incl.) users display shader: {}",
                 e
             );
             return;
         }
-        let mut compute_shader = compute_shader_res.unwrap();
-        compute_shader
-            .dependencies
-            .append(&mut definitions_shader.dependencies);
-        compute_shader
-            .dependencies
-            .append(&mut display_shader.dependencies);
+        let compute_to_display_shader = compute_to_display_res.unwrap();
+        all_dependencies.push(compute_to_display_shader.dependencies.clone());
+
+        let process_and_display_shader_src = format!(
+            "{}\n\n{}",
+            compute_to_process_shader.source, compute_to_display_shader.source
+        );
+        if let Err(e) = validate_wgsl(&process_and_display_shader_src) {
+            error!(
+                "Error while validating simulation shader until (incl.) users display shader: {}",
+                e
+            );
+            #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+            {
+                let dumppath = shader_dump_dir.join("display_shader.wgsl");
+                let _ = std::fs::write(&dumppath, process_and_display_shader_src);
+                #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+                error!("Shader source written to: {}", dumppath.display());
+            }
+            return;
+        }
+
+        let mut compute_shader = wgsl_preprocessor::Preprocessor::new(
+            include_file!("shaders/compute_to_z_end.wgsl"),
+            vec![],
+        );
+        let compute_shader_res = compute_shader.build();
+        if let Err(e) = compute_shader_res {
+            error!(
+                "Error while preprocessing simulation compute to the end shader: {}",
+                e
+            );
+            return;
+        }
+        let compute_shader = compute_shader_res.unwrap();
+        all_dependencies.push(compute_shader.dependencies.clone());
+
+        let full_shader_source = format!(
+            "{}\n\n{}",
+            process_and_display_shader_src, compute_shader.source
+        );
 
         #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
         {
@@ -430,7 +531,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         let device = graphics_sys.device();
         let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Simulation main compute shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Owned(compute_shader.source)),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(full_shader_source)),
         });
         self.compute_pipelines = Self::create_compute_pipelines(
             device,
@@ -806,6 +907,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
             cells_cpu_buffer_dirty: false,
 
             user_definitions_shader: None,
+            user_cell_process_shader: None,
             user_display_shader: None,
 
             compute_pipelines: vec![],

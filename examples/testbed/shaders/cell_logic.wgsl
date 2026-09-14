@@ -1,3 +1,9 @@
+/// Available cell actions (from actions.wgsl):
+/// - move_to(source_idx: u32, destination_idx: u32)
+/// - swap(source_idx: u32, destination_idx: u32)
+/// - modify_own(source_idx: u32)
+/// - modify_other(source_idx: u32, destination_idx: u32)
+
 
 // source_idx is the idx of the cell that wants to create the new cell
 fn create_cell(source_idx: u32, cell_idx: u32, cell: Cell) -> Cell {
@@ -151,22 +157,18 @@ fn process_liquid(cell: ptr<function, Cell>, cell_idx: u32) -> bool {
 
 
 
-fn process_cell(cell: Cell, cell_idx: u32) {
-    let pos = idx_to_pos(cell_idx);
-    
+fn user_process_cell(cell: ptr<function, Cell>, material: Material, cell_pos: vec2i, cell_idx: u32) {
     var debug_color = vec4f(0.0, 0.0, 0.0, 0.0);
-    debug_color = print_value(debug_color, pos, vec2i(0, 5), 12.4, 2, vec4f(1.0, 0.0, 0.0, 1.0));
-    textureStore(debug_tex0, pos, debug_color); 
+    debug_color = print_value(debug_color, cell_pos, vec2i(0, 5), 12.4, 2, vec4f(1.0, 0.0, 0.0, 1.0));
+    textureStore(debug_tex0, cell_pos, debug_color); 
 
-
-    var local_cell = cell;
     switch cell.material {
         case MAT_SAND {
-            let r = process_movable_solid(&local_cell, cell_idx);
+            let r = process_movable_solid(cell, cell_idx);
         }
         case MAT_WATER {
-            if !process_movable_solid(&local_cell, cell_idx) {
-                let r = process_liquid(&local_cell, cell_idx);
+            if !process_movable_solid(cell, cell_idx) {
+                let r = process_liquid(cell, cell_idx);
             }
         }
         case MAT_EMPTY {
@@ -175,11 +177,4 @@ fn process_cell(cell: Cell, cell_idx: u32) {
 
         }
     }
-
-    // If this cell has proposed no other intent and it modified the local_cell,
-    // make sure that modification gets registered
-    if !eq(local_cell, cell) && intents[cell_idx].intend_kind == INTENT_NONE {
-        modify_own(cell_idx);
-    }
-    desired_cells[cell_idx] = local_cell;
 }

@@ -120,6 +120,10 @@ impl Game {
                     ],
                 },
                 granular::simulation::UserShaderInput {
+                    main_shader: include_file!("shaders/cell_logic.wgsl"),
+                    includes: vec![],
+                },
+                granular::simulation::UserShaderInput {
                     main_shader: include_file!("shaders/display.wgsl"),
                     includes: vec![],
                 },

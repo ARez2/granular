@@ -29,7 +29,7 @@ cargo run-testbed-trace
 ## Todo
 - Dynamically remove textures from `BatchRenderer` texture atlasses
 - Find way to remove GraphicsSystem dependency from Game?
-- Make user provide cell logic (easy)
+- ✅ Done: Make user provide cell logic (easy)
 - Write some usage information (simulation setup + requirements)
 - Maybe provide a working webpage with the testbed running?
 - Test simulation shader hot reloading

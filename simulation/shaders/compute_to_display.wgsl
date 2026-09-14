@@ -1,31 +1,15 @@
-{{USER_DEFINITIONS_SHADER}}
+fn process_cell(cell: Cell, material: Material, cell_pos: vec2i, cell_idx: u32) {
+    var local_cell = cell;
 
-#include "shared.wgsl"
-#include "cell_logic/actions.wgsl"
-#include "cell_logic/cell_logic.wgsl"
+    user_process_cell(&local_cell, material, cell_pos, cell_idx);
 
-
-/// First pass: Prepare
-/// Initializes/ Clears all the buffers
-@compute @workgroup_size(WORKGROUP_SIZE_X, WORKGROUP_SIZE_Y, 1)
-fn prepare(@builtin(global_invocation_id) gid: vec3u) {
-    let idx_res = pos_to_idx(vec2i(gid.xy));
-    let source_idx = idx_res.index;
-    if !idx_res.valid {
-        return;
+    // If this cell has proposed no other intent and it modified the local_cell,
+    // make sure that modification gets registered
+    if !eq(local_cell, cell) && intents[cell_idx].intend_kind == INTENT_NONE {
+        modify_own(cell_idx);
     }
-
-    intents[source_idx] = no_intent();
-    atomicStore(&winners[source_idx], NO_PROPOSAL);
-    accepted[source_idx] = 0u;
-
-    desired_cells[source_idx] = current_cells[source_idx];
-    next_cells[source_idx] = current_cells[source_idx];
-
-    textureStore(debug_tex0, gid.xy, vec4f(0.0));
+    desired_cells[cell_idx] = local_cell;
 }
-
-
 
 
 /// Second pass: Propose
@@ -39,7 +23,8 @@ fn propose(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     let cell = current_cells[source_idx];
-    process_cell(cell, source_idx);
+    let material = materials[cell.material];
+    process_cell(cell, material, vec2i(gid.xy), source_idx);
 }
 
 
@@ -125,25 +110,6 @@ fn commit(@builtin(global_invocation_id) gid: vec3u) {
 }
 
 
-{{USER_DISPLAY_SHADER}}
-
 // User display shader function signature:
 // fn user_display(cell: Cell, material: Material, cell_pos: vec2i, cell_index: u32) -> vec4f {}
-
-
-@compute @workgroup_size(WORKGROUP_SIZE_X, WORKGROUP_SIZE_Y, 1)
-fn display(@builtin(global_invocation_id) gid: vec3u) {
-    var idx_res = pos_to_idx(vec2i(gid.xy));
-    let source_idx = idx_res.index;
-    if !idx_res.valid {
-        return;
-    }
-
-    let cell = current_cells[source_idx];
-    let material = materials[cell.material];
-
-    let color = user_display(cell, material, vec2i(gid.xy), source_idx);
-    let srgb_color = linear_to_srgb4(color);
-    textureStore(display_texture, vec2i(gid.xy), srgb_color);
-}
-
+{{USER_DISPLAY_SHADER}}
