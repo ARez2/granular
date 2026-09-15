@@ -620,3 +620,11 @@ impl GeeseSystem for GraphicsSystem {
         }
     }
 }
+impl Drop for GraphicsSystem {
+    fn drop(&mut self) {
+        // drop the context before the graphics state to hopefully fix
+        // "Trying to destroy a SwapchainAcquireSemaphore that is still in use by a SurfaceTexture"
+        // which occured on shutdown sometimes
+        drop(self.context.take());
+    }
+}
