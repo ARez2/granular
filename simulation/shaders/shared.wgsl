@@ -47,10 +47,6 @@ var display_texture : texture_storage_2d<rgba8unorm, write>;
 
 @group(1) @binding(1)
 var<storage, read_write> materials: array<Material>;
-@group(2) @binding(1)
-var material_texture_atlas: texture_2d<f32>;
-@group(2) @binding(2)
-var material_texture_atlas_sampler: sampler;
 
 
 @group(4) @binding(0)
@@ -290,4 +286,9 @@ fn map_rangei(val: i32, input_start: i32, input_end: i32, output_start: i32, out
 
 fn map_rangeu(val: u32, input_start: u32, input_end: u32, output_start: u32, output_end: u32) -> u32 {
     return u32(map_rangef(f32(val), f32(input_start), f32(input_end), f32(output_start), f32(output_end)));
+}
+
+/// Use this to access materials
+fn get_material(material_idx: u32) -> Material {
+    return materials[material_idx];
 }

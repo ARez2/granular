@@ -27,12 +27,14 @@ cargo run-testbed-trace
 
 
 ## Todo
-- Dynamically remove textures from `BatchRenderer` texture atlasses
-- Find way to remove GraphicsSystem dependency from Game?
 - ✅ Done: Make user provide cell logic (easy)
+- ✅ Done: Test simulation shader hot reloading
+- ✅ Done: Store colors inside cell
+- Find way to remove GraphicsSystem dependency from Game?
 - Write some usage information (simulation setup + requirements)
 - Maybe provide a working webpage with the testbed running?
-- Test simulation shader hot reloading
 
-- Low priority: Input system: What about touch gestures?
+**Low priority:**
+- Dynamically remove textures from `BatchRenderer` texture atlasses
+- Input system: What about touch gestures?
 

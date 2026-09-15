@@ -21,10 +21,15 @@ fn prepare(@builtin(global_invocation_id) gid: vec3u) {
     var current_cell: Cell;
     let maybecell = cpu_to_gpu_buffer[source_idx];
     if bool(maybecell.is_some) {
-        current_cell = maybecell.inner_cell;
+        // Calls the users init function
+        current_cell = user_init_cell(maybecell.inner_cell, vec2i(gid.xy), source_idx);
         cpu_to_gpu_buffer[source_idx].is_some = i32(false);
     } else {
-        current_cell = current_cells[source_idx];
+        if params.tick == 0 {
+            current_cell = user_init_cell(current_cells[source_idx], vec2i(gid.xy), source_idx);
+        } else {
+            current_cell = current_cells[source_idx];
+        }
     }
     desired_cells[source_idx] = current_cell;
     next_cells[source_idx] = current_cell;

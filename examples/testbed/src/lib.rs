@@ -103,59 +103,6 @@ impl Game {
             camera.set_bottomleft_position(IVec2::new(0, 0));
             drop(camera);
 
-            let (sand_tex, bg_tex, rock_tex) = {
-                let mut asset_sys = self.ctx.get_mut::<AssetSystem>();
-                (
-                    asset_sys
-                        .load(
-                            asset_source!("../../assets/noita/sand.png"),
-                            TextureBundleLoadSettings {
-                                format: granular::wgpu::TextureFormat::Rgba8Unorm,
-                                ..Default::default()
-                            },
-                        )
-                        .unwrap(),
-                    asset_sys
-                        .load(
-                            asset_source!("../../assets/noita/background_wandcave.png"),
-                            TextureBundleLoadSettings {
-                                format: granular::wgpu::TextureFormat::Rgba8Unorm,
-                                ..Default::default()
-                            },
-                        )
-                        .unwrap(),
-                    asset_sys
-                        .load(
-                            asset_source!("../../assets/noita/rock.png"),
-                            TextureBundleLoadSettings {
-                                format: granular::wgpu::TextureFormat::Rgba8Unorm,
-                                ..Default::default()
-                            },
-                        )
-                        .unwrap(),
-                )
-            };
-            self.add_material(
-                shader_types::MaterialName::Empty,
-                shader_types::Material::new(0.0),
-                MatColor::Tex(bg_tex),
-            );
-            self.add_material(
-                shader_types::MaterialName::Sand,
-                shader_types::Material::new(2.0),
-                MatColor::Tex(sand_tex),
-            );
-            self.add_material(
-                shader_types::MaterialName::Water,
-                shader_types::Material::new(1.0),
-                MatColor::Col(vec4(0.0, 0.0, 1.0, 1.0)),
-            );
-            self.add_material(
-                shader_types::MaterialName::Rock,
-                shader_types::Material::new(5.0),
-                MatColor::Tex(rock_tex),
-            );
-
             let mut shaders = self.load_shaders();
             let mut simulation = self.ctx.get_mut::<MySimulation>();
             simulation.init_simulation(
@@ -283,22 +230,43 @@ impl Game {
         mut material_def: shader_types::Material,
         material_color: MatColor,
     ) {
-        match material_color {
-            MatColor::Tex(tex) => {
-                let texture_size = {
+        let texture_size = {
+            match &material_color {
+                MatColor::Tex(tex) => {
                     let asset_sys = self.ctx.get::<AssetSystem>();
                     let tex = asset_sys.get(&tex).unwrap().texture();
                     UVec2::new(tex.size().width, tex.size().height)
-                };
+                }
+                MatColor::Col(_) => UVec2::ZERO,
+            }
+        };
+        (material_def, self.material_atlas_dirty) = Self::prepare_material_definition(
+            texture_size,
+            &mut self.material_tex_atlas,
+            material_def,
+            material_color,
+        );
 
-                if !self.material_tex_atlas.contains_texture(&tex) {
-                    self.material_atlas_dirty = true;
-                    let res = self
-                        .material_tex_atlas
-                        .add_texture(tex.clone(), texture_size);
+        let mut simulation = self.ctx.get_mut::<MySimulation>();
+        simulation.add_material(material_name, material_def);
+    }
+
+    /// Inserts the texture into the material atlas and stores if the atlas needs to be updated in the bool (second part of result)
+    fn prepare_material_definition(
+        texture_size: UVec2,
+        material_tex_atlas: &mut DynamicTextureAtlas,
+        mut material_def: shader_types::Material,
+        material_color: MatColor,
+    ) -> (shader_types::Material, bool) {
+        let mut dirty = false;
+        match material_color {
+            MatColor::Tex(tex) => {
+                if !material_tex_atlas.contains_texture(&tex) {
+                    dirty = true;
+                    let res = material_tex_atlas.add_texture(tex.clone(), texture_size);
                     if res.is_ok() {
                         (material_def.tex_coords_start, material_def.tex_coords_end) =
-                            self.material_tex_atlas.get_texture_coords(&tex).unwrap();
+                            material_tex_atlas.get_texture_coords(&tex).unwrap();
                     } else {
                         error!("Cannot insert material texture into atlas!");
                     }
@@ -308,8 +276,7 @@ impl Game {
                 material_def.color = col;
             }
         }
-        let mut simulation = self.ctx.get_mut::<MySimulation>();
-        simulation.add_material(material_name, material_def);
+        (material_def, dirty)
     }
 
     const EVENT_HANDLERS_SHARED: EventHandlers<Self> = event_handlers()
@@ -341,6 +308,91 @@ impl GeeseSystem for Game {
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         info!("Game created");
+
+        let graphics_sys = ctx.get::<GraphicsSystem>();
+        let device = graphics_sys.device();
+        let queue = graphics_sys.queue();
+        let mut material_tex_atlas = DynamicTextureAtlas::new(
+            "Testbed material texture atlas",
+            device,
+            queue,
+            2048,
+            2048,
+            granular::wgpu::FilterMode::Nearest,
+        );
+        drop(graphics_sys);
+
+        {
+            let (sand_tex, bg_tex, rock_tex) = {
+                let mut asset_sys = ctx.get_mut::<AssetSystem>();
+
+                let mut load_tex = |source| {
+                    let handle = asset_sys
+                        .load::<TextureBundle>(
+                            source,
+                            TextureBundleLoadSettings {
+                                format: granular::wgpu::TextureFormat::Rgba8Unorm,
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap();
+                    let texture_size = {
+                        let tex = asset_sys.get(&handle).unwrap().texture();
+                        UVec2::new(tex.size().width, tex.size().height)
+                    };
+                    (handle, texture_size)
+                };
+
+                (
+                    load_tex(asset_source!("../../assets/noita/sand.png")),
+                    load_tex(asset_source!("../../assets/noita/background_wandcave.png")),
+                    load_tex(asset_source!("../../assets/noita/rock.png")),
+                )
+            };
+
+            let mut sim = ctx.get_mut::<MySimulation>();
+            sim.add_material(
+                shader_types::MaterialName::Empty,
+                Self::prepare_material_definition(
+                    bg_tex.1,
+                    &mut material_tex_atlas,
+                    shader_types::Material::new(0.0),
+                    MatColor::Tex(bg_tex.0),
+                )
+                .0,
+            );
+            sim.add_material(
+                shader_types::MaterialName::Sand,
+                Self::prepare_material_definition(
+                    sand_tex.1,
+                    &mut material_tex_atlas,
+                    shader_types::Material::new(2.0),
+                    MatColor::Tex(sand_tex.0),
+                )
+                .0,
+            );
+            sim.add_material(
+                shader_types::MaterialName::Water,
+                Self::prepare_material_definition(
+                    UVec2::ZERO,
+                    &mut material_tex_atlas,
+                    shader_types::Material::new(1.0),
+                    MatColor::Col(vec4(0.0, 0.0, 1.0, 1.0)),
+                )
+                .0,
+            );
+            sim.add_material(
+                shader_types::MaterialName::Rock,
+                Self::prepare_material_definition(
+                    rock_tex.1,
+                    &mut material_tex_atlas,
+                    shader_types::Material::new(5.0),
+                    MatColor::Tex(rock_tex.0),
+                )
+                .0,
+            );
+        }
+        let material_atlas_dirty = true;
 
         {
             let mut input = ctx.get_mut::<InputSystem>();
@@ -393,14 +445,6 @@ impl GeeseSystem for Game {
 
         let graphics_sys = ctx.get::<GraphicsSystem>();
         let device = graphics_sys.device();
-        let queue = graphics_sys.queue();
-        let material_tex_atlas = DynamicTextureAtlas::new(
-            device,
-            queue,
-            2048,
-            2048,
-            granular::wgpu::FilterMode::Nearest,
-        );
 
         let (material_bgl, material_bg) = BindGroupBuilder::new()
             .add_binding_with_resource(
@@ -429,7 +473,7 @@ impl GeeseSystem for Game {
             texture2_handle,
 
             material_tex_atlas,
-            material_atlas_dirty: false,
+            material_atlas_dirty,
             materials_bg,
 
             #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]

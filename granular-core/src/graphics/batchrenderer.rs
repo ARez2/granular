@@ -706,6 +706,7 @@ impl GeeseSystem for BatchRenderer {
 
         let atlas_bgl = Self::create_atlas_bind_group_layout(device);
         let first_atlas = DynamicTextureAtlas::new(
+            "BatchRenderer atlas",
             device,
             queue,
             Self::DEFAULT_TEXATLAS_WIDTH,

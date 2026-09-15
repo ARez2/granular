@@ -32,6 +32,7 @@ impl TextureAtlas {
     pub const DEFAULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
     pub fn new(
+        name: &str,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         width: u32,
@@ -41,7 +42,7 @@ impl TextureAtlas {
         let atlas_texture = TextureBundle::new(
             device,
             queue,
-            &format!("TextureAtlas {}x{}", width, height),
+            &format!("{} (TextureAtlas {}x{})", name, width, height),
             wgpu::TextureDescriptor {
                 label: Some("TextureAsset Desc"),
                 size: Extent3d {
@@ -180,6 +181,7 @@ pub struct DynamicTextureAtlas {
 impl DynamicTextureAtlas {
     #[allow(unused)]
     pub fn new(
+        name: &str,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         width: u32,
@@ -191,7 +193,7 @@ impl DynamicTextureAtlas {
             warn!("Linear filtering is not supported for the DynamicTextureAtlas at the moment");
         }
         Self {
-            texture_atlas: TextureAtlas::new(device, queue, width, height, filtering),
+            texture_atlas: TextureAtlas::new(name, device, queue, width, height, filtering),
             allocator,
             contained_textures: HashMap::default(),
             dirty_textures: vec![],

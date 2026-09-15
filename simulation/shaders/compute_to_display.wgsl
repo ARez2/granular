@@ -1,7 +1,7 @@
-fn process_cell(cell: Cell, material: Material, cell_pos: vec2i, cell_idx: u32) {
+fn process_cell(cell: Cell, cell_pos: vec2i, cell_idx: u32) {
     var local_cell = cell;
 
-    user_process_cell(&local_cell, material, cell_pos, cell_idx);
+    user_process_cell(&local_cell, cell_pos, cell_idx);
 
     // If this cell has proposed no other intent and it modified the local_cell,
     // make sure that modification gets registered
@@ -23,8 +23,7 @@ fn propose(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     let cell = current_cells[source_idx];
-    let material = materials[cell.material];
-    process_cell(cell, material, vec2i(gid.xy), source_idx);
+    process_cell(cell, vec2i(gid.xy), source_idx);
 }
 
 
@@ -83,7 +82,7 @@ fn commit(@builtin(global_invocation_id) gid: vec3u) {
 
     switch intent.intend_kind {
         case INTENT_MOVE: {
-            next_cells[source_idx] = new_empty();
+            next_cells[source_idx] = user_init_cell(new_empty(), vec2i(gid.xy), source_idx);
             next_cells[destination_idx] = source_cell;
         }
 

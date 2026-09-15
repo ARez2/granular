@@ -5,6 +5,39 @@
 /// - modify_other(source_idx: u32, destination_idx: u32)
 
 
+// Required function. Gets called at the beginning of every step to init
+// cells coming from the CPU
+fn user_init_cell(cpu_cell: Cell, cell_pos: vec2i, cell_idx: u32) -> Cell {
+    let material = get_material(cpu_cell.material);
+    var color: vec4f;
+    if any(material.tex_coords_start != material.tex_coords_end) {
+        let atlas_size = vec2i(textureDimensions(material_texture_atlas));
+        let atlas_pos_start = vec2i(material.tex_coords_start * vec2f(atlas_size));
+        let atlas_pos_end = vec2i(material.tex_coords_end * vec2f(atlas_size));
+        let mat_tex_size = atlas_pos_end - atlas_pos_start;
+        let texture_sample_pos =
+            atlas_pos_start + vec2i(
+                cell_pos.x % mat_tex_size.x,
+                cell_pos.y % mat_tex_size.y
+            );
+        // textureSample is forbidden
+        color = textureLoad(
+            material_texture_atlas,
+            texture_sample_pos,
+            0
+        );
+    } else {
+        color = material.color;
+    }
+
+    if cell_pos.x >= 65 && cell_pos.x <= 70 && cell_pos.y == 50 && cpu_cell.material == MAT_SAND {
+        color = vec4f(1.0, 0.0, 0.0, 1.0);
+    }
+
+    return Cell(cpu_cell.material, cpu_cell.velocity, 0.1234, color);
+}
+
+
 // source_idx is the idx of the cell that wants to create the new cell
 fn create_cell(source_idx: u32, cell_idx: u32, cell: Cell) -> Cell {
     if source_idx == cell_idx {
@@ -157,7 +190,7 @@ fn process_liquid(cell: ptr<function, Cell>, cell_idx: u32) -> bool {
 
 
 
-fn user_process_cell(cell: ptr<function, Cell>, material: Material, cell_pos: vec2i, cell_idx: u32) {
+fn user_process_cell(cell: ptr<function, Cell>, cell_pos: vec2i, cell_idx: u32) {
     var debug_color = vec4f(0.0, 0.0, 0.0, 0.0);
     debug_color = print_value(debug_color, cell_pos, vec2i(0, 5), 12.4, 2, vec4f(1.0, 0.0, 0.0, 1.0));
     textureStore(debug_tex0, cell_pos, debug_color); 

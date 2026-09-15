@@ -7,9 +7,8 @@ fn display(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     let cell = current_cells[source_idx];
-    let material = materials[cell.material];
 
-    let color = user_display(cell, material, vec2i(gid.xy), source_idx);
+    let color = user_display(cell, vec2i(gid.xy), source_idx);
     let srgb_color = linear_to_srgb4(color);
     textureStore(display_texture, vec2i(gid.xy), srgb_color);
 }

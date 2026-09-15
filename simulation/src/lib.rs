@@ -298,6 +298,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         self.user_display_shader = Some(display_shader);
     }
 
+    /// Inserts a new material definition into the simulation
     pub fn add_material(&mut self, material_name: N, material_def: M) {
         // Finds the first None index in self.materials and inserts the material_def there.
         // If nothing is free, inserts material_def at the end of self.materials

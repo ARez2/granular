@@ -66,7 +66,7 @@ impl Default for Cell {
             material_name: MaterialName::Empty as u32,
             velocity: Vec2::ZERO,
             _pad: 0.0,
-            color: vec4(1.0, 0.0, 1.0, 1.0),
+            color: vec4(1.0, 0.0, 0.0, 1.0),
         }
     }
 }
