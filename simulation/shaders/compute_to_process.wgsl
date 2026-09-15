@@ -18,8 +18,16 @@ fn prepare(@builtin(global_invocation_id) gid: vec3u) {
     atomicStore(&winners[source_idx], NO_PROPOSAL);
     accepted[source_idx] = 0u;
 
-    desired_cells[source_idx] = current_cells[source_idx];
-    next_cells[source_idx] = current_cells[source_idx];
+    var current_cell: Cell;
+    let maybecell = cpu_to_gpu_buffer[source_idx];
+    if bool(maybecell.is_some) {
+        current_cell = maybecell.inner_cell;
+        cpu_to_gpu_buffer[source_idx].is_some = i32(false);
+    } else {
+        current_cell = current_cells[source_idx];
+    }
+    desired_cells[source_idx] = current_cell;
+    next_cells[source_idx] = current_cell;
 
     textureStore(debug_tex0, gid.xy, vec4f(0.0));
 }

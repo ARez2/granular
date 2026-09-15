@@ -16,6 +16,8 @@ use web_time::{Duration, Instant};
 use wgpu::{Buffer, util::DeviceExt};
 use wgsl_preprocessor::include_file;
 
+use crate::shader_types::MaybeCell;
+
 pub mod prelude {
     pub use super::UserShaderInput;
     pub use num_enum::IntoPrimitive;
@@ -108,11 +110,12 @@ pub struct Simulation<N: MatName, M: MaterialShaderStruct, C: CellStruct> {
     last_tick: Instant,
     accumulator: Duration,
 
-    cells_read_ssbo: wgpu::Buffer,
-    cells_write_ssbo: wgpu::Buffer,
-
-    cells_cpu_buffer: Box<[C]>,
-    cells_cpu_buffer_dirty: bool,
+    /// Buffer which gets written from the CPU (and basically stores the GPU equivalent of Option<Cell>)
+    cells_cpu_buffer: Box<[MaybeCell<C>]>,
+    /// Stores which indices of `cells_cpu_buffer` have changed
+    cells_dirty_indices: Vec<usize>,
+    /// GPU buffer into which `cells_cpu_buffer` will get uploaded
+    cpu_to_gpu_buffer: wgpu::Buffer,
 
     /// Shader which **must** contain a definition for `struct Material` and `struct Cell` (with those names)
     user_definitions_shader: Option<UserShaderInput>,
@@ -127,17 +130,24 @@ pub struct Simulation<N: MatName, M: MaterialShaderStruct, C: CellStruct> {
     shader_paths: Vec<PathBuf>,
     compute_pl_layout: Option<wgpu::PipelineLayout>,
 
+    /// The shared bind group layout for the first bindgroup
     sim_bgl_a_b: wgpu::BindGroupLayout,
+    /// The Ping-part of the ping pong bindgroup (stuff which changes each frame)
     sim_bind_group1_a: wgpu::BindGroup,
+    /// The Pong-part of the ping pong bindgroup (stuff which changes each frame)
     sim_bind_group1_b: wgpu::BindGroup,
+    /// Bindgroup for debug purposes
     debug_bind_group: (wgpu::BindGroup, wgpu::BindGroupLayout),
+    /// Bindgroup which contains stuff like display texture or materials (which dont change every frame)
     sim_bind_group2: (wgpu::BindGroup, wgpu::BindGroupLayout),
+    /// The bindgroup that the user can provide for display etc.
     user_bind_group: Option<(wgpu::BindGroup, wgpu::BindGroupLayout)>,
 
     params: shader_types::Params,
     params_bytes: [u8; size_of::<shader_types::Params>()],
     params_buffer: wgpu::Buffer,
 
+    /// The handle to the texture which stores the color output of the simulation
     display_tex_handle: AssetHandle<TextureBundle>,
 
     /// Maps the enum values to an index in `materials`
@@ -232,24 +242,20 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
                 .queue
                 .write_buffer(&self.materials_ssbo, 0, &materials_buffer.into_inner());
 
-            if self.cells_cpu_buffer_dirty {
-                let buffer = if self.frame.is_multiple_of(2) {
-                    // write into self.cells_read_buffer
-                    &self.cells_read_ssbo
-                } else {
-                    &self.cells_write_ssbo
-                };
-
+            if !self.cells_dirty_indices.is_empty() {
                 let mut staging = context
                     .queue
-                    .write_buffer_with(buffer, 0, self.cells_cpu_buffer.size())
-                    .expect("Ungültiger Buffer-Schreibbereich");
+                    .write_buffer_with(&self.cpu_to_gpu_buffer, 0, self.cells_cpu_buffer.size())
+                    .expect("Invalid buffer write");
 
                 encase::StorageBuffer::new(EncaseStaging(&mut staging))
                     .write(self.cells_cpu_buffer.as_ref())
                     .expect("encase serialization failed");
 
-                self.cells_cpu_buffer_dirty = false;
+                for idx in &self.cells_dirty_indices {
+                    self.cells_cpu_buffer[*idx].is_some = false as i32;
+                }
+                self.cells_dirty_indices.clear();
             }
         }
 
@@ -317,8 +323,10 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
     }
 
     pub fn set_cell(&mut self, pos: IVec2, cell: C) {
-        self.cells_cpu_buffer[self.pos_to_idx(pos)] = cell;
-        self.cells_cpu_buffer_dirty = true;
+        let idx = self.pos_to_idx(pos);
+        self.cells_cpu_buffer[idx].inner_cell = cell;
+        self.cells_cpu_buffer[idx].is_some = true as i32;
+        self.cells_dirty_indices.push(idx);
     }
 
     #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
@@ -618,6 +626,19 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
             ),
         ]
     }
+
+    fn create_maybecell(cell: Option<C>) -> shader_types::MaybeCell<C> {
+        match cell {
+            Some(c) => shader_types::MaybeCell {
+                inner_cell: c,
+                is_some: true as i32,
+            },
+            None => shader_types::MaybeCell {
+                inner_cell: C::default(),
+                is_some: false as i32,
+            },
+        }
+    }
 }
 impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulation<N, M, C> {
     const DEPENDENCIES: Dependencies = dependencies()
@@ -690,12 +711,17 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
         let count = (GRID_WIDTH * GRID_HEIGHT) as usize;
         let mut cells = Vec::with_capacity(count);
         cells.resize_with(count, C::default);
-        let cells_cpu_buffer = cells.into_boxed_slice();
+        // let cells_buffer = cells.into_boxed_slice();
+
+        let mut cells_cpu_buffer = Vec::with_capacity(count);
+        cells_cpu_buffer.resize_with(count, || Self::create_maybecell(None));
+        let cells_cpu_buffer = cells_cpu_buffer.into_boxed_slice();
 
         let mut encase_cells_buffer = encase::StorageBuffer::new(Vec::<u8>::new());
-        encase_cells_buffer
-            .write(cells_cpu_buffer.as_ref())
-            .unwrap();
+        encase_cells_buffer.write(&cells).unwrap();
+
+        let mut encase_maybecells_buffer = encase::StorageBuffer::new(Vec::<u8>::new());
+        encase_maybecells_buffer.write(&cells_cpu_buffer).unwrap();
 
         let cells_read_ssbo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("cells read buffer"),
@@ -707,6 +733,13 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
         let cells_write_ssbo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("cells write buffer"),
             contents: encase_cells_buffer.as_ref(),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        });
+        let cpu_to_gpu_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("cells cpu->gpu buffer"),
+            contents: encase_maybecells_buffer.as_ref(),
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
@@ -813,6 +846,16 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
                     min_binding_size: None,
                 },
                 cells_desired_ssbo.as_entire_binding(),
+            )
+            .add_binding_with_resource(
+                7,
+                wgpu::ShaderStages::COMPUTE,
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                cpu_to_gpu_buffer.as_entire_binding(),
             );
 
         let (sim_bgl_a_b, sim_bind_group1_a) = sim_bind_group1_builder
@@ -915,11 +958,9 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
             last_tick: Instant::now() + Duration::from_secs_f32(0.5), // small delay before sim starts
             accumulator: Duration::ZERO,
 
-            cells_read_ssbo,
-            cells_write_ssbo,
-
             cells_cpu_buffer,
-            cells_cpu_buffer_dirty: false,
+            cells_dirty_indices: Vec::with_capacity((GRID_WIDTH * GRID_HEIGHT / 2) as usize),
+            cpu_to_gpu_buffer,
 
             user_definitions_shader: None,
             user_cell_process_shader: None,

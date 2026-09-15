@@ -34,6 +34,14 @@ var<uniform> params: Params;
 @group(0) @binding(6)
 var<storage, read_write> desired_cells: array<Cell>;
 
+// Basically Option<Cell>
+struct MaybeCell {
+    inner_cell: Cell,
+    is_some: i32
+}
+@group(0) @binding(7)
+var<storage, read_write> cpu_to_gpu_buffer: array<MaybeCell>;
+
 @group(1) @binding(0)
 var display_texture : texture_storage_2d<rgba8unorm, write>;
 
