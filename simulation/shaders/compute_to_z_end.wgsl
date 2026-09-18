@@ -6,7 +6,7 @@ fn display(@builtin(global_invocation_id) gid: vec3u) {
         return;
     }
 
-    let cell = current_cells[source_idx];
+    let cell = next_cells[source_idx];
 
     let color = user_display(cell, vec2i(gid.xy), source_idx);
     let srgb_color = linear_to_srgb4(color);

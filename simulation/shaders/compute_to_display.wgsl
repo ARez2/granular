@@ -100,9 +100,6 @@ fn commit(@builtin(global_invocation_id) gid: vec3u) {
             next_cells[destination_idx] = source_cell;
         }
 
-        // Maybe INTENT_MODIFY, where the destination gets written by desired_cells[source_idx]
-        // and the source gets written by current_cells[source_idx]?
-
         default: {
         }
     }

@@ -3,7 +3,7 @@
 
 use bytemuck_derive::{Pod, Zeroable};
 use glam::f32::Mat4;
-use glam::{IVec2, UVec2, Vec2};
+use glam::{IVec2, UVec2, Vec2, ivec2};
 use palette::Srgba;
 use palette::cast::ComponentsInto;
 use rustc_hash::FxHashMap as HashMap;
@@ -34,6 +34,7 @@ use crate::{
 struct Quad {
     pub topleft: IVec2,
     pub size: IVec2,
+    pub angle: f32,
     /// If there is a texture set, this tints the texture, otherwise the quad will have this color
     pub color: [f32; 4],
     pub texture: Option<TextureHandle>,
@@ -154,10 +155,17 @@ impl BatchRenderer {
             }
 
             let quad_pos = quad.topleft;
-            let x = quad_pos.x;
-            let y = quad_pos.y;
-            let w = quad.size.x;
-            let h = quad.size.y;
+
+            let half = quad.size / 2;
+            let quad_center = (quad.topleft + ivec2(half.x, -half.y)).as_vec2();
+            let rotation = glam::Mat2::from_angle(quad.angle);
+            let quad_pts = [
+                (quad_center + rotation * IVec2::new(-half.x, half.y).as_vec2()).as_ivec2(),
+                (quad_center + rotation * IVec2::new(-half.x, -half.y).as_vec2()).as_ivec2(),
+                (quad_center + rotation * IVec2::new(half.x, -half.y).as_vec2()).as_ivec2(),
+                (quad_center + rotation * IVec2::new(half.x, half.y).as_vec2()).as_ivec2(),
+            ];
+
             let quad_tex = quad
                 .texture
                 .clone()
@@ -179,25 +187,22 @@ impl BatchRenderer {
             self.vertices_to_draw.reserve(4);
             // Top left
             self.vertices_to_draw.push(Vertex::new(
-                quad.topleft,
+                quad_pts[0],
                 quad.color,
                 atlas_tex_coords_start,
             ));
             // Bottom left
             self.vertices_to_draw.push(Vertex::new(
-                quad.topleft - IVec2::new(0, quad.size.y),
+                quad_pts[1],
                 quad.color,
                 Vec2::new(atlas_tex_coords_start.x, atlas_tex_coords_end.y),
             ));
             // Bottom right
-            self.vertices_to_draw.push(Vertex::new(
-                quad.topleft + IVec2::new(quad.size.x, -quad.size.y),
-                quad.color,
-                atlas_tex_coords_end,
-            ));
+            self.vertices_to_draw
+                .push(Vertex::new(quad_pts[2], quad.color, atlas_tex_coords_end));
             // Top right
             self.vertices_to_draw.push(Vertex::new(
-                quad.topleft + IVec2::new(quad.size.x, 0),
+                quad_pts[3],
                 quad.color,
                 Vec2::new(atlas_tex_coords_end.x, atlas_tex_coords_start.y),
             ));
@@ -344,11 +349,12 @@ impl BatchRenderer {
         self.vertices_to_draw.clear();
     }
 
-    /// Records a new quad that needs to be drawn this frame
+    /// Records a new quad that needs to be drawn this frame with angle being CCW.
     pub fn draw_quad<C: IntoGpuColor>(
         &mut self,
         topleft: IVec2,
         size: IVec2,
+        angle: f32,
         color: C,
         texture: Option<AssetHandle<TextureBundle>>,
         layer: i32,
@@ -384,36 +390,39 @@ impl BatchRenderer {
             quad: Quad {
                 topleft,
                 size,
+                angle,
                 color: rgba,
                 texture,
             },
         }));
     }
 
-    /// Records a new quad that needs to be drawn this frame. Draws the quad with its center at the `center` position and extending `size/2` to either side
+    /// Records a new quad that needs to be drawn this frame. Draws the quad with its center at the `center` position and extending `size/2` to either side with angle being CCW.
     pub fn draw_quad_with_center<C: IntoGpuColor>(
         &mut self,
         center: IVec2,
         size: IVec2,
+        angle: f32,
         color: C,
         texture: Option<AssetHandle<TextureBundle>>,
         layer: i32,
     ) {
         let topleft = center + IVec2::new(-size.x, size.y) / 2;
-        self.draw_quad(topleft, size, color, texture, layer);
+        self.draw_quad(topleft, size, angle, color, texture, layer);
     }
 
-    /// Records a new quad that needs to be drawn this frame.
+    /// Records a new quad that needs to be drawn this frame. With angle being CCW.
     pub fn draw_quad_with_bottomleft<C: IntoGpuColor>(
         &mut self,
         bottomleft: IVec2,
         size: IVec2,
+        angle: f32,
         color: C,
         texture: Option<AssetHandle<TextureBundle>>,
         layer: i32,
     ) {
         let topleft = bottomleft + IVec2::new(0, size.y);
-        self.draw_quad(topleft, size, color, texture, layer);
+        self.draw_quad(topleft, size, angle, color, texture, layer);
     }
 
     /// Notifies the BatchRenderer that this texture has changed it's content and needs to be updated

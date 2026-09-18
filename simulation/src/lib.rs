@@ -16,8 +16,6 @@ use web_time::{Duration, Instant};
 use wgpu::{Buffer, util::DeviceExt};
 use wgsl_preprocessor::include_file;
 
-use crate::shader_types::MaybeCell;
-
 pub mod prelude {
     pub use super::UserShaderInput;
     pub use num_enum::IntoPrimitive;
@@ -36,6 +34,9 @@ pub const GRID_WIDTH: u32 = 128;
 pub const GRID_HEIGHT: u32 = 128;
 
 mod shader_types;
+use shader_types::MaybeCell;
+mod sim_physics;
+use sim_physics::SimPhysics;
 
 /// Is automatically implemented when you add `#[MatName]` (from `granular::simulation::prelude`) to your material name enum
 pub trait MatName:
@@ -156,6 +157,8 @@ pub struct Simulation<N: MatName, M: MaterialShaderStruct, C: CellStruct> {
     materials: Vec<Option<M>>,
     /// The GPU memory containing the materials
     materials_ssbo: Buffer,
+
+    physics: SimPhysics,
 }
 impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
     fn update(&mut self, _: &granular_core::graphics::events::RecordGameRenderingCommands) {
@@ -259,16 +262,34 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
             }
         }
 
-        let mut renderer = self.ctx.get_mut::<BatchRenderer>();
-        let size = renderer.get_screen_size();
-        renderer.draw_quad_with_bottomleft(
-            IVec2::new(0, 0),
-            size,
-            palette::named::WHITE,
-            Some(self.display_tex_handle.clone()),
-            -10,
-        );
-        renderer.mark_quad_texture_dirty(self.display_tex_handle.clone());
+        {
+            let mut renderer = self.ctx.get_mut::<BatchRenderer>();
+            let size = renderer.get_screen_size();
+            renderer.draw_quad_with_bottomleft(
+                IVec2::new(0, 0),
+                size,
+                0.0,
+                palette::named::WHITE,
+                Some(self.display_tex_handle.clone()),
+                -10,
+            );
+            renderer.mark_quad_texture_dirty(self.display_tex_handle.clone());
+        }
+        {
+            let mut debug_draw = self.ctx.get_mut::<DebugDraw>();
+            debug_draw.draw_rect_center(
+                self.physics.get_ball_pos(),
+                ivec2(40, 40),
+                0.0,
+                vec4(1.0, 0.0, 0.0, 1.0),
+                2,
+                0,
+            );
+        }
+    }
+
+    fn fixed_step(&mut self, _: &crate::events::timing::FixedTick<16>) {
+        self.physics.step();
     }
 
     /// Call this to initialize the simulation. Before calling this, the simulation will not run!
@@ -418,7 +439,6 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
             {
                 let dumppath = shader_dump_dir.join("user_definitions.wgsl");
                 let _ = std::fs::write(&dumppath, definitions_shader.source);
-                #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
                 error!("Shader source written to: {}", dumppath.display());
             }
             return;
@@ -470,7 +490,6 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
             {
                 let dumppath = shader_dump_dir.join("cell_process_shader.wgsl");
                 let _ = std::fs::write(&dumppath, compute_to_process_shader.source);
-                #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
                 error!("Shader source written to: {}", dumppath.display());
             }
             return;
@@ -517,7 +536,6 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
             {
                 let dumppath = shader_dump_dir.join("display_shader.wgsl");
                 let _ = std::fs::write(&dumppath, process_and_display_shader_src);
-                #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
                 error!("Shader source written to: {}", dumppath.display());
             }
             return;
@@ -549,6 +567,12 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
             for path in &self.shader_paths {
                 self.ctx.get_mut::<FileWatcher>().watch(path, true);
             }
+        }
+
+        #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
+        {
+            let dumppath = shader_dump_dir.join("full_simulation_shader.wgsl");
+            let _ = std::fs::write(&dumppath, &full_shader_source);
         }
 
         let graphics_sys = self.ctx.get::<GraphicsSystem>();
@@ -645,6 +669,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
     const DEPENDENCIES: Dependencies = dependencies()
         .with::<Mut<GraphicsSystem>>()
         .with::<Mut<BatchRenderer>>()
+        .with::<Mut<DebugDraw>>()
         .with::<Mut<AssetSystem>>()
         .with::<Mut<FileWatcher>>();
 
@@ -652,10 +677,13 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::update)
         .with(Self::on_render)
+        .with(Self::fixed_step)
         .with(Self::on_filechange);
     #[cfg(any(target_arch = "wasm32", not(debug_assertions)))]
-    const EVENT_HANDLERS: EventHandlers<Self> =
-        event_handlers().with(Self::update).with(Self::on_render);
+    const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
+        .with(Self::update)
+        .with(Self::on_render)
+        .with(Self::fixed_step);
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         let graphics_sys = ctx.get::<GraphicsSystem>();
@@ -988,6 +1016,8 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
             material_names: HashMap::default(),
             materials: vec![],
             materials_ssbo,
+
+            physics: SimPhysics::new(50),
         }
     }
 }

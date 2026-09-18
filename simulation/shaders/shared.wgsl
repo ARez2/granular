@@ -185,29 +185,26 @@ struct IndexResult {
 }
 
 fn pos_to_idx(pos: vec2i) -> IndexResult {
-    let idx = pos.y * i32(GRID_WIDTH) + pos.x;
-    if pos.x >= i32(GRID_WIDTH) || pos.x >= i32(GRID_WIDTH) || idx >= i32(arrayLength(&current_cells)) {
-        return IndexResult(u32(idx), false);
+    if pos.x < 0 || pos.y < 0 ||
+       pos.x >= i32(GRID_WIDTH) ||
+       pos.y >= i32(GRID_HEIGHT) {
+        return IndexResult(0u, false);
     }
-    return IndexResult(u32(idx), true);
+
+    let idx = u32(pos.y) * GRID_WIDTH + u32(pos.x);
+    if idx >= arrayLength(&current_cells) {
+        return IndexResult(0u, false);
+    }
+
+    return IndexResult(idx, true);
+}
+
+fn idx_from_offset(idx: u32, offset: vec2i) -> IndexResult {
+    return pos_to_idx(idx_to_pos(idx) + offset);
 }
 
 fn idx_to_pos(idx: u32) -> vec2i {
     return vec2i(i32(idx % GRID_WIDTH), i32(idx / GRID_WIDTH));
-}
-
-fn idx_from_offset(idx: u32, offset: vec2i) -> IndexResult {
-    let pos = idx_to_pos(idx);
-    if (offset.x < 0 && pos.x <= 0) || (offset.x > 0 && pos.x >= i32(GRID_WIDTH) - 1) || (offset.y < 0 && pos.y <= 0) || (offset.y > 0 && pos.y >= i32(GRID_HEIGHT) - 1) {
-        return IndexResult(idx, false);
-    }
-    let offset_pos = vec2i(pos) + offset;
-    let offset_res = pos_to_idx(offset_pos);
-    let offset_idx = offset_res.index;
-    if !offset_res.valid {
-        return IndexResult(idx, false);
-    }
-    return IndexResult(offset_idx, true);
 }
 
 

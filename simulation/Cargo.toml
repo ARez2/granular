@@ -3,6 +3,10 @@ name = "simulation"
 version = "0.1.0"
 edition = "2024"
 
+[profile.dev.package.rapier2d]
+opt-level = 3
+
+
 [features]
 default = []
 trace = [
@@ -29,6 +33,7 @@ num_enum.workspace = true
 # Profiling
 profiling.workspace = true
 naga = { version = "30.0.1", features = ["wgsl-in"] }
+rapier2d = "0.35.3"
 
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

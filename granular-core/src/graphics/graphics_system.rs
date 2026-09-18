@@ -29,6 +29,8 @@ use crate::{
 
 pub mod events {
     pub struct RecordGameRenderingCommands {}
+    /// Event for internal renderers to dispatch commands to for ex. the BatchRenderer
+    pub(crate) struct RecordInternalGameRenderingCommands {}
     pub struct RenderGame {}
     pub struct GameRenderingDone {}
     pub(crate) struct DisplayGameRender {}
@@ -484,6 +486,7 @@ impl GraphicsSystem {
         self.ctx.raise_event(
             geese::notify::flush()
                 .with(geese::notify::flush().with(events::RecordGameRenderingCommands {}))
+                .with(geese::notify::flush().with(events::RecordInternalGameRenderingCommands {}))
                 .with(geese::notify::flush().with(events::RenderGame {})),
         );
         self.ctx.raise_event(

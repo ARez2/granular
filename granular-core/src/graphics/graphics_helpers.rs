@@ -209,7 +209,11 @@ impl<'a> BindGroupBuilder<'a> {
 pub trait IntoGpuColor {
     fn into_gpu_color(self) -> [f32; 4];
 }
-
+impl IntoGpuColor for [f32; 4] {
+    fn into_gpu_color(self) -> [f32; 4] {
+        self
+    }
+}
 impl<T> IntoGpuColor for palette::Srgb<T>
 where
     palette::Srgb<T>: Copy,
@@ -231,5 +235,10 @@ where
     fn into_gpu_color(self) -> [f32; 4] {
         let color: palette::LinSrgba<f32> = self.into();
         color.into_components().into()
+    }
+}
+impl IntoGpuColor for glam::Vec4 {
+    fn into_gpu_color(self) -> [f32; 4] {
+        self.to_array()
     }
 }

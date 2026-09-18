@@ -184,8 +184,9 @@ impl Game {
     fn on_draw(&mut self, _: &granular::graphics::events::RecordGameRenderingCommands) {
         let mut renderer = self.ctx.get_mut::<BatchRenderer>();
         renderer.draw_quad_with_center(
-            IVec2::new(0, 250),
+            IVec2::new(100, 250),
             IVec2::new(50, 50),
+            f32::to_radians(-45.0),
             palette::named::WHITE,
             Some(self.texture_handle.clone()),
             -2,
@@ -194,6 +195,7 @@ impl Game {
         renderer.draw_quad_with_center(
             IVec2::new(50, 300),
             IVec2::new(50, 50),
+            0.0,
             palette::named::WHITE,
             Some(self.texture2_handle.clone()),
             0,

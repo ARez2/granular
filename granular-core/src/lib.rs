@@ -43,7 +43,8 @@ pub mod prelude {
         assets::{self, AssetHandle},
         events,
         graphics::{
-            self, GraphicsSystem, Texture2D, TextureBundle, TextureBundleLoadSettings, WindowSystem,
+            self, DebugDraw, GraphicsSystem, Texture2D, TextureBundle, TextureBundleLoadSettings,
+            WindowSystem,
         },
         input_system::*,
         rect::Rect,

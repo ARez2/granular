@@ -33,6 +33,9 @@ pub type TextureHandle = AssetHandle<TextureBundle>;
 mod texture_atlas;
 pub use texture_atlas::{AtlasSubregionHandle, *};
 
+mod debug_draw;
+pub use debug_draw::*;
+
 use crate::assets::AssetHandle;
 
 #[cfg(target_arch = "wasm32")]

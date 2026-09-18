@@ -36,5 +36,5 @@ fn modify_own(source_idx: u32) {
 /// Mark that we want to modify only another cell
 /// next_cells[destination_idx] = desired_cells[source_idx]
 fn modify_other(source_idx: u32, destination_idx: u32) {
-    propose_interaction(source_idx, source_idx, INTENT_MODIFY_OWN, PRIORITY_MODIFY);
+    propose_interaction(source_idx, destination_idx, INTENT_MODIFY_OTHER, PRIORITY_MODIFY);
 }
