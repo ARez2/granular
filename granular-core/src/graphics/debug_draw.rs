@@ -1,4 +1,8 @@
-use crate::{BatchRenderer, graphics::IntoGpuColor, utils::*};
+use crate::{
+    BatchRenderer,
+    graphics::{DrawSpace, IntoGpuColor},
+    utils::*,
+};
 use glam::prelude::*;
 
 #[derive(Debug)]
@@ -9,6 +13,7 @@ enum DebugDrawCommand {
         color: [f32; 4],
         thickness: i32,
         layer: i32,
+        draw_space: DrawSpace,
     },
 }
 
@@ -25,6 +30,7 @@ impl DebugDraw {
         color: C,
         thickness: i32,
         layer: i32,
+        draw_space: DrawSpace,
     ) {
         self.commands.push(DebugDrawCommand::Line {
             from,
@@ -32,6 +38,7 @@ impl DebugDraw {
             color: color.into_gpu_color(),
             thickness,
             layer,
+            draw_space,
         });
     }
 
@@ -42,6 +49,7 @@ impl DebugDraw {
         color: C,
         thickness: i32,
         layer: i32,
+        draw_space: DrawSpace,
     ) {
         for pts in points.windows(2) {
             self.commands.push(DebugDrawCommand::Line {
@@ -50,37 +58,40 @@ impl DebugDraw {
                 color: color.clone().into_gpu_color(),
                 thickness,
                 layer,
+                draw_space,
             });
         }
     }
 
-    #[allow(unused)]
+    #[allow(unused, clippy::too_many_arguments)]
     pub fn draw_rect<C: IntoGpuColor + Clone>(
         &mut self,
         topleft: IVec2,
         size: IVec2,
-        angle: f32,
+        angle_rad: f32,
         color: C,
         thickness: i32,
         layer: i32,
+        draw_space: DrawSpace,
     ) {
         let center = topleft + ivec2(size.x / 2, -size.y / 2);
-        self.draw_rect_center(center, size, angle, color, thickness, layer);
+        self.draw_rect_center(center, size, angle_rad, color, thickness, layer, draw_space);
     }
 
-    #[allow(unused)]
+    #[allow(unused, clippy::too_many_arguments)]
     pub fn draw_rect_center<C: IntoGpuColor + Clone>(
         &mut self,
         center: IVec2,
         size: IVec2,
-        angle: f32,
+        angle_rad: f32,
         color: C,
         thickness: i32,
         layer: i32,
+        draw_space: DrawSpace,
     ) {
         let center = center.as_vec2();
         let half = size / 2;
-        let rotation = glam::Mat2::from_angle(angle);
+        let rotation = glam::Mat2::from_angle(angle_rad);
         let quad_pts = [
             (center + rotation * IVec2::new(-half.x, half.y).as_vec2()).as_ivec2(),
             (center + rotation * IVec2::new(-half.x, -half.y).as_vec2()).as_ivec2(),
@@ -93,6 +104,7 @@ impl DebugDraw {
             color: color.clone().into_gpu_color(),
             thickness,
             layer,
+            draw_space,
         });
         self.commands.push(DebugDrawCommand::Line {
             from: quad_pts[0],
@@ -100,6 +112,7 @@ impl DebugDraw {
             color: color.clone().into_gpu_color(),
             thickness,
             layer,
+            draw_space,
         });
         self.commands.push(DebugDrawCommand::Line {
             from: quad_pts[1],
@@ -107,6 +120,7 @@ impl DebugDraw {
             color: color.clone().into_gpu_color(),
             thickness,
             layer,
+            draw_space,
         });
         self.commands.push(DebugDrawCommand::Line {
             from: quad_pts[2],
@@ -114,10 +128,11 @@ impl DebugDraw {
             color: color.into_gpu_color(),
             thickness,
             layer,
+            draw_space,
         });
     }
 
-    fn on_record(&mut self, _: &crate::graphics::events::RecordInternalGameRenderingCommands) {
+    fn on_record(&mut self, _: &crate::graphics::events::RecordInternalUiRenderingCommands) {
         let mut batch_renderer = self.ctx.get_mut::<BatchRenderer>();
 
         for cmd in &self.commands {
@@ -128,23 +143,31 @@ impl DebugDraw {
                     color,
                     thickness,
                     layer,
+                    draw_space,
                 } => {
-                    let f = from.as_vec2();
-                    let t = to.as_vec2();
-                    let direction = t - f;
-                    let length = direction.length();
-                    let angle = direction.to_angle();
-                    let size = ivec2(length as i32, (*thickness).max(2));
-                    let center = (f + t) * 0.5;
-                    let top_left = center - size.as_vec2() * 0.5;
+                    let from = from.as_vec2();
+                    let to = to.as_vec2();
 
-                    batch_renderer.draw_quad(
-                        top_left.as_ivec2(),
+                    let direction = to - from;
+                    let length = direction.length();
+
+                    if length <= f32::EPSILON {
+                        continue;
+                    }
+
+                    let center = (from + to) * 0.5;
+                    let angle = direction.to_angle();
+
+                    let size = ivec2(length.round() as i32, (*thickness).max(1));
+
+                    batch_renderer.draw_quad_with_center(
+                        center.as_ivec2(),
                         size,
                         angle,
                         *color,
                         None,
                         *layer,
+                        *draw_space,
                     );
                 }
             }

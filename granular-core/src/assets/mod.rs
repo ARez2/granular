@@ -1,6 +1,5 @@
 use anyhow::bail;
 use rustc_hash::FxHashMap as HashMap;
-#[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
 use std::{
     any::Any,
     hash::{Hash, Hasher},

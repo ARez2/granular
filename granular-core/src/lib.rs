@@ -43,8 +43,8 @@ pub mod prelude {
         assets::{self, AssetHandle},
         events,
         graphics::{
-            self, DebugDraw, GraphicsSystem, Texture2D, TextureBundle, TextureBundleLoadSettings,
-            WindowSystem,
+            self, DebugDraw, DrawSpace, GraphicsSystem, Texture2D, TextureBundle,
+            TextureBundleLoadSettings, WindowSystem,
         },
         input_system::*,
         rect::Rect,
@@ -358,14 +358,12 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
             WindowEvent::RedrawRequested => {
                 {
                     let camera = self.ctx.get::<Camera>();
-                    camera.write_canvas_transform_buffer();
+                    camera.write_canvas_transform_buffers();
                 }
                 {
                     let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
-                    graphics_sys.start_rendering();
+                    graphics_sys.start_frame();
                 }
-
-                profiling::finish_frame!();
             }
             WindowEvent::KeyboardInput {
                 event,

@@ -7,19 +7,21 @@
 
 // Required function. Gets called at the beginning of every step to init
 // cells coming from the CPU
-fn user_init_cell(cpu_cell: Cell, cell_pos: vec2i, cell_idx: u32) -> Cell {
+fn user_init_cell(cpu_cell: Cell, cell_has_pixelscene_color: bool, cell_pos: vec2i, cell_idx: u32) -> Cell {
     let material = get_material(cpu_cell.material);
     var color: vec4f;
-    if any(material.tex_coords_start != material.tex_coords_end) {
+    if cell_has_pixelscene_color {
+        color = cpu_cell.color;
+    } else if any(material.tex_coords_start != material.tex_coords_end) {
         let atlas_size = vec2i(textureDimensions(material_texture_atlas));
         let atlas_pos_start = vec2i(material.tex_coords_start * vec2f(atlas_size));
         let atlas_pos_end = vec2i(material.tex_coords_end * vec2f(atlas_size));
         let mat_tex_size = atlas_pos_end - atlas_pos_start;
-        let texture_sample_pos =
-            atlas_pos_start + vec2i(
-                cell_pos.x % mat_tex_size.x,
-                cell_pos.y % mat_tex_size.y
-            );
+        let tile_pos = vec2i(
+            rem_euclid(cell_pos.x, mat_tex_size.x),
+            rem_euclid(cell_pos.y, mat_tex_size.y),
+        );
+        let texture_sample_pos = atlas_pos_start + y_up_to_texel(tile_pos, mat_tex_size.y);
         // textureSample is forbidden
         color = textureLoad(
             material_texture_atlas,
@@ -118,7 +120,7 @@ fn sweep_density(source_idx: u32, start_pos: vec2i, end_pos: vec2i) -> vec2i {
 
 
 fn process_movable_solid(cell: ptr<function, Cell>, cell_idx: u32) -> bool {
-    (*cell).velocity += vec2f(0.0, 2.0);
+    (*cell).velocity += vec2f(0.0, -2.0);
 
     let current_pos = idx_to_pos(cell_idx);
     let maybe_idx = pos_to_idx(current_pos).index;
@@ -140,9 +142,9 @@ fn process_movable_solid(cell: ptr<function, Cell>, cell_idx: u32) -> bool {
     let prefer_downleft = random_bool(cell_idx);
     var directions: array<vec2i, 2>;
     if prefer_downleft {
-        directions = array(vec2i(-1, 1), vec2i(1, 1));
+        directions = array(vec2i(-1, -1), vec2i(1, -1));
     } else {
-        directions = array(vec2i(1, 1), vec2i(-1, 1));
+        directions = array(vec2i(1, -1), vec2i(-1, -1));
     }
 
     // important: fixed sized array dont support arrayLength for some reason. So this need to match the size!
@@ -191,10 +193,6 @@ fn process_liquid(cell: ptr<function, Cell>, cell_idx: u32) -> bool {
 
 
 fn user_process_cell(cell: ptr<function, Cell>, cell_pos: vec2i, cell_idx: u32) {
-    var debug_color = vec4f(0.0, 0.0, 0.0, 0.0);
-    debug_color = print_value(debug_color, cell_pos, vec2i(0, 5), 12.4, 2, vec4f(1.0, 0.0, 0.0, 1.0));
-    textureStore(debug_tex0, cell_pos, debug_color); 
-
     switch cell.material {
         case MAT_SAND {
             let r = process_movable_solid(cell, cell_idx);

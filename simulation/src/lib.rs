@@ -7,7 +7,7 @@ use granular_core::{
     graphics::BindGroupBuilder,
     prelude::*,
 };
-use naga::valid::{Capabilities, ValidationFlags, Validator};
+use rapier2d::dynamics::{RigidBodyBuilder, RigidBodyHandle};
 use rustc_hash::FxHashMap as HashMap;
 #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
 use std::path::PathBuf;
@@ -17,7 +17,7 @@ use wgpu::{Buffer, util::DeviceExt};
 use wgsl_preprocessor::include_file;
 
 pub mod prelude {
-    pub use super::UserShaderInput;
+    pub use super::{AdditionalMatNameFlags, CellStruct, UserShaderInput};
     pub use num_enum::IntoPrimitive;
     pub use proc_macros::MatName;
     pub use strum;
@@ -34,9 +34,15 @@ pub const GRID_WIDTH: u32 = 128;
 pub const GRID_HEIGHT: u32 = 128;
 
 mod shader_types;
-use shader_types::MaybeCell;
+mod sim_helpers;
+use shader_types::{MaybeCell, RB, RBCell};
+use sim_helpers::*;
 mod sim_physics;
 use sim_physics::SimPhysics;
+
+use crate::shader_types::{
+    MAYBECELL_FLAG_IS_SOME, RBCELL_FLAG_PIXELSCENE_COLOR, RBCELL_FLAG_VALID,
+};
 
 /// Is automatically implemented when you add `#[MatName]` (from `granular::simulation::prelude`) to your material name enum
 pub trait MatName:
@@ -50,8 +56,24 @@ pub trait MatName:
     + Eq
     + strum::IntoEnumIterator
     + Into<u32>
+    + From<u32>
+    + AdditionalMatNameFlags
 {
 }
+
+/// Needs to be implemented for your MatName enum
+pub trait AdditionalMatNameFlags {
+    fn has_collision(&self) -> bool;
+}
+const FLAG_METHODS: &[FlagMethod] = &[FlagMethod {
+    name: "has_collision",
+    call: |x| x.has_collision(),
+}];
+struct FlagMethod {
+    name: &'static str,
+    call: fn(&dyn AdditionalMatNameFlags) -> bool,
+}
+
 /// Needs `#[derive(ShaderType, Clone)]` and a `Default` implementation
 pub trait MaterialShaderStruct = 'static
     + Default
@@ -59,48 +81,48 @@ pub trait MaterialShaderStruct = 'static
     + encase::ShaderType
     + encase::ShaderSize
     + encase::internal::WriteInto;
-/// Needs `#[derive(ShaderType, Clone, Copy)]` and a `Default` implementation
-pub trait CellStruct = Sized
+
+pub trait CellStruct:
+    Sized
     + 'static
     + Default
     + Clone
     + Copy
     + encase::ShaderType
     + encase::ShaderSize
-    + encase::internal::WriteInto;
+    + encase::internal::WriteInto
+{
+    fn material_name(&self) -> u32;
+    fn set_color(&mut self, new_color: Vec4);
+}
 
+/// Use this to pass your shaders to the simulation in `Simulation::init_simulation` or `Simulation::update_user_shaders`
 #[derive(Debug, Clone)]
 pub struct UserShaderInput {
+    /// This is the root shader which includes the other `includes`
     pub main_shader: wgsl_preprocessor::IncludedFile,
+    /// All the shader (even nested!) which get included by the `main_shader`
     pub includes: Vec<wgsl_preprocessor::IncludedFile>,
 }
 
-struct EncaseStaging<'a>(&'a mut wgpu::QueueWriteBufferView);
-impl encase::internal::BufferMut for EncaseStaging<'_> {
-    fn capacity(&self) -> usize {
-        self.0.len()
-    }
-
-    fn write<const N: usize>(&mut self, offset: usize, value: &[u8; N]) {
-        self.0.slice(offset..offset + N).copy_from_slice(value);
-    }
-
-    fn write_slice(&mut self, offset: usize, value: &[u8]) {
-        self.0
-            .slice(offset..offset + value.len())
-            .copy_from_slice(value);
-    }
+struct SimulationPass {
+    #[allow(unused)]
+    name: String,
+    pipeline: wgpu::ComputePipeline,
+    dispatch_size: (u32, u32, u32),
 }
-
-fn validate_wgsl(source: &str) -> Result<(), String> {
-    let module =
-        naga::front::wgsl::parse_str(source).map_err(|error| error.emit_to_string(source))?;
-
-    Validator::new(ValidationFlags::all(), Capabilities::default())
-        .validate(&module)
-        .map_err(|error| error.emit_to_string(source))?;
-
-    Ok(())
+impl SimulationPass {
+    fn new(
+        name: impl Into<String>,
+        pipeline: wgpu::ComputePipeline,
+        dispatch_size: (u32, u32, u32),
+    ) -> Self {
+        Self {
+            name: name.into(),
+            pipeline,
+            dispatch_size,
+        }
+    }
 }
 
 /// A falling sand simulation framework. Call `init_simulation` ASAP to initialize the simulation! Otherwise it will not run!
@@ -110,6 +132,9 @@ pub struct Simulation<N: MatName, M: MaterialShaderStruct, C: CellStruct> {
     pub tickrate: Duration,
     last_tick: Instant,
     accumulator: Duration,
+
+    /// One simulation pixel will be `display_scale`-many pixels on screen
+    display_scale: f32,
 
     /// Buffer which gets written from the CPU (and basically stores the GPU equivalent of Option<Cell>)
     cells_cpu_buffer: Box<[MaybeCell<C>]>,
@@ -126,7 +151,7 @@ pub struct Simulation<N: MatName, M: MaterialShaderStruct, C: CellStruct> {
     user_display_shader: Option<UserShaderInput>,
 
     /// Is initialized after the user calls init
-    compute_pipelines: Vec<(String, wgpu::ComputePipeline)>,
+    simulation_passes: Vec<SimulationPass>,
     #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
     shader_paths: Vec<PathBuf>,
     compute_pl_layout: Option<wgpu::PipelineLayout>,
@@ -150,6 +175,8 @@ pub struct Simulation<N: MatName, M: MaterialShaderStruct, C: CellStruct> {
 
     /// The handle to the texture which stores the color output of the simulation
     display_tex_handle: AssetHandle<TextureBundle>,
+    /// The handle to the texture which stores debug stuff of the simulation
+    debug_tex_handle: AssetHandle<TextureBundle>,
 
     /// Maps the enum values to an index in `materials`
     material_names: HashMap<N, usize>,
@@ -158,11 +185,21 @@ pub struct Simulation<N: MatName, M: MaterialShaderStruct, C: CellStruct> {
     /// The GPU memory containing the materials
     materials_ssbo: Buffer,
 
+    /// The wrapper around Rapier2D
     physics: SimPhysics,
+    rb_cells_cpu: Box<[RBCell<C>]>,
+    /// GPU storage for the RBCell's
+    rb_cells_buffer: wgpu::Buffer,
+    /// CPU side storage of the GPU representation of Rigidbodies
+    rbs: Vec<RB>,
+    /// GPU storage for the RB's
+    rbs_buffer: wgpu::Buffer,
+    /// Maps a rapier RigidBodyHandle to an index into rbs
+    rapier_rb_to_sim_rb: HashMap<RigidBodyHandle, usize>,
 }
 impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
-    fn update(&mut self, _: &granular_core::graphics::events::RecordGameRenderingCommands) {
-        if self.compute_pipelines.is_empty() {
+    fn update(&mut self, _: &granular_core::graphics::events::RunSimulation) {
+        if self.simulation_passes.is_empty() {
             return;
         }
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
@@ -178,12 +215,12 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
 
             self.params.tick = self.frame as u32;
 
-            for (_pl_name, pipeline) in &self.compute_pipelines {
+            for pass in &self.simulation_passes {
                 #[cfg(feature = "trace")]
                 profiling::scope!("compute pass");
 
                 #[cfg(feature = "trace")]
-                let mut compute_pass = profiler_scope.scoped_compute_pass(_pl_name);
+                let mut compute_pass = profiler_scope.scoped_compute_pass(pass.name);
                 #[cfg(not(feature = "trace"))]
                 let mut compute_pass =
                     context
@@ -192,7 +229,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
                             label: Some("compute pass"),
                             timestamp_writes: None,
                         });
-                compute_pass.set_pipeline(pipeline);
+                compute_pass.set_pipeline(&pass.pipeline);
                 if self.frame.is_multiple_of(2) {
                     compute_pass.set_bind_group(0, &self.sim_bind_group1_a, &[]);
                 } else {
@@ -203,47 +240,51 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
                     compute_pass.set_bind_group(2, &user_bg.0, &[]);
                 }
                 compute_pass.set_bind_group(4, &self.debug_bind_group.0, &[]);
-                compute_pass.dispatch_workgroups(GRID_WIDTH / 8, GRID_WIDTH / 8, 1);
+                compute_pass.dispatch_workgroups(
+                    pass.dispatch_size.0,
+                    pass.dispatch_size.1,
+                    pass.dispatch_size.2,
+                );
             }
             self.accumulator -= self.tickrate;
             self.frame += 1;
         }
 
-        // Write back any changes to params into the buffer
         let mut writer = UniformBuffer::new(&mut self.params_bytes);
         let _ = writer.write(&self.params);
         context
             .queue
             .write_buffer(&self.params_buffer, 0, &self.params_bytes);
-
         if !dt.is_zero() {
             self.last_tick = Instant::now();
         }
         drop(graphics_sys);
     }
 
-    fn on_render(&mut self, _: &graphics::events::RecordGameRenderingCommands) {
-        let default_mat = M::default();
-        let mut materials_buffer = encase::StorageBuffer::new(Vec::<u8>::new());
-        let mats = self
-            .materials
-            .clone()
-            .iter_mut()
-            .map(|v| {
-                if v.is_none() {
-                    default_mat.clone()
-                } else {
-                    v.clone().unwrap()
-                }
-            })
-            .collect::<Vec<M>>();
-        let _ = materials_buffer.write(&mats);
+    fn on_game_render(&mut self, _: &graphics::events::RecordGameRenderingCommands) {
         {
             let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
             let context = graphics_sys.render_context();
-            context
-                .queue
-                .write_buffer(&self.materials_ssbo, 0, &materials_buffer.into_inner());
+            {
+                let default_mat = M::default();
+                let mut materials_buffer = encase::StorageBuffer::new(Vec::<u8>::new());
+                let mats = self
+                    .materials
+                    .clone()
+                    .iter_mut()
+                    .map(|v| {
+                        if v.is_none() {
+                            default_mat.clone()
+                        } else {
+                            v.clone().unwrap()
+                        }
+                    })
+                    .collect::<Vec<M>>();
+                let _ = materials_buffer.write(&mats);
+                context
+                    .queue
+                    .write_buffer(&self.materials_ssbo, 0, &materials_buffer.into_inner());
+            }
 
             if !self.cells_dirty_indices.is_empty() {
                 let mut staging = context
@@ -256,15 +297,38 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
                     .expect("encase serialization failed");
 
                 for idx in &self.cells_dirty_indices {
-                    self.cells_cpu_buffer[*idx].is_some = false as i32;
+                    // set is_some to false
+                    self.cells_cpu_buffer[*idx].flags &= !MAYBECELL_FLAG_IS_SOME;
                 }
                 self.cells_dirty_indices.clear();
+            }
+            {
+                // Write updated Rigidbody transforms to the sim buffer
+                let mut staging = context
+                    .queue
+                    .write_buffer_with(&self.rbs_buffer, 0, self.rbs.size())
+                    .expect("Invalid buffer write");
+                encase::StorageBuffer::new(EncaseStaging(&mut staging))
+                    .write(&self.rbs)
+                    .expect("encase serialization failed");
+            }
+            {
+                // Write RBCell buffer to the sim buffer
+                let mut staging = context
+                    .queue
+                    .write_buffer_with(&self.rb_cells_buffer, 0, self.rb_cells_cpu.size())
+                    .expect("Invalid buffer write");
+                encase::StorageBuffer::new(EncaseStaging(&mut staging))
+                    .write(&self.rb_cells_cpu)
+                    .expect("encase serialization failed");
             }
         }
 
         {
             let mut renderer = self.ctx.get_mut::<BatchRenderer>();
-            let size = renderer.get_screen_size();
+            // renderer.get_screen_size()
+            let size =
+                (Vec2::new(GRID_WIDTH as f32, GRID_HEIGHT as f32) * self.display_scale).as_ivec2();
             renderer.draw_quad_with_bottomleft(
                 IVec2::new(0, 0),
                 size,
@@ -272,24 +336,50 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
                 palette::named::WHITE,
                 Some(self.display_tex_handle.clone()),
                 -10,
+                DrawSpace::Game,
             );
             renderer.mark_quad_texture_dirty(self.display_tex_handle.clone());
-        }
-        {
-            let mut debug_draw = self.ctx.get_mut::<DebugDraw>();
-            debug_draw.draw_rect_center(
-                self.physics.get_ball_pos(),
-                ivec2(40, 40),
+            renderer.draw_quad_with_bottomleft(
+                IVec2::new(0, 0),
+                size,
                 0.0,
-                vec4(1.0, 0.0, 0.0, 1.0),
-                2,
-                0,
+                palette::named::WHITE,
+                Some(self.debug_tex_handle.clone()),
+                -9,
+                DrawSpace::Game,
             );
+        }
+    }
+
+    fn on_display_game_render(&mut self, _: &graphics::events::RecordUiRenderingCommands) {
+        {
+            for (rb_handle, _rb_idx) in &self.rapier_rb_to_sim_rb {
+                let pose = self.physics.get_rigidbody_pose(*rb_handle);
+                let pos = pose.0 * self.display_scale;
+                let pos = self.ctx.get::<Camera>().game_screen_to_surface(pos);
+                self.ctx.get_mut::<DebugDraw>().draw_rect_center(
+                    pos.as_ivec2(),
+                    ivec2(20, 20),
+                    pose.1,
+                    vec4(1.0, 0.0, 0.0, 1.0),
+                    2,
+                    0,
+                    DrawSpace::Screen,
+                );
+            }
         }
     }
 
     fn fixed_step(&mut self, _: &crate::events::timing::FixedTick<16>) {
         self.physics.step();
+
+        for (rb_handle, rb_idx) in &self.rapier_rb_to_sim_rb {
+            let pose = self.physics.get_rigidbody_pose(*rb_handle);
+            // debug!("pos: {}", pose.0);
+            self.rbs[*rb_idx].position = pose.0;
+            self.rbs[*rb_idx].angle_degrees = pose.1.to_degrees();
+            // self.rbs[*rb_idx].angle_degrees = (self.frame as f32 / 100.0).to_degrees();
+        }
     }
 
     /// Call this to initialize the simulation. Before calling this, the simulation will not run!
@@ -339,6 +429,75 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         self.material_names.insert(material_name, index);
     }
 
+    pub fn add_rigidbody(&mut self, rb_image_bytes: &[u8], filler_cell: C) {
+        let mut image =
+            image::load_from_memory(rb_image_bytes).expect("failed to decode embedded image");
+        image
+            .set_color_space(image::metadata::Cicp::SRGB)
+            .expect("failed to set srgb color space");
+        image
+            .convert_color_space(
+                image::metadata::Cicp::SRGB_LINEAR,
+                image::ConvertColorOptions::default(),
+                image::ColorType::Rgba32F,
+            )
+            .expect("failed to convert image to linear sRGB");
+        let image = image.to_rgba8();
+
+        let mut last_idx = 0;
+        let mut collider_pixels = vec![];
+
+        let img_center = ivec2(image.width() as i32 / 2, image.height() as i32 / 2);
+
+        for (idx, (x, y, pixel)) in image.enumerate_pixels().enumerate() {
+            #[allow(unused)]
+            let [r, g, b, a] = pixel.0;
+
+            let flags = RBCELL_FLAG_VALID | RBCELL_FLAG_PIXELSCENE_COLOR;
+
+            let mut inner_cell = if a == 0 { C::default() } else { filler_cell };
+            inner_cell.set_color(vec4(r as f32, g as f32, b as f32, a as f32) / 255.0);
+
+            let pix_local_pos_in_rb = ivec2(x as i32 - img_center.x, img_center.y - y as i32);
+
+            let matname: N = inner_cell.material_name().into();
+            if matname.has_collision() {
+                collider_pixels.push(pix_local_pos_in_rb.as_vec2());
+            }
+
+            self.rb_cells_cpu[idx] = RBCell {
+                inner_cell,
+                rb_local_pos: pix_local_pos_in_rb,
+                rb_index: 0,
+                flags,
+            };
+            last_idx = idx;
+        }
+
+        let position = vec2(50.0, 30.0);
+        let rb_handle = self.physics.create_rigidbody(
+            RigidBodyBuilder::dynamic(),
+            position,
+            (45.0f32).to_radians(),
+            &collider_pixels,
+        );
+
+        self.rapier_rb_to_sim_rb.insert(rb_handle, 0);
+        let mut center_of_mass = Vec2::ZERO;
+        for pt in &collider_pixels {
+            center_of_mass += pt;
+        }
+        center_of_mass /= collider_pixels.len() as f32;
+
+        self.rbs.push(RB {
+            position,
+            center_of_mass,
+            angle_degrees: 0.0,
+            rbcells_start: 0,
+            rbcells_end: last_idx as u32,
+        });
+    }
+
     #[inline(always)]
     fn pos_to_idx(&self, pos: IVec2) -> usize {
         (pos.y * GRID_WIDTH as i32 + pos.x) as usize
@@ -347,7 +506,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
     pub fn set_cell(&mut self, pos: IVec2, cell: C) {
         let idx = self.pos_to_idx(pos);
         self.cells_cpu_buffer[idx].inner_cell = cell;
-        self.cells_cpu_buffer[idx].is_some = true as i32;
+        self.cells_cpu_buffer[idx].flags = MAYBECELL_FLAG_IS_SOME;
         self.cells_dirty_indices.push(idx);
     }
 
@@ -415,19 +574,46 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         let mut definitions_shader = definitions_shader_res.unwrap();
         all_dependencies.push(definitions_shader.dependencies.clone());
 
+        let mut flagmethods_sources = HashMap::default();
+        for method in FLAG_METHODS {
+            let signature = format!(
+                "fn matname_{}(material: u32) -> bool {{\nswitch material {{\n",
+                method.name
+            );
+            flagmethods_sources.insert(method.name, signature);
+        }
+
         let mut material_constants = String::new();
         for mat_name in N::iter() {
             let mat_idx: u32 = mat_name.into();
-            let wgsl_string = format!(
-                "const MAT_{}: u32 = {};\n",
-                mat_name.to_string().to_uppercase(),
-                mat_idx
-            );
+            let matname_string = format!("MAT_{}", mat_name.to_string().to_uppercase());
+            let const_mat_wgsl_string = format!("const {}: u32 = {};\n", matname_string, mat_idx);
+            material_constants.push_str(&const_mat_wgsl_string);
 
-            material_constants.push_str(&wgsl_string);
+            for method in FLAG_METHODS {
+                let flag_value = (method.call)(&mat_name);
+                // I know this is the same formatting Rust uses, but I want to be explicit
+                let flag_value_str = if flag_value { "true" } else { "false" };
+                let case_string = format!(
+                    "case {} {{\nreturn {};\n}}\n",
+                    matname_string, flag_value_str
+                );
+                let source = flagmethods_sources.get_mut(&method.name).unwrap();
+                source.push_str(&case_string);
+            }
         }
         material_constants.push('\n');
-        definitions_shader.source.insert_str(0, &material_constants);
+
+        let mut combined_flag_sources = String::new();
+        for method in FLAG_METHODS {
+            let source = flagmethods_sources.get_mut(&method.name).unwrap();
+            source.push_str("case default {\nreturn false;\n}\n");
+            source.push_str("}}\n\n");
+            combined_flag_sources.push_str(source);
+        }
+
+        let inserted_source = format!("{}\n\n{}", material_constants, combined_flag_sources);
+        definitions_shader.source.insert_str(0, &inserted_source);
 
         // Definitions shader is the first shader, so just validate it alone
         if let Err(e) = validate_wgsl(&definitions_shader.source) {
@@ -458,10 +644,11 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
 
         // Since the processing shader can use stuff before it, we need to make sure that stuff exists
         let mut compute_to_process_preprocessor = wgsl_preprocessor::Preprocessor::new(
-            include_file!("shaders/compute_to_process.wgsl"),
+            include_file!("shaders/compute_to_1process.wgsl"),
             vec![
                 include_file!("shaders/shared.wgsl"),
                 include_file!("shaders/debug_print.wgsl"),
+                include_file!("shaders/blend_modes.wgsl"),
                 include_file!("shaders/actions.wgsl"),
             ],
         );
@@ -508,7 +695,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         all_dependencies.push(display_shader.dependencies.clone());
 
         let mut compute_to_display_preprocessor = wgsl_preprocessor::Preprocessor::new(
-            include_file!("shaders/compute_to_display.wgsl"),
+            include_file!("shaders/compute_to_2display.wgsl"),
             vec![],
         );
         compute_to_display_preprocessor.define_value("USER_DISPLAY_SHADER", display_shader.source);
@@ -542,7 +729,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         }
 
         let mut compute_shader = wgsl_preprocessor::Preprocessor::new(
-            include_file!("shaders/compute_to_z_end.wgsl"),
+            include_file!("shaders/compute_to_3end.wgsl"),
             vec![],
         );
         let compute_shader_res = compute_shader.build();
@@ -581,21 +768,26 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
             label: Some("Simulation main compute shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Owned(full_shader_source)),
         });
-        self.compute_pipelines = Self::create_compute_pipelines(
+        self.simulation_passes = Self::create_simulation_passes(
             device,
             self.compute_pl_layout.as_ref().unwrap(),
             &shader_module,
         )
     }
 
-    fn create_compute_pipelines(
+    fn create_simulation_passes(
         device: &wgpu::Device,
         layout: &wgpu::PipelineLayout,
         compute_shader: &wgpu::ShaderModule,
-    ) -> Vec<(String, wgpu::ComputePipeline)> {
+    ) -> Vec<SimulationPass> {
+        let full_grid_dispatch = (GRID_WIDTH.div_ceil(8), GRID_HEIGHT.div_ceil(8), 1);
+        let num_rbcells = Self::total_nr_cells();
+        let num_rbcell_workgroups = num_rbcells.div_ceil(256);
+        let rbcell_dispatch = (num_rbcell_workgroups as u32, 1, 1);
+
         vec![
-            (
-                String::from("prepare compute pass"),
+            SimulationPass::new(
+                "prepare compute pass",
                 device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("prepare compute pipeline"),
                     layout: Some(layout),
@@ -604,9 +796,34 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
                     compilation_options: Default::default(),
                     cache: None,
                 }),
+                full_grid_dispatch,
             ),
-            (
-                String::from("propose compute pass"),
+            SimulationPass::new(
+                "insert bodies compute pass",
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("insert bodies compute pipeline"),
+                    layout: Some(layout),
+                    module: compute_shader,
+                    entry_point: Some("insert_bodies"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                }),
+                rbcell_dispatch,
+            ),
+            SimulationPass::new(
+                "compose grid compute pass",
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("compose grid compute pipeline"),
+                    layout: Some(layout),
+                    module: compute_shader,
+                    entry_point: Some("compose_grid"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                }),
+                full_grid_dispatch,
+            ),
+            SimulationPass::new(
+                "propose compute pass",
                 device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("propose compute pipeline"),
                     layout: Some(layout),
@@ -615,9 +832,10 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
                     compilation_options: Default::default(),
                     cache: None,
                 }),
+                full_grid_dispatch,
             ),
-            (
-                String::from("resolve compute pass"),
+            SimulationPass::new(
+                "resolve compute pass",
                 device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("resolve compute pipeline"),
                     layout: Some(layout),
@@ -626,9 +844,10 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
                     compilation_options: Default::default(),
                     cache: None,
                 }),
+                full_grid_dispatch,
             ),
-            (
-                String::from("commit compute pass"),
+            SimulationPass::new(
+                "commit compute pass",
                 device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("commit compute pipeline"),
                     layout: Some(layout),
@@ -637,9 +856,10 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
                     compilation_options: Default::default(),
                     cache: None,
                 }),
+                full_grid_dispatch,
             ),
-            (
-                String::from("display compute pass"),
+            SimulationPass::new(
+                "display compute pass",
                 device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("display compute pipeline"),
                     layout: Some(layout),
@@ -648,6 +868,19 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
                     compilation_options: Default::default(),
                     cache: None,
                 }),
+                full_grid_dispatch,
+            ),
+            SimulationPass::new(
+                "extract bodies compute pass",
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("extract bodies compute pipeline"),
+                    layout: Some(layout),
+                    module: compute_shader,
+                    entry_point: Some("extract_bodies"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                }),
+                full_grid_dispatch,
             ),
         ]
     }
@@ -656,13 +889,17 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         match cell {
             Some(c) => shader_types::MaybeCell {
                 inner_cell: c,
-                is_some: true as i32,
+                flags: MAYBECELL_FLAG_IS_SOME,
             },
             None => shader_types::MaybeCell {
                 inner_cell: C::default(),
-                is_some: false as i32,
+                flags: 0,
             },
         }
+    }
+
+    const fn total_nr_cells() -> usize {
+        (GRID_WIDTH * GRID_HEIGHT) as usize
     }
 }
 impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulation<N, M, C> {
@@ -670,19 +907,22 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
         .with::<Mut<GraphicsSystem>>()
         .with::<Mut<BatchRenderer>>()
         .with::<Mut<DebugDraw>>()
+        .with::<Camera>()
         .with::<Mut<AssetSystem>>()
         .with::<Mut<FileWatcher>>();
 
     #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::update)
-        .with(Self::on_render)
+        .with(Self::on_game_render)
+        .with(Self::on_display_game_render)
         .with(Self::fixed_step)
         .with(Self::on_filechange);
     #[cfg(any(target_arch = "wasm32", not(debug_assertions)))]
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::update)
-        .with(Self::on_render)
+        .with(Self::on_game_render)
+        .with(Self::on_display_game_render)
         .with(Self::fixed_step);
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
@@ -735,32 +975,31 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
         const GR_W: usize = GRID_WIDTH as usize;
         const GR_H: usize = GRID_HEIGHT as usize;
 
-        // Heap-Slice erzeugen, ohne ein großes lokales Array aufzubauen.
-        // resize_with benötigt für C nur Default, kein Copy oder Clone.
-        let count = (GRID_WIDTH * GRID_HEIGHT) as usize;
+        // Create Vec<C> where C: CellStruct
+        let count = Self::total_nr_cells();
         let mut cells = Vec::with_capacity(count);
         cells.resize_with(count, C::default);
-        // let cells_buffer = cells.into_boxed_slice();
-
-        let mut cells_cpu_buffer = Vec::with_capacity(count);
-        cells_cpu_buffer.resize_with(count, || Self::create_maybecell(None));
-        let cells_cpu_buffer = cells_cpu_buffer.into_boxed_slice();
-
+        // Cast the cells into an encase buffer
         let mut encase_cells_buffer = encase::StorageBuffer::new(Vec::<u8>::new());
         encase_cells_buffer.write(&cells).unwrap();
 
+        // Create the CPU edit buffer
+        let mut cells_cpu_buffer = Vec::with_capacity(count);
+        cells_cpu_buffer.resize_with(count, || Self::create_maybecell(None));
+        let cells_cpu_buffer = cells_cpu_buffer.into_boxed_slice();
+        // Cast the maybecells into an encase buffer
         let mut encase_maybecells_buffer = encase::StorageBuffer::new(Vec::<u8>::new());
         encase_maybecells_buffer.write(&cells_cpu_buffer).unwrap();
 
         let world_cells_a = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("cells read buffer"),
+            label: Some("world cells a buffer"),
             contents: encase_cells_buffer.as_ref(),
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
         });
         let world_cells_b = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("cells write buffer"),
+            label: Some("world cells b buffer"),
             contents: encase_cells_buffer.as_ref(),
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
@@ -805,6 +1044,52 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
             size: size_of::<[u32; GR_W * GR_H]>() as u64,
+        });
+
+        // Remember to update create_simulation_passes with the new count if this changes
+        let count = Self::total_nr_cells();
+        // Create the CPU edit buffer
+        let mut rb_cells_cpu = Vec::with_capacity(count);
+        rb_cells_cpu.resize_with(count, RBCell::default);
+        let rb_cells_cpu = rb_cells_cpu.into_boxed_slice();
+        // Cast the rbcells into an encase buffer
+        let mut encase_rbcells_buffer = encase::StorageBuffer::new(Vec::<u8>::new());
+        encase_rbcells_buffer.write(&rb_cells_cpu).unwrap();
+        // Create the GPU buffer for it
+        let rb_cells_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rb_cells buffer"),
+            contents: encase_rbcells_buffer.as_ref(),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        });
+
+        // start off with no Rigidbodies
+        let rbs = Vec::<RB>::new();
+        // Cast the rbs into an encase buffer
+        let mut encase_rbs_buffer = encase::StorageBuffer::new(Vec::<u8>::new());
+        encase_rbs_buffer.write(&rbs).unwrap();
+        // Create the GPU buffer for it
+        let rbs_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rbs buffer"),
+            contents: encase_rbs_buffer.as_ref(),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let count = Self::total_nr_cells();
+        let mut metadata = Vec::with_capacity(count);
+        metadata.resize_with(count, shader_types::RBWorldMetadata::default);
+        // Cast the rbcells into an encase buffer
+        let mut encase_metadata_buffer = encase::StorageBuffer::new(Vec::<u8>::new());
+        encase_metadata_buffer.write(&metadata).unwrap();
+        let rb_metadata_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("rb_metadata buffer"),
+            contents: encase_metadata_buffer.as_ref(),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
         });
 
         let sim_bind_group1_builder = BindGroupBuilder::new()
@@ -903,6 +1188,36 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
                     min_binding_size: None,
                 },
                 cells_desired_ssbo.as_entire_binding(),
+            ) // rb_cells
+            .add_binding_with_resource(
+                9,
+                wgpu::ShaderStages::COMPUTE,
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                rb_cells_buffer.as_entire_binding(),
+            ) // rbs
+            .add_binding_with_resource(
+                10,
+                wgpu::ShaderStages::COMPUTE,
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                rbs_buffer.as_entire_binding(),
+            ) // rb_metadata
+            .add_binding_with_resource(
+                11,
+                wgpu::ShaderStages::COMPUTE,
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                rb_metadata_buffer.as_entire_binding(),
             );
 
         let (sim_bgl_a_b, sim_bind_group1_a) = sim_bind_group1_builder
@@ -993,9 +1308,12 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
         let sim_bind_group2 = (sim_bind_group2, sim_bgl2);
 
         drop(graphics_sys);
-        let display_tex_handle = {
+        let (display_tex_handle, debug_tex_handle) = {
             let mut asset_sys = ctx.get_mut::<AssetSystem>();
-            asset_sys.register(display_tex)
+            (
+                asset_sys.register(display_tex),
+                asset_sys.register(debug_tex),
+            )
         };
 
         Self {
@@ -1005,6 +1323,8 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
             last_tick: Instant::now() + Duration::from_secs_f32(0.5), // small delay before sim starts
             accumulator: Duration::ZERO,
 
+            display_scale: 3.5,
+
             cells_cpu_buffer,
             cells_dirty_indices: Vec::with_capacity((GRID_WIDTH * GRID_HEIGHT / 2) as usize),
             cpu_to_gpu_buffer,
@@ -1013,7 +1333,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
             user_cell_process_shader: None,
             user_display_shader: None,
 
-            compute_pipelines: vec![],
+            simulation_passes: vec![],
             compute_pl_layout: None,
             #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
             shader_paths: vec![],
@@ -1030,12 +1350,18 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
             params_buffer,
 
             display_tex_handle,
+            debug_tex_handle,
 
             material_names: HashMap::default(),
             materials: vec![],
             materials_ssbo,
 
             physics: SimPhysics::new(50),
+            rb_cells_cpu,
+            rb_cells_buffer,
+            rbs,
+            rbs_buffer,
+            rapier_rb_to_sim_rb: HashMap::default(),
         }
     }
 }

@@ -41,7 +41,7 @@ pub(crate) struct GameRenderer {
     bg_params_buffer: wgpu::Buffer,
 }
 impl GameRenderer {
-    fn on_game_render_fully_done(&mut self, _: &crate::graphics::events::DisplayGameRender) {
+    fn on_game_render_fully_done(&mut self, _: &crate::graphics::events::DisplayGame) {
         let time = {
             self.ctx
                 .get::<TimeSystem>()

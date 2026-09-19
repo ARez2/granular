@@ -88,13 +88,27 @@ fn PrintValue(
     fMaxDigits: f32,
     fDecimalPlaces: f32,
 ) -> f32 {
-
     let fAbsValue = abs(fValue);
+
+    // Quantize to the requested decimal precision.
+    //
+    // Example:
+    //   123.2, decimals = 2
+    //   -> round(123.2 * 100.0)
+    //   -> 12320.0
+    //
+    // We extract all digits from this scaled integer-like value,
+    // avoiding 123.2 becoming 123.19999... during digit extraction.
+    let fDecimalScale = pow(10.0, fDecimalPlaces);
+    let fScaledValue = round(fAbsValue * fDecimalScale);
+
     let fStringCharIndex = floor(vStringCharCoords.x);
     let fLog10Value = log2(fAbsValue) / log2(10.0);
     let fBiggestDigitIndex = max(floor(fLog10Value), 0.0);
+
     var fDigitCharacter = kCharBlank;
     var fDigitIndex = fMaxDigits - fStringCharIndex;
+
     if (fDigitIndex > (-fDecimalPlaces - 1.5)) {
         if (fDigitIndex > fBiggestDigitIndex) {
             if (fValue < 0.0) {
@@ -111,10 +125,27 @@ fn PrintValue(
                 if (fDigitIndex < 0.0) {
                     fDigitIndex += 1.0;
                 }
+
+                // fScaledValue contains all requested decimal digits
+                // as integer digits.
+                //
+                // For 123.20 with 2 decimal places:
+                //
+                // digit index     scaled index
+                //     2               4       -> 1
+                //     1               3       -> 2
+                //     0               2       -> 3
+                //    -1               1       -> 2
+                //    -2               0       -> 0
+                let fScaledDigitIndex =
+                    fDigitIndex + fDecimalPlaces;
+
                 let fDigitValue =
-                    fAbsValue / pow(10.0, fDigitIndex);
+                    fScaledValue /
+                    pow(10.0, fScaledDigitIndex);
+
                 fDigitCharacter =
-                    floatMod(floor(0.0001 + fDigitValue), 10.0);
+                    floatMod(floor(fDigitValue), 10.0);
             }
         }
     }

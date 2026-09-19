@@ -20,7 +20,7 @@ mod camera;
 pub use camera::Camera;
 
 mod batchrenderer;
-pub use batchrenderer::BatchRenderer;
+pub use batchrenderer::{BatchRenderer, DrawSpace};
 
 mod game_renderer;
 pub(crate) use game_renderer::GameRenderer;

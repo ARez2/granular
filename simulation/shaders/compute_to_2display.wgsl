@@ -82,7 +82,7 @@ fn commit(@builtin(global_invocation_id) gid: vec3u) {
 
     switch intent.intend_kind {
         case INTENT_MOVE: {
-            next_cells[source_idx] = user_init_cell(new_empty(), vec2i(gid.xy), source_idx);
+            next_cells[source_idx] = user_init_cell(new_empty(), false, vec2i(gid.xy), source_idx);
             next_cells[destination_idx] = source_cell;
         }
 

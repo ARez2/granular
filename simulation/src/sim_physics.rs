@@ -22,8 +22,6 @@ pub(super) struct SimPhysics {
     ///
     /// Is basically "one physics meter is `scaling_factor`-many pixels"
     scaling_factor: f32,
-
-    ball_body_handle: RigidBodyHandle,
 }
 impl SimPhysics {
     #[allow(unused)]
@@ -44,10 +42,16 @@ impl SimPhysics {
         pixels as f32 / self.scaling_factor
     }
 
+    #[allow(unused)]
+    #[inline(always)]
+    fn pixvec_to_phys(&self, pixels: Vec2) -> Vec2 {
+        pixels / self.scaling_factor
+    }
+
     pub(super) fn new(one_physics_meter_is_pixels: u32) -> Self {
         let scaling_factor = one_physics_meter_is_pixels as f32;
 
-        let mut rb_set = RigidBodySet::new();
+        let rb_set = RigidBodySet::new();
         let mut collider_set = ColliderSet::new();
 
         /* Create the ground. */
@@ -55,16 +59,6 @@ impl SimPhysics {
             .translation(vec2(100.0 / scaling_factor, 0.0))
             .build();
         collider_set.insert(collider);
-
-        /* Create the bouncing ball. */
-        let rigid_body = RigidBodyBuilder::dynamic()
-            .translation(Vector::new(100.0 / scaling_factor, 150.0 / scaling_factor))
-            .build();
-        let collider = ColliderBuilder::ball(20.0 / scaling_factor)
-            .restitution(1.0)
-            .build();
-        let ball_body_handle = rb_set.insert(rigid_body);
-        collider_set.insert_with_parent(collider, ball_body_handle, &mut rb_set);
 
         let integration_params = IntegrationParameters::default();
         let physics_pipeline = PhysicsPipeline::new();
@@ -91,14 +85,14 @@ impl SimPhysics {
             physics_hooks,
             event_handler,
             scaling_factor,
-
-            ball_body_handle,
         }
     }
 
     pub(super) fn step(&mut self) {
+        let gravity = vec2(0.0, -9.81);
+        // let gravity = Vec2::ZERO;
         self.physics_pipeline.step(
-            vec2(0.0, -9.81),
+            gravity,
             &self.integration_params,
             &mut self.island_manager,
             &mut self.broad_phase,
@@ -134,8 +128,31 @@ impl SimPhysics {
         // );
     }
 
-    pub(super) fn get_ball_pos(&self) -> IVec2 {
-        self.physvec_to_pix(self.rb_set[self.ball_body_handle].translation())
-            .as_ivec2()
+    /// Translation/ Rotation/ Pose will get overwritten by `position`/ `angle` on the RigidBodyBuilder
+    pub(super) fn create_rigidbody(
+        &mut self,
+        rb_builder: RigidBodyBuilder,
+        pixel_position: Vec2,
+        angle: f32,
+        collider_pixels: &[Vec2],
+    ) -> RigidBodyHandle {
+        let colshape =
+            ColliderBuilder::voxels_from_points(self.pixvec_to_phys(Vec2::ONE), collider_pixels)
+                .build();
+
+        let mut pose = Pose2::from_translation(self.pixvec_to_phys(pixel_position));
+        pose.rotation = Rot2::from_angle(angle);
+        let rigid_body = rb_builder.pose(pose).build();
+
+        let rb_handle = self.rb_set.insert(rigid_body);
+        self.collider_set
+            .insert_with_parent(colshape, rb_handle, &mut self.rb_set);
+        rb_handle
+    }
+
+    /// Returns that Rigidbodies position in pixel units as well as its rotation
+    pub(super) fn get_rigidbody_pose(&self, rb_handle: RigidBodyHandle) -> (Vec2, f32) {
+        let rb = &self.rb_set[rb_handle];
+        (self.physvec_to_pix(rb.translation()), rb.rotation().angle())
     }
 }

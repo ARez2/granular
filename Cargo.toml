@@ -34,7 +34,7 @@ log = "0.4.33"
 winit = { version = "*" }
 palette = "0.7.6"
 web-time = "1.1.0"
-wgpu = "30.0.0"
+wgpu = "30.0.1"
 glam = { version = "0.33.3", features = ["approx", "bytemuck", "encase"] }
 # Profiling:
 profiling = { version = "1.0.18" }

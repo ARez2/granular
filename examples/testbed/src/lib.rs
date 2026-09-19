@@ -112,48 +112,54 @@ impl Game {
                 self.materials_bg.take().unwrap(),
             );
 
-            let half_w = granular::simulation::GRID_WIDTH / 2;
-            let quart_w = granular::simulation::GRID_WIDTH / 4;
-            let third_h = granular::simulation::GRID_HEIGHT / 3;
-            let fith_h = granular::simulation::GRID_HEIGHT / 5;
-            for y in (third_h - fith_h)..(third_h + fith_h) {
-                for x in (half_w - quart_w)..(half_w + quart_w) {
-                    simulation.set_cell(
-                        ivec2(x as i32, y as i32),
-                        shader_types::Cell::new(
-                            shader_types::MaterialName::Sand,
-                            Vec2::ZERO,
-                            Vec4::ONE,
-                        ),
-                    );
-                }
-            }
+            // let half_w = granular::simulation::GRID_WIDTH / 2;
+            // let quart_w = granular::simulation::GRID_WIDTH / 4;
+            // let third_h = granular::simulation::GRID_HEIGHT / 3;
+            // let fith_h = granular::simulation::GRID_HEIGHT / 5;
+            // for y in (third_h - fith_h)..(third_h + fith_h) {
+            //     for x in (half_w - quart_w)..(half_w + quart_w) {
+            //         simulation.set_cell(
+            //             ivec2(x as i32, y as i32),
+            //             shader_types::Cell::new(
+            //                 shader_types::MaterialName::Sand,
+            //                 Vec2::ZERO,
+            //                 Vec4::ONE,
+            //             ),
+            //         );
+            //     }
+            // }
 
-            for y in 40..47 {
-                for x in 0..half_w {
-                    simulation.set_cell(
-                        ivec2(x as i32, y),
-                        shader_types::Cell::new(
-                            shader_types::MaterialName::Rock,
-                            Vec2::ZERO,
-                            Vec4::ONE,
-                        ),
-                    );
-                }
-            }
+            // for y in 40..47 {
+            //     for x in 0..half_w {
+            //         simulation.set_cell(
+            //             ivec2(x as i32, y),
+            //             shader_types::Cell::new(
+            //                 shader_types::MaterialName::Rock,
+            //                 Vec2::ZERO,
+            //                 Vec4::ONE,
+            //             ),
+            //         );
+            //     }
+            // }
 
-            for y in (granular::simulation::GRID_HEIGHT - 3)..granular::simulation::GRID_HEIGHT {
-                for x in 0..granular::simulation::GRID_WIDTH {
-                    simulation.set_cell(
-                        ivec2(x as i32, y as i32),
-                        shader_types::Cell::new(
-                            shader_types::MaterialName::Water,
-                            Vec2::ZERO,
-                            vec4(0.0, 0.0, 1.0, 1.0),
-                        ),
-                    );
-                }
-            }
+            // for y in 0..3 {
+            //     for x in 0..granular::simulation::GRID_WIDTH {
+            //         simulation.set_cell(
+            //             ivec2(x as i32, y),
+            //             shader_types::Cell::new(
+            //                 shader_types::MaterialName::Water,
+            //                 Vec2::ZERO,
+            //                 vec4(0.0, 0.0, 1.0, 1.0),
+            //             ),
+            //         );
+            //     }
+            // }
+
+            const IMAGE_BYTES: &[u8] = include_bytes!("../../../assets/noita/brewing_stand.png");
+            simulation.add_rigidbody(
+                IMAGE_BYTES,
+                shader_types::Cell::new(shader_types::MaterialName::Rock, Vec2::ZERO, Vec4::ONE),
+            );
         }
     }
 
@@ -190,8 +196,8 @@ impl Game {
             palette::named::WHITE,
             Some(self.texture_handle.clone()),
             -2,
+            DrawSpace::Game,
         );
-
         renderer.draw_quad_with_center(
             IVec2::new(50, 300),
             IVec2::new(50, 50),
@@ -199,6 +205,7 @@ impl Game {
             palette::named::WHITE,
             Some(self.texture2_handle.clone()),
             0,
+            DrawSpace::Game,
         );
         drop(renderer);
 

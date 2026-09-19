@@ -72,6 +72,14 @@ pub fn MatName(args: TokenStream, input: TokenStream) -> TokenStream {
         quote! { #[repr(u32)] }
     };
 
+    let from_u32_arms = item.variants.iter().map(|variant| {
+        let variant_name = &variant.ident;
+
+        quote! {
+            x if x == Self::#variant_name as u32 => Self::#variant_name,
+        }
+    });
+
     let strum_path = quote!(#engine::simulation::__macro_support::strum).to_string();
     let name = &item.ident;
     let (impl_generics, ty_generics, where_clause) = item.generics.split_for_impl();
@@ -94,6 +102,14 @@ pub fn MatName(args: TokenStream, input: TokenStream) -> TokenStream {
         impl #impl_generics ::core::convert::From<#name #ty_generics> for u32 #where_clause {
             fn from(value: #name #ty_generics) -> Self {
                 value as u32
+            }
+        }
+        impl #impl_generics ::core::convert::From<u32> for #name #ty_generics #where_clause {
+            fn from(value: u32) -> Self {
+                match value {
+                    #(#from_u32_arms)*
+                    value => panic!("There is not material name with that u32 number: {}!", value),
+                }
             }
         }
     }

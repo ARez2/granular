@@ -30,6 +30,12 @@ use crate::{
     utils::*,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DrawSpace {
+    Game,
+    Screen,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct Quad {
     pub topleft: IVec2,
@@ -46,16 +52,20 @@ impl Eq for Quad {}
 #[derive(Debug, PartialEq, Eq)]
 struct BatchQuadEntry {
     layer: i32,
+    draw_space: DrawSpace,
     used_texture_atlas_idx: usize,
     quad: Quad,
 }
-// sorts first by layer and then by used_texture_atlas_idx
+// sorts first by layer then by draw space and then by used_texture_atlas_idx
 impl Ord for BatchQuadEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.layer.cmp(&other.layer).then(
-            self.used_texture_atlas_idx
-                .cmp(&other.used_texture_atlas_idx),
-        )
+        self.layer
+            .cmp(&other.layer)
+            .then(self.draw_space.cmp(&other.draw_space))
+            .then(
+                self.used_texture_atlas_idx
+                    .cmp(&other.used_texture_atlas_idx),
+            )
     }
 }
 
@@ -71,6 +81,14 @@ struct Batch {
     vertices_range: Range<u64>,
     indices_end: u32,
     layer: i32,
+    draw_space: DrawSpace,
+}
+
+/// This is only used internally to tell the render method where it is drawing
+#[derive(Debug, Clone, Copy)]
+enum BatchRenderTarget {
+    Game,
+    Surface,
 }
 
 /// A simple batch renderer that supports layering of quads
@@ -91,7 +109,9 @@ pub struct BatchRenderer {
     batches: Vec<Batch>,
     vertices_to_draw: Vec<Vertex>,
 
-    globals_bind_group: (BindGroup, BindGroupLayout),
+    globals_bind_group_layout: BindGroupLayout,
+    game_globals_bind_group: BindGroup,
+    screen_globals_bind_group: BindGroup,
 
     shader_handle: AssetHandle<ShaderModule>,
     render_pipeline: RenderPipeline,
@@ -122,6 +142,7 @@ impl BatchRenderer {
 
         let mut previous_layer = 0;
         let mut previous_atlas_index = 0;
+        let mut previous_draw_space = DrawSpace::Game;
         let mut first_iteration = true;
         let mut num_quads_in_batch = 0;
         let mut last_batch_end_quad_idx: u64 = 0;
@@ -137,10 +158,13 @@ impl BatchRenderer {
             let current_layer = entry.layer;
             // this is mutable because it might get changed later when we assign a new atlas because the texture has changed
             let mut current_atlas_index = entry.used_texture_atlas_idx;
+            let current_draw_space = entry.draw_space;
             // Since the quads are ordered by layer, this means that we have now iterated through
             // all quads in this layer and we need to create a batch with the last ones
             if !first_iteration
-                && (current_layer != previous_layer || current_atlas_index != previous_atlas_index)
+                && (current_layer != previous_layer
+                    || current_atlas_index != previous_atlas_index
+                    || current_draw_space != previous_draw_space)
             {
                 let vertices_range = (last_batch_end_quad_idx * 4)..(total_quads_processed * 4);
                 let indices_end = num_quads_in_batch as u32 * 6;
@@ -149,6 +173,7 @@ impl BatchRenderer {
                     vertices_range,
                     indices_end,
                     layer: previous_layer,
+                    draw_space: previous_draw_space,
                 });
                 last_batch_end_quad_idx = total_quads_processed;
                 num_quads_in_batch = 0;
@@ -210,6 +235,7 @@ impl BatchRenderer {
             first_iteration = false;
             previous_layer = current_layer;
             previous_atlas_index = current_atlas_index;
+            previous_draw_space = current_draw_space;
             num_quads_in_batch += 1;
             total_quads_processed += 1;
         }
@@ -222,6 +248,7 @@ impl BatchRenderer {
             vertices_range,
             indices_end,
             layer: previous_layer,
+            draw_space: previous_draw_space,
         });
     }
 
@@ -244,10 +271,10 @@ impl BatchRenderer {
             context.device.clone()
         };
 
-        // meaning if we will want to render quads with textures, which havent been rendered to any atlas yet
+        // meaning if we will want to render quads with textures, which havent been rendered to any atlas yet or have changed
         if self.atlasses_dirty {
             let mut atlas_encoder =
-                device.create_command_encoder(&wgpu::wgt::CommandEncoderDescriptor {
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Atlas command encoder"),
                 });
 
@@ -269,21 +296,25 @@ impl BatchRenderer {
         }
     }
 
-    fn on_game_render(&mut self, _: &graphics::events::RenderGame) {
-        self.render_batch_layers();
-    }
-
-    fn render_batch_layers(&mut self) {
+    fn render_batch_layers(&mut self, clear: bool, render_target: BatchRenderTarget) {
         if self.quads_to_draw.is_empty() {
             return;
         }
         self.prepare_to_render();
 
+        let viewport = { self.ctx.get::<Camera>().get_viewport_rect() };
+        let (surface_size, game_size) = {
+            let graphics_sys = self.ctx.get::<GraphicsSystem>();
+            (
+                graphics_sys.get_surface_resolution(),
+                graphics_sys.get_game_resolution(),
+            )
+        };
+
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         let mut context = graphics_sys.render_context();
 
         let layer_range = i32::MIN..i32::MAX;
-        let clear = true;
 
         #[cfg(feature = "trace")]
         let prof = context.profiler.lock().unwrap();
@@ -315,29 +346,97 @@ impl BatchRenderer {
         #[cfg(not(feature = "trace"))]
         let mut rpass = context.encoder.begin_render_pass(&rpass_desc);
 
-        self.batches
-            .iter()
-            .filter(|b| layer_range.contains(&b.layer))
-            .for_each(|batch| {
-                rpass.set_pipeline(&self.render_pipeline);
-                // The index buffer stays the same over all batches
-                rpass.set_index_buffer(self.index_buffer.slice(..), self.index_format);
-                // Only use a slice of the vertex buffer, which belongs to the current batch
-                rpass.set_vertex_buffer(
-                    0,
-                    self.vertex_buffer.slice(
-                        (batch.vertices_range.start * VERTEX_SIZE as u64)
-                            ..(batch.vertices_range.end * VERTEX_SIZE as u64),
-                    ),
-                );
-                // Use the bind group specified by the batch
-                rpass.set_bind_group(0, &self.globals_bind_group.0, &[]);
-                rpass.set_bind_group(1, &self.texture_atlasses[batch.atlas_idx].1, &[]);
-                rpass.draw_indexed(0..batch.indices_end, 0, 0..1);
-            });
+        for batch in &self.batches {
+            rpass.set_pipeline(&self.render_pipeline);
+
+            match batch.draw_space {
+                DrawSpace::Game => {
+                    rpass.set_bind_group(0, &self.game_globals_bind_group, &[]);
+
+                    match render_target {
+                        BatchRenderTarget::Game => {
+                            // Rendering directly into the low-res
+                            // game texture.
+                            rpass.set_viewport(
+                                0.0,
+                                0.0,
+                                game_size.width as f32,
+                                game_size.height as f32,
+                                0.0,
+                                1.0,
+                            );
+
+                            rpass.set_scissor_rect(0, 0, game_size.width, game_size.height);
+                        }
+
+                        BatchRenderTarget::Surface => {
+                            // Same game-space coordinates, but
+                            // mapped into the letterboxed viewport.
+                            rpass.set_viewport(
+                                viewport.position.x as f32,
+                                viewport.position.y as f32,
+                                viewport.size.x as f32,
+                                viewport.size.y as f32,
+                                0.0,
+                                1.0,
+                            );
+
+                            rpass.set_scissor_rect(
+                                viewport.position.x as u32,
+                                viewport.position.y as u32,
+                                viewport.size.x as u32,
+                                viewport.size.y as u32,
+                            );
+                        }
+                    }
+                }
+
+                DrawSpace::Screen => {
+                    debug_assert!(
+                        matches!(render_target, BatchRenderTarget::Surface),
+                        "Screen-space rendering only makes sense on the surface"
+                    );
+
+                    rpass.set_bind_group(0, &self.screen_globals_bind_group, &[]);
+
+                    rpass.set_viewport(
+                        0.0,
+                        0.0,
+                        surface_size.width as f32,
+                        surface_size.height as f32,
+                        0.0,
+                        1.0,
+                    );
+
+                    rpass.set_scissor_rect(0, 0, surface_size.width, surface_size.height);
+                }
+            }
+
+            rpass.set_index_buffer(self.index_buffer.slice(..), self.index_format);
+            rpass.set_vertex_buffer(
+                0,
+                self.vertex_buffer.slice(
+                    (batch.vertices_range.start * VERTEX_SIZE as u64)
+                        ..(batch.vertices_range.end * VERTEX_SIZE as u64),
+                ),
+            );
+
+            rpass.set_bind_group(1, &self.texture_atlasses[batch.atlas_idx].1, &[]);
+            rpass.draw_indexed(0..batch.indices_end, 0, 0..1);
+        }
     }
 
+    fn on_game_render(&mut self, _: &graphics::events::RenderGame) {
+        self.render_batch_layers(true, BatchRenderTarget::Game);
+    }
     fn on_game_render_done(&mut self, _: &graphics::events::GameRenderingDone) {
+        self.end_frame();
+    }
+
+    fn on_ui_render(&mut self, _: &graphics::events::RenderUi) {
+        self.render_batch_layers(false, BatchRenderTarget::Surface);
+    }
+    fn on_ui_render_done(&mut self, _: &graphics::events::UiRenderingDone) {
         self.end_frame();
     }
 
@@ -358,6 +457,7 @@ impl BatchRenderer {
         color: C,
         texture: Option<AssetHandle<TextureBundle>>,
         layer: i32,
+        draw_space: DrawSpace,
     ) {
         let mut used_texture_atlas_idx = 0;
         if let Some(handle) = &texture {
@@ -386,6 +486,7 @@ impl BatchRenderer {
         let rgba: [f32; 4] = color.into_gpu_color();
         self.quads_to_draw.push(std::cmp::Reverse(BatchQuadEntry {
             layer,
+            draw_space,
             used_texture_atlas_idx,
             quad: Quad {
                 topleft,
@@ -406,9 +507,10 @@ impl BatchRenderer {
         color: C,
         texture: Option<AssetHandle<TextureBundle>>,
         layer: i32,
+        draw_space: DrawSpace,
     ) {
         let topleft = center + IVec2::new(-size.x, size.y) / 2;
-        self.draw_quad(topleft, size, angle, color, texture, layer);
+        self.draw_quad(topleft, size, angle, color, texture, layer, draw_space);
     }
 
     /// Records a new quad that needs to be drawn this frame. With angle being CCW.
@@ -420,9 +522,10 @@ impl BatchRenderer {
         color: C,
         texture: Option<AssetHandle<TextureBundle>>,
         layer: i32,
+        draw_space: DrawSpace,
     ) {
         let topleft = bottomleft + IVec2::new(0, size.y);
-        self.draw_quad(topleft, size, angle, color, texture, layer);
+        self.draw_quad(topleft, size, angle, color, texture, layer, draw_space);
     }
 
     /// Notifies the BatchRenderer that this texture has changed it's content and needs to be updated
@@ -461,7 +564,7 @@ impl BatchRenderer {
             self.render_pipeline = Self::create_render_pipeline(
                 graphics_sys.device(),
                 &[
-                    Some(&self.globals_bind_group.1),
+                    Some(&self.globals_bind_group_layout),
                     Some(&self.atlas_bind_group_layout),
                 ],
                 asset_sys.get(&self.shader_handle).unwrap(),
@@ -643,13 +746,17 @@ impl GeeseSystem for BatchRenderer {
         .with(Self::render_batch_layers)
         .with(Self::on_resize)
         .with(Self::on_game_render)
-        .with(Self::on_game_render_done);
+        .with(Self::on_game_render_done)
+        .with(Self::on_ui_render)
+        .with(Self::on_ui_render_done);
     #[cfg(not(target_arch = "wasm32"))]
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::on_assetchange)
         .with(Self::on_resize)
         .with(Self::on_game_render)
-        .with(Self::on_game_render_done);
+        .with(Self::on_game_render_done)
+        .with(Self::on_ui_render)
+        .with(Self::on_ui_render_done);
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
         let graphics_sys = ctx.get::<GraphicsSystem>();
@@ -708,10 +815,18 @@ impl GeeseSystem for BatchRenderer {
         );
 
         let camera = ctx.get::<Camera>();
-        let conf = graphics_sys.surface_config();
-        let globals_bgl = Self::create_globals_bind_group_layout(device);
-        let globals_bg =
-            Self::create_globals_bind_group(device, &globals_bgl, camera.canvas_transform_buffer());
+        let globals_bind_group_layout = Self::create_globals_bind_group_layout(device);
+
+        let game_globals_bind_group = Self::create_globals_bind_group(
+            device,
+            &globals_bind_group_layout,
+            camera.game_canvas_transform_buffer(),
+        );
+        let screen_globals_bind_group = Self::create_globals_bind_group(
+            device,
+            &globals_bind_group_layout,
+            camera.screen_canvas_transform_buffer(),
+        );
 
         let atlas_bgl = Self::create_atlas_bind_group_layout(device);
         let first_atlas = DynamicTextureAtlas::new(
@@ -743,7 +858,7 @@ impl GeeseSystem for BatchRenderer {
         let graphics_sys = ctx.get::<GraphicsSystem>();
         let render_pipeline = Self::create_render_pipeline(
             graphics_sys.device(),
-            &[Some(&globals_bgl), Some(&atlas_bgl)],
+            &[Some(&globals_bind_group_layout), Some(&atlas_bgl)],
             ctx.get::<AssetSystem>().get(&shader_handle).unwrap(),
             graphics_sys.get_game_view_format(),
         );
@@ -767,7 +882,9 @@ impl GeeseSystem for BatchRenderer {
             batches: vec![],
             vertices_to_draw: Vec::with_capacity(1000),
 
-            globals_bind_group: (globals_bg, globals_bgl),
+            globals_bind_group_layout,
+            game_globals_bind_group,
+            screen_globals_bind_group,
 
             shader_handle,
             render_pipeline,

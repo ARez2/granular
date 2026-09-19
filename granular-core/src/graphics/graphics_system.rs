@@ -28,13 +28,19 @@ use crate::{
 };
 
 pub mod events {
+    pub struct GameResolutionChanged {}
+
+    pub struct RunSimulation {}
+    pub struct AfterSimulation {}
     pub struct RecordGameRenderingCommands {}
     /// Event for internal renderers to dispatch commands to for ex. the BatchRenderer
     pub(crate) struct RecordInternalGameRenderingCommands {}
     pub struct RenderGame {}
     pub struct GameRenderingDone {}
-    pub(crate) struct DisplayGameRender {}
+    pub(crate) struct DisplayGame {}
+    pub(crate) struct DisplayGameDone {}
     pub struct RecordUiRenderingCommands {}
+    pub(crate) struct RecordInternalUiRenderingCommands {}
     pub struct RenderUi {}
     pub(crate) struct UiRenderingDone {}
 }
@@ -102,7 +108,8 @@ impl GraphicsSystem {
             let mut inst_desc = wgpu::InstanceDescriptor::new_with_display_handle_from_env(
                 Box::new(display_handle),
             );
-            inst_desc.flags = wgpu::InstanceFlags::advanced_debugging();
+
+            inst_desc.flags = wgpu::InstanceFlags::from_build_config().with_env();
 
             let instance = wgpu::Instance::new(inst_desc);
             let surface = instance.create_surface(window.clone()).unwrap();
@@ -352,6 +359,7 @@ impl GraphicsSystem {
             };
             self.game_texture_handle = Some(handle);
         }
+        self.ctx.raise_event(events::GameResolutionChanged {});
     }
 
     pub fn resize_surface(&mut self, new_size: PhysicalSize<u32>) {
@@ -378,7 +386,12 @@ impl GraphicsSystem {
             .configure(&state.device, &state.surface_config);
     }
 
-    pub(crate) fn begin_frame(&mut self, existing_ctx: Option<RenderContext>) {
+    fn begin_frame(
+        &mut self,
+        existing_ctx: Option<RenderContext>,
+        frame_name: &str,
+        render_to_game: bool,
+    ) {
         self.device().poll(wgpu::wgt::PollType::Poll);
         let GraphicsSystemState::Ready(state) = &mut self.state else {
             error!("GraphicsSystem is not ready!");
@@ -387,20 +400,37 @@ impl GraphicsSystem {
 
         let window = self.ctx.get::<WindowSystem>().window_handle();
 
+        // always create a new encoder to ensure ordering
+        let encoder = state
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some(&format!("{} command encoder", frame_name)),
+            });
+
         if let Some(ctx) = existing_ctx {
             let frame = ctx.frame;
-            let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
-                format: Some(Self::calculate_surface_view_format(
-                    &state.surface_config.format,
-                )),
-                ..Default::default()
-            });
+            let view = if render_to_game {
+                let asset_sys = self.ctx.get::<AssetSystem>();
+                let tex = asset_sys
+                    .get(self.game_texture_handle.as_ref().unwrap())
+                    .unwrap();
+                tex.view().clone()
+            } else {
+                frame.texture.create_view(&wgpu::TextureViewDescriptor {
+                    format: Some(Self::calculate_surface_view_format(
+                        &state.surface_config.format,
+                    )),
+                    ..Default::default()
+                })
+            };
+
+            ctx.queue.submit(Some(ctx.encoder.finish()));
             self.context = Some(RenderContext {
                 device: ctx.device,
                 queue: ctx.queue,
                 frame,
                 view,
-                encoder: ctx.encoder,
+                encoder,
                 #[cfg(feature = "trace")]
                 profiler: ctx.profiler,
             });
@@ -444,16 +474,20 @@ impl GraphicsSystem {
                     return;
                 }
             };
-            let asset_sys = self.ctx.get::<AssetSystem>();
-            let tex = asset_sys
-                .get(self.game_texture_handle.as_ref().unwrap())
-                .unwrap();
-            let view = tex.view().clone();
-            let encoder = state
-                .device
-                .create_command_encoder(&CommandEncoderDescriptor {
-                    label: Some("Command encoder"),
-                });
+            let view = if render_to_game {
+                let asset_sys = self.ctx.get::<AssetSystem>();
+                let tex = asset_sys
+                    .get(self.game_texture_handle.as_ref().unwrap())
+                    .unwrap();
+                tex.view().clone()
+            } else {
+                frame.texture.create_view(&wgpu::TextureViewDescriptor {
+                    format: Some(Self::calculate_surface_view_format(
+                        &state.surface_config.format,
+                    )),
+                    ..Default::default()
+                })
+            };
 
             self.context = Some(RenderContext {
                 device: state.device.clone(),
@@ -478,42 +512,58 @@ impl GraphicsSystem {
         self.context.as_mut().expect("Context must exist")
     }
 
-    pub(crate) fn start_rendering(&mut self) {
-        self.begin_frame(None);
+    pub(crate) fn start_frame(&mut self) {
+        self.begin_frame(None, "Simulation", true);
         if !matches!(self.state, GraphicsSystemState::Ready(_)) || self.context.is_none() {
             return;
         }
-        self.ctx.raise_event(
-            geese::notify::flush()
-                .with(geese::notify::flush().with(events::RecordGameRenderingCommands {}))
-                .with(geese::notify::flush().with(events::RecordInternalGameRenderingCommands {}))
-                .with(geese::notify::flush().with(events::RenderGame {})),
-        );
-        self.ctx.raise_event(
-            geese::notify::flush().with(geese::notify::flush().with(events::GameRenderingDone {})),
-        );
-        self.ctx.raise_event(
-            geese::notify::flush().with(geese::notify::flush().with(events::DisplayGameRender {})),
-        );
+        self.ctx
+            .raise_event(geese::notify::flush().with(events::RunSimulation {}));
+        self.ctx
+            .raise_event(geese::notify::flush().with(events::AfterSimulation {}));
     }
 
-    fn finish_game_render(&mut self, _: &events::GameRenderingDone) {
+    fn start_game_render(&mut self, _: &events::AfterSimulation) {
         let ctx = self.context.take();
-        self.begin_frame(ctx);
-    }
+        self.begin_frame(ctx, "Game render", true);
 
-    fn display_game_render(&mut self, _: &events::DisplayGameRender) {
         self.ctx.raise_event(
             geese::notify::flush()
-                .with(geese::notify::flush().with(events::RecordUiRenderingCommands {}))
-                .with(geese::notify::flush().with(events::RenderUi {})),
+                .with(events::RecordGameRenderingCommands {})
+                .with(events::RecordInternalGameRenderingCommands {}),
         );
-        self.ctx.raise_event(
-            geese::notify::flush().with(geese::notify::flush().with(events::UiRenderingDone {})),
-        );
+        self.ctx
+            .raise_event(geese::notify::flush().with(events::RenderGame {}));
+        self.ctx
+            .raise_event(geese::notify::flush().with(events::GameRenderingDone {}));
     }
 
-    fn finish_ui_render(&mut self, _: &events::UiRenderingDone) {
+    fn start_display_game_render(&mut self, _: &events::GameRenderingDone) {
+        let ctx = self.context.take();
+        self.begin_frame(ctx, "Display game", false);
+
+        self.ctx
+            .raise_event(geese::notify::flush().with(events::DisplayGame {}));
+        self.ctx
+            .raise_event(geese::notify::flush().with(events::DisplayGameDone {}));
+    }
+
+    fn start_ui_render(&mut self, _: &events::DisplayGameDone) {
+        let ctx = self.context.take();
+        self.begin_frame(ctx, "UI render", false);
+
+        self.ctx.raise_event(
+            geese::notify::flush()
+                .with(geese::notify::flush().with(events::RecordInternalUiRenderingCommands {}))
+                .with(geese::notify::flush().with(events::RecordUiRenderingCommands {})),
+        );
+        self.ctx
+            .raise_event(geese::notify::flush().with(events::RenderUi {}));
+        self.ctx
+            .raise_event(geese::notify::flush().with(events::UiRenderingDone {}));
+    }
+
+    fn finish_frame(&mut self, _: &events::UiRenderingDone) {
         if let GraphicsSystemState::Ready(state) = &mut self.state {
             let mut context = self.context.take().unwrap();
 
@@ -549,6 +599,7 @@ impl GraphicsSystem {
         }
 
         self.request_redraw();
+        profiling::finish_frame!();
     }
 
     pub fn surface_config(&self) -> &SurfaceConfiguration {
@@ -609,9 +660,10 @@ impl GeeseSystem for GraphicsSystem {
         .with::<Mut<AssetSystem>>();
 
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
-        .with(Self::finish_game_render)
-        .with(Self::display_game_render)
-        .with(Self::finish_ui_render);
+        .with(Self::start_game_render)
+        .with(Self::start_display_game_render)
+        .with(Self::start_ui_render)
+        .with(Self::finish_frame);
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
         Self {

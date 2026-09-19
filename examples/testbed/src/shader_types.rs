@@ -10,6 +10,14 @@ pub enum MaterialName {
     Rock,
     Red = 99,
 }
+impl AdditionalMatNameFlags for MaterialName {
+    fn has_collision(&self) -> bool {
+        match self {
+            MaterialName::Empty => false,
+            _ => true,
+        }
+    }
+}
 
 #[derive(ShaderType, Clone)]
 pub struct Material {
@@ -68,5 +76,14 @@ impl Default for Cell {
             _pad: 0.0,
             color: vec4(1.0, 0.0, 0.0, 1.0),
         }
+    }
+}
+impl CellStruct for Cell {
+    fn material_name(&self) -> u32 {
+        self.material_name
+    }
+
+    fn set_color(&mut self, new_color: Vec4) {
+        self.color = new_color;
     }
 }

@@ -5,6 +5,7 @@ const WORKGROUP_SIZE_X: u32 = 8;
 const WORKGROUP_SIZE_Y: u32 = 8;
 
 #include "debug_print.wgsl"
+#include "blend_modes.wgsl"
 
 struct Params {
     tick: u32,
@@ -13,6 +14,13 @@ struct Params {
 @group(0) @binding(0)
 var<storage, read> input_cells: array<Cell>;
 
+const MAYBECELL_FLAG_IS_SOME = 1u << 0u;
+const MAYBECELL_FLAG_PIXELSCENE_COLOR = 1u << 1u;
+// Basically Option<Cell>
+struct MaybeCell {
+    inner_cell: Cell,
+    flags: u32
+}
 @group(0) @binding(1)
 var<storage, read_write> cpu_to_gpu_buffer: array<MaybeCell>;
 
@@ -41,12 +49,53 @@ var<uniform> params: Params;
 @group(0) @binding(8)
 var<storage, read_write> desired_cells: array<Cell>;
 
-// Basically Option<Cell>
-struct MaybeCell {
-    inner_cell: Cell,
-    is_some: i32
+/// In WGSL, -1 % 8 = -1  (and not 7), so this function does what you'd expect
+fn rem_euclid(value: i32, period: i32) -> i32 {
+    return ((value % period) + period) % period;
 }
 
+fn y_up_to_texel(pos: vec2i, height: i32) -> vec2i {
+    return vec2i(pos.x, height - 1 - pos.y);
+}
+
+// Converts from the +Y Up the engine uses back to +Y Down of textures
+fn simcoord_to_texel(pos: vec2i) -> vec2i {
+    return y_up_to_texel(pos, i32(GRID_HEIGHT));
+}
+
+
+const RBCELL_FLAG_INITIALIZED = 1u << 0u;
+const RBCELL_FLAG_VALID = 1u << 1u;
+const RBCELL_FLAG_PIXELSCENE_COLOR = 1u << 2u;
+struct RBCell {
+    inner_cell: Cell,
+    rb_local_pos: vec2i,
+    rb_index: u32,
+    flags: u32,
+}
+
+@group(0) @binding(9)
+var<storage, read_write> rb_cells: array<RBCell>;
+
+struct RB {
+    // Position (in grid units)
+    position: vec2f,
+    // locally in the RB unit
+    center_of_mass: vec2f,
+    angle_degrees: f32,
+    rbcells_start: u32,
+    rbcells_end: u32,
+}
+@group(0) @binding(10)
+var<storage, read_write> rbs: array<RB>;
+
+const NO_BODY_CELL: u32 = 0xffffffffu;
+struct RBWorldMetadata {
+    // this is the RBCell which owns this world pos
+    owner: atomic<u32>,
+}
+@group(0) @binding(11)
+var<storage, read_write> rb_metadata: array<RBWorldMetadata>;
 
 
 
@@ -61,7 +110,6 @@ var<storage, read_write> materials: array<Material>;
 var debug_tex0: texture_storage_2d<rgba8unorm, write>;
 
 fn print_value_with_font_size(
-    prev_color: vec4f,
     fragCoord: vec2i,
     vPixelCoords: vec2i,
     vFontSize: vec2<f32>,
@@ -69,7 +117,9 @@ fn print_value_with_font_size(
     // fMaxDigits: f32,
     fDecimalPlaces: u32,
     font_color: vec4f,
-) -> vec4f {
+) {
+    var default_color = vec4f(0.0, 0.0, 0.0, 0.0);
+
     let fMaxDigits = f32(max(0, digits_before_decimal(fValue) - 1));
     let is_digit = PrintValue(
         vec2f(fragCoord - vPixelCoords) / vFontSize,
@@ -77,22 +127,24 @@ fn print_value_with_font_size(
         fMaxDigits,
         f32(fDecimalPlaces),
     );
-    return mix(prev_color, font_color, is_digit);
+    if is_digit > 0.5 {
+        let output_col = mix(default_color, font_color, is_digit);
+        textureStore(debug_tex0, fragCoord, output_col);
+    }
 }
 
 // Default font size is optimized at 128x128 so scale it up
 const DEFAULT_FONT_SIZE: vec2f = vec2f(5.0 * (f32(GRID_WIDTH) / f32(128.0)), 6.0 * (f32(GRID_HEIGHT) / f32(128.0)));
 
 fn print_value(
-    prev_color: vec4f,
     fragCoord: vec2i,
     vPixelCoords: vec2i,
     fValue: f32,
     // fMaxDigits: f32,
     fDecimalPlaces: u32,
     font_color: vec4f,
-) -> vec4f {
-    return print_value_with_font_size(prev_color, fragCoord, vPixelCoords, DEFAULT_FONT_SIZE, fValue, fDecimalPlaces, font_color);
+) {
+    print_value_with_font_size(fragCoord, vPixelCoords, DEFAULT_FONT_SIZE, fValue, fDecimalPlaces, font_color);
 }
 
 
@@ -237,6 +289,10 @@ fn decode_source(proposal_key: u32) -> u32 {
     return encoded_source ^ tie_seed();
 }
 
+
+fn is_body_cell(idx: u32) -> bool {
+    return atomicLoad(&rb_metadata[idx].owner) != NO_BODY_CELL;
+}
 
 /// Saves a Intent struct in this cell's slot in `intents`.
 /// Also writes the key into `winners` via atomicMin
