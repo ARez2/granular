@@ -11,27 +11,34 @@ struct Params {
 }
 
 @group(0) @binding(0)
-var<storage, read> current_cells: array<Cell>;
+var<storage, read> input_cells: array<Cell>;
 
 @group(0) @binding(1)
+var<storage, read_write> cpu_to_gpu_buffer: array<MaybeCell>;
+
+// Cells after RB's and user edits are inserted
+@group(0) @binding(2)
+var<storage, read_write> current_cells: array<Cell>;
+
+@group(0) @binding(3)
 var<storage, read_write> intents: array<Intent>;
 
 // Best proposal for each destination.
-@group(0) @binding(2)
+@group(0) @binding(4)
 var<storage, read_write> winners: array<atomic<u32>>;
 
 // One entry per source: 1 if its move is accepted.
-@group(0) @binding(3)
+@group(0) @binding(5)
 var<storage, read_write> accepted: array<u32>;
 
-@group(0) @binding(4)
+@group(0) @binding(6)
 var<storage, read_write> next_cells: array<Cell>;
 
-@group(0) @binding(5)
+@group(0) @binding(7)
 var<uniform> params: Params;
 
 // Each cell can use this buffer to write its next desired state, which will then get copied to next_cells, if that cell won
-@group(0) @binding(6)
+@group(0) @binding(8)
 var<storage, read_write> desired_cells: array<Cell>;
 
 // Basically Option<Cell>
@@ -39,8 +46,9 @@ struct MaybeCell {
     inner_cell: Cell,
     is_some: i32
 }
-@group(0) @binding(7)
-var<storage, read_write> cpu_to_gpu_buffer: array<MaybeCell>;
+
+
+
 
 @group(1) @binding(0)
 var display_texture : texture_storage_2d<rgba8unorm, write>;

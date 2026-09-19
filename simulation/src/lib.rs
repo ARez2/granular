@@ -752,15 +752,22 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
         let mut encase_maybecells_buffer = encase::StorageBuffer::new(Vec::<u8>::new());
         encase_maybecells_buffer.write(&cells_cpu_buffer).unwrap();
 
-        let cells_read_ssbo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let world_cells_a = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("cells read buffer"),
             contents: encase_cells_buffer.as_ref(),
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST,
         });
-        let cells_write_ssbo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let world_cells_b = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("cells write buffer"),
+            contents: encase_cells_buffer.as_ref(),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        });
+        let current_cells = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("current_cells"),
             contents: encase_cells_buffer.as_ref(),
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_SRC
@@ -801,7 +808,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
         });
 
         let sim_bind_group1_builder = BindGroupBuilder::new()
-            // current_cells
+            // input_cells
             .add_binding(
                 0,
                 wgpu::ShaderStages::COMPUTE,
@@ -811,9 +818,30 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
                     min_binding_size: None,
                 },
             )
-            // intents
             .add_binding_with_resource(
                 1,
+                wgpu::ShaderStages::COMPUTE,
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                cpu_to_gpu_buffer.as_entire_binding(),
+            )
+            // current_cells
+            .add_binding_with_resource(
+                2,
+                wgpu::ShaderStages::COMPUTE,
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                current_cells.as_entire_binding(),
+            )
+            // intents
+            .add_binding_with_resource(
+                3,
                 wgpu::ShaderStages::COMPUTE,
                 wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -824,7 +852,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
             )
             // winners
             .add_binding_with_resource(
-                2,
+                4,
                 wgpu::ShaderStages::COMPUTE,
                 wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -835,7 +863,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
             )
             // accepted
             .add_binding_with_resource(
-                3,
+                5,
                 wgpu::ShaderStages::COMPUTE,
                 wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -846,7 +874,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
             )
             // next_cells
             .add_binding(
-                4,
+                6,
                 wgpu::ShaderStages::COMPUTE,
                 wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -856,7 +884,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
             )
             // params
             .add_binding_with_resource(
-                5,
+                7,
                 wgpu::ShaderStages::COMPUTE,
                 wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
@@ -867,7 +895,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
             )
             // desired_cells
             .add_binding_with_resource(
-                6,
+                8,
                 wgpu::ShaderStages::COMPUTE,
                 wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -875,27 +903,17 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulat
                     min_binding_size: None,
                 },
                 cells_desired_ssbo.as_entire_binding(),
-            )
-            .add_binding_with_resource(
-                7,
-                wgpu::ShaderStages::COMPUTE,
-                wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                cpu_to_gpu_buffer.as_entire_binding(),
             );
 
         let (sim_bgl_a_b, sim_bind_group1_a) = sim_bind_group1_builder
             .clone()
-            .add_resource_to_binding(0, cells_read_ssbo.as_entire_binding())
-            .add_resource_to_binding(4, cells_write_ssbo.as_entire_binding())
+            .add_resource_to_binding(0, world_cells_a.as_entire_binding())
+            .add_resource_to_binding(6, world_cells_b.as_entire_binding())
             .build("compute bind group A", device);
         let (_, sim_bind_group1_b) = sim_bind_group1_builder
             .clone()
-            .add_resource_to_binding(0, cells_write_ssbo.as_entire_binding())
-            .add_resource_to_binding(4, cells_read_ssbo.as_entire_binding())
+            .add_resource_to_binding(0, world_cells_b.as_entire_binding())
+            .add_resource_to_binding(6, world_cells_a.as_entire_binding())
             .build("compute bind group B", device);
 
         let (debug_bgl, debug_bind_group) = BindGroupBuilder::new()

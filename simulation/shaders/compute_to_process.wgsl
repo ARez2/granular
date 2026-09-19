@@ -26,11 +26,13 @@ fn prepare(@builtin(global_invocation_id) gid: vec3u) {
         cpu_to_gpu_buffer[source_idx].is_some = i32(false);
     } else {
         if params.tick == 0 {
-            current_cell = user_init_cell(current_cells[source_idx], vec2i(gid.xy), source_idx);
+            current_cell = user_init_cell(input_cells[source_idx], vec2i(gid.xy), source_idx);
         } else {
-            current_cell = current_cells[source_idx];
+            current_cell = input_cells[source_idx];
         }
     }
+    current_cells[source_idx] = current_cell;
+
     desired_cells[source_idx] = current_cell;
     next_cells[source_idx] = current_cell;
 
