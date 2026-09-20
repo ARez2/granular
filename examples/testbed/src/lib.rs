@@ -156,7 +156,7 @@ impl Game {
 
             // const IMAGE_BYTES: &[u8] = include_bytes!("../../../assets/debug_body.png");
             const IMAGE_BYTES: &[u8] = include_bytes!("../../../assets/noita/brewing_stand.png");
-            simulation.add_rigidbody(
+            let _ = simulation.add_rigidbody(
                 IMAGE_BYTES,
                 shader_types::Cell::new(shader_types::MaterialName::Rock, Vec2::ZERO, Vec4::ONE),
             );
@@ -243,7 +243,7 @@ impl Game {
             match &material_color {
                 MatColor::Tex(tex) => {
                     let asset_sys = self.ctx.get::<AssetSystem>();
-                    let tex = asset_sys.get(&tex).unwrap().texture();
+                    let tex = asset_sys.get(tex).unwrap().texture();
                     UVec2::new(tex.size().width, tex.size().height)
                 }
                 MatColor::Col(_) => UVec2::ZERO,

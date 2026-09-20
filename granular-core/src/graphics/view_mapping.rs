@@ -2,11 +2,10 @@
 //! - +Y up
 //! - describes where something is in the world
 //! - independent of camera
+//!
 //! Game coordinate system:
 //! - +Y Down
 //! - describes on what pixel of the game render target something appears (on the screen)
-//! Game image, surface, UI and UVs: +Y down.
-//! This module owns world-to-image orientation and image-to-clip projection.
 use crate::{PixelRect, Rect};
 use glam::{Affine2, Mat2, Mat4, UVec2, Vec2, Vec4};
 

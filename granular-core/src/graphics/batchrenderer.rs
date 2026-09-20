@@ -138,6 +138,7 @@ pub struct BatchRenderer {
     atlasses_dirty: bool,
     texture_atlasses: Vec<(DynamicTextureAtlas, BindGroup)>,
 }
+#[allow(clippy::too_many_arguments)]
 #[profiling::all_functions]
 impl BatchRenderer {
     const MAX_QUAD_COUNT: usize = 10000;
@@ -850,8 +851,7 @@ impl GeeseSystem for BatchRenderer {
         drop(camera);
         let white_pixel_handle = {
             let mut asset_sys = ctx.get_mut::<AssetSystem>();
-            let white_pixel_handle = asset_sys.register(white_pixel);
-            white_pixel_handle
+            asset_sys.register(white_pixel)
         };
         texture_atlasses[0]
             .0
