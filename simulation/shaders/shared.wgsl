@@ -80,8 +80,6 @@ var<storage, read_write> rb_cells: array<RBCell>;
 struct RB {
     // Position (in grid units)
     position: vec2f,
-    // locally in the RB unit
-    center_of_mass: vec2f,
     angle_degrees: f32,
     rbcells_start: u32,
     rbcells_end: u32,

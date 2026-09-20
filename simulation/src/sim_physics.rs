@@ -56,7 +56,7 @@ impl SimPhysics {
 
         /* Create the ground. */
         let collider = ColliderBuilder::cuboid(100.0, 0.1)
-            .translation(vec2(100.0 / scaling_factor, 0.0))
+            .translation(vec2(100.0 / scaling_factor, 0.0 / scaling_factor))
             .build();
         collider_set.insert(collider);
 
@@ -127,16 +127,59 @@ impl SimPhysics {
         // );
     }
 
+    fn mass_properties_from_cells(&self, cells: &[(IVec2, f32)]) -> MassProperties {
+        let half_extents = self.pixvec_to_phys(Vec2::splat(0.5));
+
+        let properties: MassProperties = cells
+            .iter()
+            .map(|&(cell, density)| {
+                assert!(density.is_finite() && density >= 0.0);
+                let center = self.pixvec_to_phys(cell.as_vec2() + Vec2::splat(0.5));
+                let pixel_properties = MassProperties::from_cuboid(density, half_extents);
+                pixel_properties.transform_by(&Pose2::from_translation(center))
+            })
+            .sum();
+
+        assert!(properties.mass() > 0.0, "dynamic body needs positive mass",);
+
+        properties
+    }
+
     /// Translation/ Rotation/ Pose will get overwritten by `position`/ `angle` on the RigidBodyBuilder
+    /// `collider_pixels` is a list of pixels (in local coords) and their densities
     pub(super) fn create_rigidbody(
         &mut self,
         rb_builder: RigidBodyBuilder,
         pixel_position: Vec2,
         angle: f32,
-        collider_pixels: &[IVec2],
+        collider_pixels: &[(IVec2, f32)],
     ) -> RigidBodyHandle {
-        let collider =
-            ColliderBuilder::voxels(self.pixvec_to_phys(Vec2::ONE), collider_pixels).build();
+        // Calculate bounding box of collider pixels
+        let mut min = collider_pixels[0].0;
+        let mut max = collider_pixels[0].0;
+        for &pix in collider_pixels {
+            min = min.min(pix.0);
+            max = max.max(pix.0);
+        }
+
+        let bounds_min = min.as_vec2();
+        let bounds_max = max.as_vec2() + Vec2::ONE;
+        let bounds_center = (bounds_min + bounds_max) * 0.5;
+        let bounds_size = bounds_max - bounds_min;
+
+        // How much to grow the collider on each side
+        const GROW_BY_SIM_PIXELS: f32 = 1.0;
+
+        let required_scale = (bounds_size + Vec2::splat(2.0 * GROW_BY_SIM_PIXELS)) / bounds_size;
+        let scale = Vec2::splat(required_scale.max_element());
+        let offset_pixels = bounds_center * (Vec2::ONE - scale);
+
+        let props = self.mass_properties_from_cells(collider_pixels);
+        let voxels: Vec<IVec2> = collider_pixels.iter().map(|v| v.0).collect();
+        let collider = ColliderBuilder::voxels(self.pixvec_to_phys(Vec2::ONE) * scale, &voxels)
+            .translation(self.pixvec_to_phys(offset_pixels))
+            .mass_properties(props)
+            .build();
 
         let mut pose = Pose2::from_translation(self.pixvec_to_phys(pixel_position));
         pose.rotation = Rot2::from_angle(angle);
@@ -169,7 +212,6 @@ impl SimPhysics {
 
             if let Some(voxels) = collider.shape().as_voxels() {
                 let size_pixels = self.physvec_to_pix(voxels.voxel_size());
-
                 for voxel in voxels.voxels() {
                     if voxel.state.is_empty() {
                         continue;

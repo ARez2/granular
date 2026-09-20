@@ -28,28 +28,26 @@ fn rb_cell_world_pos(
     local_pos: vec2i,
     angle_degrees: f32,
     rb_position: vec2f,
-    center_of_mass: vec2f,
 ) -> vec2i {
     let angle =
         angle_degrees - 360.0 * floor(angle_degrees / 360.0);
-    // Choose an exact quarter-turn, leaving a residual in [-45, 45).
+
     let turns = u32(floor((angle + 45.0) / 90.0));
     let theta = radians(angle - 90.0 * f32(turns));
-    var p = local_pos;
-    var pivot = center_of_mass;
 
+    var p = local_pos;
+
+    // Zellmittelpunkte um den Körperursprung drehen.
+    // Die Ergebnisse sind wieder Zelladressen.
     switch (turns % 4u) {
         case 1u: {
-            p = vec2i(-p.y, p.x);
-            pivot = vec2f(-pivot.y, pivot.x);
+            p = vec2i(-p.y - 1, p.x);
         }
         case 2u: {
-            p = -p;
-            pivot = -pivot;
+            p = -p - vec2i(1);
         }
         case 3u: {
-            p = vec2i(p.y, -p.x);
-            pivot = vec2f(pivot.y, -pivot.x);
+            p = vec2i(p.y, -p.x - 1);
         }
         default: {}
     }
@@ -57,23 +55,15 @@ fn rb_cell_world_pos(
     let a = -tan(theta * 0.5);
     let b = sin(theta);
 
-    // Three integer shears around the rotated pivot.
-    // Each operation uses the coordinate updated by the preceding shear.
-    p.x += i32(floor(
-        a * (f32(p.y) - pivot.y) + 0.5
-    ));
+    // Restrotation: Jede Scherung benutzt den aktuellen
+    // Zellmittelpunkt, also die Rasteradresse + 0.5.
+    p.x += i32(floor(a * (f32(p.y) + 0.5) + 0.5));
+    p.y += i32(floor(b * (f32(p.x) + 0.5) + 0.5));
+    p.x += i32(floor(a * (f32(p.y) + 0.5) + 0.5));
 
-    p.y += i32(floor(
-        b * (f32(p.x) - pivot.x) + 0.5
-    ));
+    let translation =
+        vec2i(floor(rb_position + vec2f(0.5)));
 
-    p.x += i32(floor(
-        a * (f32(p.y) - pivot.y) + 0.5
-    ));
-
-    let translation = vec2i(floor(
-        rb_position - pivot + vec2f(0.5)
-    ));
     return p + translation;
 }
 
@@ -90,7 +80,7 @@ fn insert_bodies(@builtin(global_invocation_id) gid: vec3u) {
     }
 
     let rb = rbs[rbcell.rb_index];
-    let world_pos = rb_cell_world_pos(rbcell.rb_local_pos, rb.angle_degrees, rb.position, rb.center_of_mass);
+    let world_pos = rb_cell_world_pos(rbcell.rb_local_pos, rb.angle_degrees, rb.position);
 
     let idx = pos_to_idx(world_pos);
     if idx.valid {
@@ -113,16 +103,6 @@ fn compose_grid(@builtin(global_invocation_id) gid: vec3u) {
     let rbcell_idx = atomicLoad(&rb_metadata[source_idx].owner);
     if rbcell_idx != NO_BODY_CELL {
         let rbcell = &rb_cells[rbcell_idx];
-
-
-        let rb = rbs[rbcell.rb_index];
-        let world_pos = rb_cell_world_pos(rbcell.rb_local_pos, rb.angle_degrees, rb.position, rb.center_of_mass);
-        let p = vec2f(rbcell.rb_local_pos) / vec2f(24.0, 32.0);
-        if all(vec2i(gid.xy) == vec2i(rb.position)) {
-            textureStore(debug_tex0, simcoord_to_texel(vec2i(gid.xy)), vec4f(1.0, 0.0, 0.0, 0.5));
-        }
-        // print_value(vec2i(gid.xy), vec2i(0, 15), 12.0, 1, vec4f(1.0, 0.0, 0.0, 1.0));
-        
 
         // if the RB material isnt empty, overwrite the world material with the RB material
         if (*rbcell).inner_cell.material != MAT_EMPTY {

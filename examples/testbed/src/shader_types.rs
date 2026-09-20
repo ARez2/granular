@@ -19,7 +19,7 @@ impl AdditionalMatNameFlags for MaterialName {
     }
 }
 
-#[derive(ShaderType, Clone)]
+#[derive(ShaderType, Clone, Copy)]
 pub struct Material {
     pub tex_coords_start: Vec2,
     pub tex_coords_end: Vec2,
@@ -38,6 +38,11 @@ impl Material {
             density,
             ..Default::default()
         }
+    }
+}
+impl MaterialStruct for Material {
+    fn density(&self) -> f32 {
+        self.density
     }
 }
 impl Default for Material {

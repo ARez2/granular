@@ -49,7 +49,6 @@ impl<C: CellStruct> Default for RBCell<C> {
 #[derive(Debug, Clone, Copy, encase::ShaderType)]
 pub(super) struct RB {
     pub(super) position: Vec2,
-    pub(super) center_of_mass: Vec2,
     pub(super) angle_degrees: f32,
     pub(super) rbcells_start: u32,
     pub(super) rbcells_end: u32,

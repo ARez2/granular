@@ -1,5 +1,3 @@
-#![feature(trait_alias)]
-
 use encase::{ShaderType, UniformBuffer};
 use glam::prelude::*;
 use granular_core::{
@@ -17,7 +15,7 @@ use wgpu::{Buffer, util::DeviceExt};
 use wgsl_preprocessor::include_file;
 
 pub mod prelude {
-    pub use super::{AdditionalMatNameFlags, CellStruct, UserShaderInput};
+    pub use super::{AdditionalMatNameFlags, CellStruct, MaterialStruct, UserShaderInput};
     pub use num_enum::IntoPrimitive;
     pub use proc_macros::MatName;
     pub use strum;
@@ -74,13 +72,12 @@ struct FlagMethod {
     call: fn(&dyn AdditionalMatNameFlags) -> bool,
 }
 
-/// Needs `#[derive(ShaderType, Clone)]` and a `Default` implementation
-pub trait MaterialShaderStruct = 'static
-    + Default
-    + Clone
-    + encase::ShaderType
-    + encase::ShaderSize
-    + encase::internal::WriteInto;
+/// Still needs `#[derive(ShaderType, Clone)]` and a `Default` implementation
+pub trait MaterialStruct:
+    'static + Default + Clone + encase::ShaderType + encase::ShaderSize + encase::internal::WriteInto
+{
+    fn density(&self) -> f32;
+}
 
 pub trait CellStruct:
     Sized
@@ -126,7 +123,7 @@ impl SimulationPass {
 }
 
 /// A falling sand simulation framework. Call `init_simulation` ASAP to initialize the simulation! Otherwise it will not run!
-pub struct Simulation<N: MatName, M: MaterialShaderStruct, C: CellStruct> {
+pub struct Simulation<N: MatName, M: MaterialStruct, C: CellStruct> {
     ctx: GeeseContextHandle<Self>,
     pub frame: u64,
     pub tickrate: Duration,
@@ -197,7 +194,7 @@ pub struct Simulation<N: MatName, M: MaterialShaderStruct, C: CellStruct> {
     /// Maps a rapier RigidBodyHandle to an index into rbs
     rapier_rb_to_sim_rb: HashMap<RigidBodyHandle, usize>,
 }
-impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
+impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
     fn update(&mut self, _: &granular_core::graphics::events::RunSimulation) {
         if self.simulation_passes.is_empty() {
             return;
@@ -355,7 +352,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         let mut debug = self.ctx.get_mut::<DebugDraw>();
 
         let color = vec4(0.0, 1.0, 0.2, 0.8);
-        let thickness = 0.2 * disp_scale;
+        let thickness = 0.1 * disp_scale;
         let layer = 100;
         let draw_space = DrawSpace::World;
 
@@ -383,7 +380,6 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
             },
             |debug, points| {
                 let scaled: Vec<Vec2> = points.iter().map(|&point| point * disp_scale).collect();
-
                 debug.draw_polyline(&scaled, color, thickness, layer, draw_space);
             },
         );
@@ -448,7 +444,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         self.material_names.insert(material_name, index);
     }
 
-    pub fn add_rigidbody(&mut self, rb_image_bytes: &[u8], filler_cell: C) {
+    pub fn add_rigidbody(&mut self, rb_image_bytes: &[u8], filler_cell: C) -> anyhow::Result<()> {
         let mut image =
             image::load_from_memory(rb_image_bytes).expect("failed to decode embedded image");
         image
@@ -481,7 +477,9 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
 
             let matname: N = inner_cell.material_name().into();
             if a != 0 && matname.has_collision() {
-                collider_pixels.push(pix_local_pos_in_rb);
+                let mat_idx = self.material_names[&matname];
+                let density = self.materials[mat_idx].as_ref().ok_or(anyhow::anyhow!("Did not find a material for the provided material name! Make sure to register the material before via `add_material`."))?.density();
+                collider_pixels.push((pix_local_pos_in_rb, density));
             }
 
             self.rb_cells_cpu[idx] = RBCell {
@@ -502,19 +500,15 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         );
 
         self.rapier_rb_to_sim_rb.insert(rb_handle, 0);
-        let mut center_of_mass = Vec2::ZERO;
-        for pt in &collider_pixels {
-            center_of_mass += pt.as_vec2();
-        }
-        center_of_mass /= collider_pixels.len() as f32;
 
         self.rbs.push(RB {
             position,
-            center_of_mass,
             angle_degrees: 0.0,
             rbcells_start: 0,
             rbcells_end: last_idx as u32,
         });
+
+        Ok(())
     }
 
     #[inline(always)]
@@ -921,7 +915,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         (GRID_WIDTH * GRID_HEIGHT) as usize
     }
 }
-impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> GeeseSystem for Simulation<N, M, C> {
+impl<N: MatName, M: MaterialStruct, C: CellStruct> GeeseSystem for Simulation<N, M, C> {
     const DEPENDENCIES: Dependencies = dependencies()
         .with::<Mut<GraphicsSystem>>()
         .with::<Mut<BatchRenderer>>()
