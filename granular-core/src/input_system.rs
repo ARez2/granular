@@ -1,6 +1,7 @@
 #![allow(unused)]
 
-use glam::IVec2;
+use crate::graphics::SurfacePos;
+use glam::Vec2;
 use rustc_hash::FxHashMap as HashMap;
 use winit::{
     dpi::PhysicalPosition,
@@ -104,8 +105,9 @@ pub struct InputSystem {
     ctx: GeeseContextHandle<Self>,
     actions: HashMap<String, InputAction>,
     current_modifiers: ModifiersState,
-    mouse_position: IVec2,
-    last_mouse_position: IVec2,
+    mouse_position: Vec2,
+    last_frame_mouse_position: Vec2,
+    mouse_delta: Vec2,
 }
 impl InputSystem {
     /// Registers a new InputAction
@@ -148,22 +150,28 @@ impl InputSystem {
         }
     }
 
-    pub fn get_mouse_position(&self) -> IVec2 {
-        self.mouse_position
+    /// Physical surface pixels, top-left origin, +Y down.
+    pub fn mouse_surface_position(&self) -> SurfacePos {
+        SurfacePos(self.mouse_position)
+    }
+    /// Difference between update-frame snapshots; also +Y down.
+    pub fn mouse_surface_delta(&self) -> Vec2 {
+        self.mouse_delta
     }
 
-    /// Returns the change of the mouse position between this and the last frame
-    pub fn get_mouse_delta(&self) -> IVec2 {
-        (self.mouse_position - self.last_mouse_position) * IVec2::new(1, -1)
+    pub(crate) fn begin_frame(&mut self) {
+        self.mouse_delta = self.mouse_position - self.last_frame_mouse_position;
+        self.last_frame_mouse_position = self.mouse_position;
     }
 
-    pub fn get_input_vector(
+    /// Normalized keyboard direction in world axes: up is +Y.
+    pub fn world_input_direction(
         &self,
         action_left: &str,
         action_right: &str,
         action_up: &str,
         action_down: &str,
-    ) -> IVec2 {
+    ) -> Vec2 {
         let actions = [
             (action_left, self.actions.get(action_left)),
             (action_right, self.actions.get(action_right)),
@@ -173,16 +181,17 @@ impl InputSystem {
         for (name, action) in actions {
             if action.is_none() {
                 warn!(
-                    "get_input_vector: Action '{}' does not exist, create it using add_action.",
+                    "world_input_direction: Action '{}' does not exist, create it using add_action.",
                     name
                 );
-                return IVec2::ZERO;
+                return Vec2::ZERO;
             };
         }
-        IVec2::new(
-            actions[1].1.unwrap().pressed as i32 - actions[0].1.unwrap().pressed as i32,
-            actions[2].1.unwrap().pressed as i32 - actions[3].1.unwrap().pressed as i32,
+        Vec2::new(
+            actions[1].1.unwrap().pressed as u8 as f32 - actions[0].1.unwrap().pressed as u8 as f32,
+            actions[2].1.unwrap().pressed as u8 as f32 - actions[3].1.unwrap().pressed as u8 as f32,
         )
+        .normalize_or_zero()
     }
 
     /// Updates keyboard input for all InputAction's
@@ -215,12 +224,9 @@ impl InputSystem {
         });
     }
 
-    /// Sets the current mouse position and updates the last mouse position
-    pub(crate) fn handle_cursor_movement(&mut self, new_position: PhysicalPosition<f64>) {
-        let tmp = self.mouse_position;
-        // new_position always ends in .0 so we can safely cast here without loosing precision
-        self.mouse_position = IVec2::new(new_position.x as i32, new_position.y as i32);
-        self.last_mouse_position = tmp;
+    /// Preserve fractional physical coordinates; no axis conversion at input.
+    pub(crate) fn handle_cursor_movement(&mut self, p: PhysicalPosition<f64>) {
+        self.mouse_position = Vec2::new(p.x as f32, p.y as f32);
     }
 
     pub(crate) fn update_modifiers(&mut self, modifiers: &Modifiers) {
@@ -239,8 +245,9 @@ impl GeeseSystem for InputSystem {
         Self {
             ctx,
             actions: HashMap::default(),
-            mouse_position: IVec2::ZERO,
-            last_mouse_position: IVec2::ZERO,
+            mouse_position: Vec2::ZERO,
+            last_frame_mouse_position: Vec2::ZERO,
+            mouse_delta: Vec2::ZERO,
             current_modifiers: ModifiersState::empty(),
         }
     }

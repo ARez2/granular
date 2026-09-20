@@ -72,6 +72,10 @@ impl WindowSystem {
         self.window_handle().set_title(title);
     }
 
+    pub fn scale_factor(&self) -> f64 {
+        self.window_handle().scale_factor()
+    }
+
     pub fn window_size(&self) -> PhysicalSize<u32> {
         self.window_handle().inner_size()
     }

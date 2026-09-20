@@ -1,9 +1,13 @@
 #![allow(unused)]
 #![allow(clippy::identity_op)]
 
+use super::{
+    DrawSpace,
+    quad_geometry::{quad_corners, top_left_offset},
+};
 use bytemuck_derive::{Pod, Zeroable};
 use glam::f32::Mat4;
-use glam::{IVec2, UVec2, Vec2, ivec2};
+use glam::{UVec2, Vec2};
 use palette::Srgba;
 use palette::cast::ComponentsInto;
 use rustc_hash::FxHashMap as HashMap;
@@ -30,32 +34,32 @@ use crate::{
     utils::*,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum DrawSpace {
-    Game,
-    Screen,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 struct Quad {
-    pub topleft: IVec2,
-    pub size: IVec2,
+    pub topleft: Vec2,
+    pub size: Vec2,
     pub angle: f32,
     /// If there is a texture set, this tints the texture, otherwise the quad will have this color
     pub color: [f32; 4],
     pub texture: Option<TextureHandle>,
 }
-impl Eq for Quad {}
 
 /// A simple wrapper that stores a quad and a corresponding layer
 /// and texture atlas index for use in the binary heap
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 struct BatchQuadEntry {
     layer: i32,
     draw_space: DrawSpace,
     used_texture_atlas_idx: usize,
     quad: Quad,
 }
+impl PartialEq for BatchQuadEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+impl Eq for BatchQuadEntry {}
+// Equality follows the ordering keys; geometry containing floats is not Eq.
 // sorts first by layer then by draw space and then by used_texture_atlas_idx
 impl Ord for BatchQuadEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -95,8 +99,6 @@ enum BatchRenderTarget {
 pub struct BatchRenderer {
     ctx: GeeseContextHandle<Self>,
 
-    screen_size: IVec2,
-
     vertex_buffer: Buffer,
     index_buffer: Buffer,
     index_format: IndexFormat,
@@ -110,8 +112,10 @@ pub struct BatchRenderer {
     vertices_to_draw: Vec<Vertex>,
 
     globals_bind_group_layout: BindGroupLayout,
-    game_globals_bind_group: BindGroup,
-    screen_globals_bind_group: BindGroup,
+    world_game_bind_group: BindGroup,
+    world_surface_bind_group: BindGroup,
+    surface_pixels_bind_group: BindGroup,
+    ui_points_bind_group: BindGroup,
 
     shader_handle: AssetHandle<ShaderModule>,
     render_pipeline: RenderPipeline,
@@ -142,7 +146,7 @@ impl BatchRenderer {
 
         let mut previous_layer = 0;
         let mut previous_atlas_index = 0;
-        let mut previous_draw_space = DrawSpace::Game;
+        let mut previous_draw_space = DrawSpace::World;
         let mut first_iteration = true;
         let mut num_quads_in_batch = 0;
         let mut last_batch_end_quad_idx: u64 = 0;
@@ -179,17 +183,8 @@ impl BatchRenderer {
                 num_quads_in_batch = 0;
             }
 
-            let quad_pos = quad.topleft;
-
-            let half = quad.size / 2;
-            let quad_center = (quad.topleft + ivec2(half.x, -half.y)).as_vec2();
-            let rotation = glam::Mat2::from_angle(quad.angle);
-            let quad_pts = [
-                (quad_center + rotation * IVec2::new(-half.x, half.y).as_vec2()).as_ivec2(),
-                (quad_center + rotation * IVec2::new(-half.x, -half.y).as_vec2()).as_ivec2(),
-                (quad_center + rotation * IVec2::new(half.x, -half.y).as_vec2()).as_ivec2(),
-                (quad_center + rotation * IVec2::new(half.x, half.y).as_vec2()).as_ivec2(),
-            ];
+            let center = quad.topleft - top_left_offset(quad.size, current_draw_space);
+            let quad_pts = quad_corners(center, quad.size, quad.angle, current_draw_space);
 
             let quad_tex = quad
                 .texture
@@ -297,18 +292,19 @@ impl BatchRenderer {
     }
 
     fn render_batch_layers(&mut self, clear: bool, render_target: BatchRenderTarget) {
-        if self.quads_to_draw.is_empty() {
+        if self.quads_to_draw.is_empty() && !clear {
             return;
         }
         self.prepare_to_render();
 
-        let viewport = { self.ctx.get::<Camera>().get_viewport_rect() };
-        let (surface_size, game_size) = {
-            let graphics_sys = self.ctx.get::<GraphicsSystem>();
-            (
-                graphics_sys.get_surface_resolution(),
-                graphics_sys.get_game_resolution(),
-            )
+        let view = self.ctx.get::<Camera>().render_view();
+        let viewport = view.game_viewport_surface_px;
+        let surface_size = view.presentation.surface_size;
+        let target_size = match render_target {
+            BatchRenderTarget::Game => {
+                super::view_mapping::game_target_size(view.presentation.game_size)
+            }
+            BatchRenderTarget::Surface => surface_size,
         };
 
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
@@ -346,71 +342,43 @@ impl BatchRenderer {
         #[cfg(not(feature = "trace"))]
         let mut rpass = context.encoder.begin_render_pass(&rpass_desc);
 
+        // Matrices include presentation placement. Never apply the viewport twice.
+        rpass.set_viewport(
+            0.0,
+            0.0,
+            target_size.x as f32,
+            target_size.y as f32,
+            0.0,
+            1.0,
+        );
         for batch in &self.batches {
             rpass.set_pipeline(&self.render_pipeline);
 
-            match batch.draw_space {
-                DrawSpace::Game => {
-                    rpass.set_bind_group(0, &self.game_globals_bind_group, &[]);
-
-                    match render_target {
-                        BatchRenderTarget::Game => {
-                            // Rendering directly into the low-res
-                            // game texture.
-                            rpass.set_viewport(
-                                0.0,
-                                0.0,
-                                game_size.width as f32,
-                                game_size.height as f32,
-                                0.0,
-                                1.0,
-                            );
-
-                            rpass.set_scissor_rect(0, 0, game_size.width, game_size.height);
-                        }
-
-                        BatchRenderTarget::Surface => {
-                            // Same game-space coordinates, but
-                            // mapped into the letterboxed viewport.
-                            rpass.set_viewport(
-                                viewport.position.x as f32,
-                                viewport.position.y as f32,
-                                viewport.size.x as f32,
-                                viewport.size.y as f32,
-                                0.0,
-                                1.0,
-                            );
-
-                            rpass.set_scissor_rect(
-                                viewport.position.x as u32,
-                                viewport.position.y as u32,
-                                viewport.size.x as u32,
-                                viewport.size.y as u32,
-                            );
-                        }
-                    }
+            let globals = match (batch.draw_space, render_target) {
+                (DrawSpace::World, BatchRenderTarget::Game) => {
+                    rpass.set_scissor_rect(0, 0, target_size.x, target_size.y);
+                    &self.world_game_bind_group
                 }
-
-                DrawSpace::Screen => {
-                    debug_assert!(
-                        matches!(render_target, BatchRenderTarget::Surface),
-                        "Screen-space rendering only makes sense on the surface"
+                (DrawSpace::World, BatchRenderTarget::Surface) => {
+                    rpass.set_scissor_rect(
+                        viewport.origin.x,
+                        viewport.origin.y,
+                        viewport.size.x,
+                        viewport.size.y,
                     );
-
-                    rpass.set_bind_group(0, &self.screen_globals_bind_group, &[]);
-
-                    rpass.set_viewport(
-                        0.0,
-                        0.0,
-                        surface_size.width as f32,
-                        surface_size.height as f32,
-                        0.0,
-                        1.0,
-                    );
-
-                    rpass.set_scissor_rect(0, 0, surface_size.width, surface_size.height);
+                    &self.world_surface_bind_group
                 }
-            }
+                (DrawSpace::SurfacePixels, BatchRenderTarget::Surface) => {
+                    rpass.set_scissor_rect(0, 0, surface_size.x, surface_size.y);
+                    &self.surface_pixels_bind_group
+                }
+                (DrawSpace::UiPoints, BatchRenderTarget::Surface) => {
+                    rpass.set_scissor_rect(0, 0, surface_size.x, surface_size.y);
+                    &self.ui_points_bind_group
+                }
+                _ => panic!("SurfacePixels and UiPoints require the surface render phase"),
+            };
+            rpass.set_bind_group(0, globals, &[]);
 
             rpass.set_index_buffer(self.index_buffer.slice(..), self.index_format);
             rpass.set_vertex_buffer(
@@ -448,17 +416,19 @@ impl BatchRenderer {
         self.vertices_to_draw.clear();
     }
 
-    /// Records a new quad that needs to be drawn this frame with angle being CCW.
+    /// Records a new quad that needs to be drawn this frame with positive angles rotating CCW in World and CW in SurfacePixels/UiPoints.
     pub fn draw_quad<C: IntoGpuColor>(
         &mut self,
-        topleft: IVec2,
-        size: IVec2,
+        topleft: Vec2,
+        size: Vec2,
         angle: f32,
         color: C,
         texture: Option<AssetHandle<TextureBundle>>,
         layer: i32,
         draw_space: DrawSpace,
     ) {
+        assert!(topleft.is_finite() && size.is_finite() && angle.is_finite());
+        assert!(size.x >= 0.0 && size.y >= 0.0);
         let mut used_texture_atlas_idx = 0;
         if let Some(handle) = &texture {
             let mut has_texture = false;
@@ -498,33 +468,33 @@ impl BatchRenderer {
         }));
     }
 
-    /// Records a new quad that needs to be drawn this frame. Draws the quad with its center at the `center` position and extending `size/2` to either side with angle being CCW.
+    /// Records a new quad that needs to be drawn this frame. Draws the quad with its center at the `center` position and extending `size/2` to either side with positive angles rotating CCW in World and CW in SurfacePixels/UiPoints.
     pub fn draw_quad_with_center<C: IntoGpuColor>(
         &mut self,
-        center: IVec2,
-        size: IVec2,
+        center: Vec2,
+        size: Vec2,
         angle: f32,
         color: C,
         texture: Option<AssetHandle<TextureBundle>>,
         layer: i32,
         draw_space: DrawSpace,
     ) {
-        let topleft = center + IVec2::new(-size.x, size.y) / 2;
+        let topleft = center + top_left_offset(size, draw_space);
         self.draw_quad(topleft, size, angle, color, texture, layer, draw_space);
     }
 
-    /// Records a new quad that needs to be drawn this frame. With angle being CCW.
+    /// Records a new quad that needs to be drawn this frame. With positive angles rotating CCW in World and CW in SurfacePixels/UiPoints.
     pub fn draw_quad_with_bottomleft<C: IntoGpuColor>(
         &mut self,
-        bottomleft: IVec2,
-        size: IVec2,
+        bottomleft: Vec2,
+        size: Vec2,
         angle: f32,
         color: C,
         texture: Option<AssetHandle<TextureBundle>>,
         layer: i32,
         draw_space: DrawSpace,
     ) {
-        let topleft = bottomleft + IVec2::new(0, size.y);
+        let topleft = bottomleft + Vec2::new(0.0, draw_space.top_sign() * size.y);
         self.draw_quad(topleft, size, angle, color, texture, layer, draw_space);
     }
 
@@ -575,12 +545,9 @@ impl BatchRenderer {
         }
     }
 
-    fn on_resize(&mut self, event: &crate::events::Resized) {
-        self.screen_size = IVec2::new(event.new_size.width as i32, event.new_size.height as i32);
-    }
-
-    pub fn get_screen_size(&self) -> IVec2 {
-        self.screen_size
+    pub fn get_surface_size(&self) -> UVec2 {
+        let size = self.ctx.get::<GraphicsSystem>().get_surface_resolution();
+        UVec2::new(size.width, size.height)
     }
 
     /// Helper function for creating a new render pipeline
@@ -743,8 +710,6 @@ impl GeeseSystem for BatchRenderer {
 
     #[cfg(target_arch = "wasm32")]
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
-        .with(Self::render_batch_layers)
-        .with(Self::on_resize)
         .with(Self::on_game_render)
         .with(Self::on_game_render_done)
         .with(Self::on_ui_render)
@@ -752,7 +717,6 @@ impl GeeseSystem for BatchRenderer {
     #[cfg(not(target_arch = "wasm32"))]
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::on_assetchange)
-        .with(Self::on_resize)
         .with(Self::on_game_render)
         .with(Self::on_game_render_done)
         .with(Self::on_ui_render)
@@ -817,15 +781,25 @@ impl GeeseSystem for BatchRenderer {
         let camera = ctx.get::<Camera>();
         let globals_bind_group_layout = Self::create_globals_bind_group_layout(device);
 
-        let game_globals_bind_group = Self::create_globals_bind_group(
+        let world_game_bind_group = Self::create_globals_bind_group(
             device,
             &globals_bind_group_layout,
-            camera.game_canvas_transform_buffer(),
+            camera.world_to_game_clip_buffer(),
         );
-        let screen_globals_bind_group = Self::create_globals_bind_group(
+        let world_surface_bind_group = Self::create_globals_bind_group(
             device,
             &globals_bind_group_layout,
-            camera.screen_canvas_transform_buffer(),
+            camera.world_to_surface_clip_buffer(),
+        );
+        let surface_pixels_bind_group = Self::create_globals_bind_group(
+            device,
+            &globals_bind_group_layout,
+            camera.surface_pixels_to_clip_buffer(),
+        );
+        let ui_points_bind_group = Self::create_globals_bind_group(
+            device,
+            &globals_bind_group_layout,
+            camera.ui_points_to_clip_buffer(),
         );
 
         let atlas_bgl = Self::create_atlas_bind_group_layout(device);
@@ -862,16 +836,10 @@ impl GeeseSystem for BatchRenderer {
             ctx.get::<AssetSystem>().get(&shader_handle).unwrap(),
             graphics_sys.get_game_view_format(),
         );
-        let screen_size = IVec2::new(
-            graphics_sys.surface_config().width as i32,
-            graphics_sys.surface_config().height as i32,
-        );
         drop(graphics_sys);
 
         Self {
             ctx,
-
-            screen_size,
 
             vertex_buffer,
             index_buffer,
@@ -883,8 +851,10 @@ impl GeeseSystem for BatchRenderer {
             vertices_to_draw: Vec::with_capacity(1000),
 
             globals_bind_group_layout,
-            game_globals_bind_group,
-            screen_globals_bind_group,
+            world_game_bind_group,
+            world_surface_bind_group,
+            surface_pixels_bind_group,
+            ui_points_bind_group,
 
             shader_handle,
             render_pipeline,

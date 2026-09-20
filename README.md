@@ -33,6 +33,7 @@ cargo run-testbed-trace
 - Find way to remove GraphicsSystem dependency from Game?
 - Write some usage information (simulation setup + requirements)
 - Maybe provide a working webpage with the testbed running?
+- What about camera zoom < 0?
 
 **Low priority:**
 - Dynamically remove textures from `BatchRenderer` texture atlasses

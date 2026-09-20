@@ -1,3 +1,4 @@
+use glam::UVec2;
 use rustc_hash::FxHashMap as HashMap;
 use std::{
     marker::PhantomData,
@@ -6,7 +7,7 @@ use std::{
 use web_time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
-    dpi::{LogicalSize, PhysicalSize},
+    dpi::PhysicalSize,
     event::{DeviceEvent, DeviceId, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     window::WindowId,
@@ -15,7 +16,7 @@ use winit::{
 pub mod future_executor;
 
 mod rect;
-pub use rect::Rect;
+pub use rect::{PixelRect, Rect};
 
 pub mod utils;
 pub use utils::*;
@@ -43,11 +44,12 @@ pub mod prelude {
         assets::{self, AssetHandle},
         events,
         graphics::{
-            self, DebugDraw, DrawSpace, GraphicsSystem, Texture2D, TextureBundle,
-            TextureBundleLoadSettings, WindowSystem,
+            self, CameraMotion, DebugDraw, DrawSpace, GamePixelPos, GraphicsSystem, RenderView,
+            ScalingMode, SurfacePos, Texture2D, TextureBundle, TextureBundleLoadSettings, UiPos,
+            WindowSystem, WorldPos,
         },
         input_system::*,
-        rect::Rect,
+        rect::{PixelRect, Rect},
         time_system::TimeSystem,
         utils::*,
     };
@@ -99,7 +101,7 @@ enum EngineState {
 
 pub struct GranularEngine<AppSystem: GeeseSystem + std::fmt::Debug> {
     ctx: GeeseContext,
-    game_resolution: LogicalSize<u32>,
+    game_resolution: UVec2,
     event_loop: Option<EventLoop<CustomWinitEvent>>,
     event_loop_proxy: EventLoopProxy<CustomWinitEvent>,
     state: EngineState,
@@ -115,7 +117,7 @@ pub struct GranularEngine<AppSystem: GeeseSystem + std::fmt::Debug> {
 #[profiling::all_functions]
 impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
     // This game resolution is the size that the game renders at (<= display/ window size)
-    pub fn new(game_resolution: LogicalSize<u32>) -> Self {
+    pub fn new(game_resolution: UVec2) -> Self {
         let now = Instant::now();
         let mut last_ticks = HashMap::default();
         for fixed_tick in events::timing::FIXED_TICKS {
@@ -228,10 +230,6 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
             #[cfg(target_os = "macos")]
             graphics_sys.request_redraw();
         }
-        {
-            let mut camera = self.ctx.get_mut::<Camera>();
-            camera.set_screen_size((new_size.width, new_size.height));
-        }
         self.last_handled_resize = Some(new_size);
         self.ctx.flush().with(events::Resized { new_size });
     }
@@ -326,6 +324,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
 
         {
             let mut input = self.ctx.get_mut::<InputSystem>();
+            input.begin_frame();
             input.reset_just_pressed();
         }
         self.update();
@@ -356,14 +355,8 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
                 input.update_modifiers(&modifiers);
             }
             WindowEvent::RedrawRequested => {
-                {
-                    let camera = self.ctx.get::<Camera>();
-                    camera.write_canvas_transform_buffers();
-                }
-                {
-                    let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
-                    graphics_sys.start_frame();
-                }
+                let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
+                graphics_sys.start_frame();
             }
             WindowEvent::KeyboardInput {
                 event,

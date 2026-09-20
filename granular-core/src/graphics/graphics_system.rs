@@ -4,9 +4,10 @@ use std::sync::Arc;
 #[cfg(feature = "trace")]
 use std::sync::Mutex;
 
+use super::view_mapping::game_target_size;
 use anyhow::bail;
 use bytemuck_derive::{Pod, Zeroable};
-use glam::{IVec2, Vec2};
+use glam::{UVec2, Vec2};
 use rustc_hash::FxHashMap;
 use wgpu::{
     Adapter, CommandEncoder, CommandEncoderDescriptor, CurrentSurfaceTexture, Device, Instance,
@@ -15,7 +16,7 @@ use wgpu::{
 #[cfg(feature = "trace")]
 use wgpu_profiler::{GpuProfiler, GpuProfilerSettings, GpuTimerQueryResult};
 use winit::{
-    dpi::{LogicalSize, PhysicalSize},
+    dpi::PhysicalSize,
     event_loop::{ActiveEventLoop, EventLoopProxy},
     window::Window,
 };
@@ -35,6 +36,8 @@ pub mod events {
     pub struct RecordGameRenderingCommands {}
     /// Event for internal renderers to dispatch commands to for ex. the BatchRenderer
     pub(crate) struct RecordInternalGameRenderingCommands {}
+    /// Freeze CPU transforms and upload uniforms after updates, before drawing.
+    pub(crate) struct PrepareRender {}
     pub struct RenderGame {}
     pub struct GameRenderingDone {}
     pub(crate) struct DisplayGame {}
@@ -81,7 +84,7 @@ pub struct GraphicsSystem {
     ctx: GeeseContextHandle<Self>,
     state: GraphicsSystemState,
     context: Option<RenderContext>,
-    game_resolution: LogicalSize<u32>,
+    game_resolution: UVec2,
     game_texture_handle: Option<TextureHandle>,
 }
 #[profiling::all_functions]
@@ -90,7 +93,7 @@ impl GraphicsSystem {
         &mut self,
         event_loop: &ActiveEventLoop,
         proxy: EventLoopProxy<CustomWinitEvent>,
-        game_resolution: LogicalSize<u32>,
+        game_resolution: UVec2,
     ) {
         if !matches!(self.state, GraphicsSystemState::Uninitialized) {
             return;
@@ -283,9 +286,10 @@ impl GraphicsSystem {
         device: &Device,
         queue: &Queue,
         mut format: wgpu::TextureFormat,
-        game_resolution: LogicalSize<u32>,
+        game_resolution: UVec2,
     ) -> TextureBundle {
         format = format.add_srgb_suffix();
+        let target_size = game_target_size(game_resolution);
         TextureBundle::new(
             device,
             queue,
@@ -293,8 +297,8 @@ impl GraphicsSystem {
             wgpu::TextureDescriptor {
                 label: Some("Game render target desc"),
                 size: wgpu::Extent3d {
-                    width: game_resolution.width,
-                    height: game_resolution.height,
+                    width: target_size.x,
+                    height: target_size.y,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -319,6 +323,10 @@ impl GraphicsSystem {
         )
     }
 
+    pub fn get_game_target_size(&self) -> UVec2 {
+        game_target_size(self.game_resolution)
+    }
+
     pub fn get_game_render_target(&self) -> TextureHandle {
         self.game_texture_handle.clone().expect("Should exist")
     }
@@ -330,19 +338,25 @@ impl GraphicsSystem {
         panic!("GraphicsSystem is not ready!");
     }
 
-    /// Gets the resolution at which the game will render at. This resolution will then be scaled to the display resolution using the camera
-    pub fn get_game_resolution(&self) -> LogicalSize<u32> {
+    /// Visible game resolution, excluding the one-texel border on each side.
+    pub fn get_game_resolution(&self) -> UVec2 {
         self.game_resolution
     }
 
-    /// Sets the resolution at which the game will render at. This resolution will then be scaled to the display resolution using the camera
-    pub fn set_game_resolution(&mut self, mut game_resolution: LogicalSize<u32>) {
-        game_resolution = game_resolution.max(LogicalSize::new(1, 1));
+    /// Change during update, before PrepareRender. Allocation includes overscan.
+    pub fn set_game_resolution(&mut self, mut game_resolution: UVec2) {
+        game_resolution = game_resolution.max(UVec2::ONE);
 
         self.game_resolution = game_resolution;
         let GraphicsSystemState::Ready(state) = &mut self.state else {
             return;
         };
+        let target_size = game_target_size(game_resolution);
+        let limit = state.device.limits().max_texture_dimension_2d;
+        assert!(
+            target_size.x <= limit && target_size.y <= limit,
+            "game resolution including overscan exceeds the device texture limit"
+        );
         let mut texture = None;
         if let GraphicsSystemState::Ready(state) = &mut self.state {
             texture = Some(Self::create_game_render_target(
@@ -526,6 +540,8 @@ impl GraphicsSystem {
     fn start_game_render(&mut self, _: &events::AfterSimulation) {
         let ctx = self.context.take();
         self.begin_frame(ctx, "Game render", true);
+        self.ctx
+            .raise_event(geese::notify::flush().with(events::PrepareRender {}));
 
         self.ctx.raise_event(
             geese::notify::flush()
@@ -554,8 +570,8 @@ impl GraphicsSystem {
 
         self.ctx.raise_event(
             geese::notify::flush()
-                .with(geese::notify::flush().with(events::RecordInternalUiRenderingCommands {}))
-                .with(geese::notify::flush().with(events::RecordUiRenderingCommands {})),
+                .with(geese::notify::flush().with(events::RecordUiRenderingCommands {}))
+                .with(geese::notify::flush().with(events::RecordInternalUiRenderingCommands {})),
         );
         self.ctx
             .raise_event(geese::notify::flush().with(events::RenderUi {}));
@@ -670,7 +686,7 @@ impl GeeseSystem for GraphicsSystem {
             ctx,
             state: GraphicsSystemState::Uninitialized,
             context: None,
-            game_resolution: LogicalSize::new(1, 1),
+            game_resolution: UVec2::ONE,
             game_texture_handle: None,
         }
     }

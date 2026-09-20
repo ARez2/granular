@@ -326,27 +326,25 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
 
         {
             let mut renderer = self.ctx.get_mut::<BatchRenderer>();
-            // renderer.get_screen_size()
-            let size =
-                (Vec2::new(GRID_WIDTH as f32, GRID_HEIGHT as f32) * self.display_scale).as_ivec2();
+            let size = Vec2::new(GRID_WIDTH as f32, GRID_HEIGHT as f32) * self.display_scale;
             renderer.draw_quad_with_bottomleft(
-                IVec2::new(0, 0),
+                Vec2::ZERO,
                 size,
                 0.0,
                 palette::named::WHITE,
                 Some(self.display_tex_handle.clone()),
                 -10,
-                DrawSpace::Game,
+                DrawSpace::World,
             );
             renderer.mark_quad_texture_dirty(self.display_tex_handle.clone());
             renderer.draw_quad_with_bottomleft(
-                IVec2::new(0, 0),
+                Vec2::ZERO,
                 size,
                 0.0,
                 palette::named::WHITE,
                 Some(self.debug_tex_handle.clone()),
                 -9,
-                DrawSpace::Game,
+                DrawSpace::World,
             );
         }
     }
@@ -356,15 +354,14 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
             for (rb_handle, _rb_idx) in &self.rapier_rb_to_sim_rb {
                 let pose = self.physics.get_rigidbody_pose(*rb_handle);
                 let pos = pose.0 * self.display_scale;
-                let pos = self.ctx.get::<Camera>().game_screen_to_surface(pos);
                 self.ctx.get_mut::<DebugDraw>().draw_rect_center(
-                    pos.as_ivec2(),
-                    ivec2(20, 20),
+                    pos,
+                    vec2(20.0, 20.0),
                     pose.1,
                     vec4(1.0, 0.0, 0.0, 1.0),
-                    2,
+                    2.0,
                     0,
-                    DrawSpace::Screen,
+                    DrawSpace::World,
                 );
             }
         }

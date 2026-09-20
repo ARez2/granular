@@ -1,5 +1,6 @@
+use super::{RenderView, TextureHandle};
 use encase::{ShaderType, UniformBuffer};
-use glam::{IVec4, Vec2, Vec4};
+use glam::{Mat4, Vec2, Vec4};
 use wgpu::{BindGroup, BindGroupLayout, Device, RenderPipeline, ShaderModule};
 
 use crate::{
@@ -11,8 +12,9 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, ShaderType)]
 struct DisplayParams {
+    surface_pixels_to_clip: Mat4,
     viewport_rect: Vec4,
-    surface_size: Vec2,
+    uv_rect: Vec4,
 }
 
 #[derive(Debug, Clone, Copy, ShaderType)]
@@ -29,6 +31,7 @@ pub(crate) struct GameRenderer {
     display_pipeline: RenderPipeline,
     params_bind_group: (BindGroup, BindGroupLayout),
     game_tex_bind_group: (BindGroup, BindGroupLayout),
+    bound_game_texture: TextureHandle,
     display_params: DisplayParams,
     display_params_bytes: [u8; size_of::<DisplayParams>()],
     display_params_buffer: wgpu::Buffer,
@@ -41,24 +44,60 @@ pub(crate) struct GameRenderer {
     bg_params_buffer: wgpu::Buffer,
 }
 impl GameRenderer {
+    /// Creates a new `DisplayParams` from a `RenderView`
+    fn params(view: RenderView) -> DisplayParams {
+        let viewport = view.game_viewport_surface_px;
+        let uv = view.game_texture_uv_rect();
+        DisplayParams {
+            surface_pixels_to_clip: view.surface_pixels_to_clip(),
+            viewport_rect: Vec4::new(
+                viewport.origin.x as f32,
+                viewport.origin.y as f32,
+                viewport.size.x as f32,
+                viewport.size.y as f32,
+            ),
+            uv_rect: Vec4::new(uv.position.x, uv.position.y, uv.size.x, uv.size.y),
+        }
+    }
+
+    /// A resolution change replaces the texture handle. Rebind before sampling it.
+    fn refresh_game_texture_binding(&mut self) {
+        let graphics = self.ctx.get::<GraphicsSystem>();
+        let handle = graphics.get_game_render_target();
+        if handle == self.bound_game_texture {
+            return;
+        }
+        let assets = self.ctx.get::<AssetSystem>();
+        let texture = assets.get(&handle).expect("game render target must exist");
+        self.game_tex_bind_group.0 =
+            graphics
+                .device()
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("GameRenderer resized game texture"),
+                    layout: &self.game_tex_bind_group.1,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(texture.view()),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(texture.sampler()),
+                        },
+                    ],
+                });
+        self.bound_game_texture = handle;
+    }
+
     fn on_game_render_fully_done(&mut self, _: &crate::graphics::events::DisplayGame) {
+        self.refresh_game_texture_binding();
         let time = {
             self.ctx
                 .get::<TimeSystem>()
                 .time_since_start()
                 .as_secs_f32()
         };
-        let viewport_rect = {
-            let camera = self.ctx.get::<Camera>();
-            camera.get_viewport_rect()
-        };
-        let viewport_rect = IVec4::new(
-            viewport_rect.position.x,
-            viewport_rect.position.y,
-            viewport_rect.size.x,
-            viewport_rect.size.y,
-        )
-        .as_vec4();
+        let view = self.ctx.get::<Camera>().render_view();
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         let surface_size = graphics_sys.get_surface_resolution();
         let context = graphics_sys.render_context();
@@ -106,13 +145,12 @@ impl GameRenderer {
             rpass.draw(0..6, 0..1);
         }
         {
-            self.display_params = DisplayParams {
-                viewport_rect,
-                surface_size: Vec2::new(surface_size.width as f32, surface_size.height as f32),
-            };
+            self.display_params = Self::params(view);
             // Write back any changes to params into the buffer
             let mut writer = UniformBuffer::new(&mut self.display_params_bytes);
-            let _ = writer.write(&self.display_params);
+            writer
+                .write(&self.display_params)
+                .expect("display uniform layout");
             context
                 .queue
                 .write_buffer(&self.display_params_buffer, 0, &self.display_params_bytes);
@@ -141,6 +179,13 @@ impl GameRenderer {
                 profiler_scope.scoped_render_pass("GameRenderer display render pass", rpass_desc);
             #[cfg(not(feature = "trace"))]
             let mut rpass = context.encoder.begin_render_pass(&rpass_desc);
+            let viewport = view.game_viewport_surface_px;
+            rpass.set_scissor_rect(
+                viewport.origin.x,
+                viewport.origin.y,
+                viewport.size.x,
+                viewport.size.y,
+            );
             rpass.set_pipeline(&self.display_pipeline);
             rpass.set_bind_group(0, &self.params_bind_group.0, &[]);
             rpass.set_bind_group(1, &self.game_tex_bind_group.0, &[]);
@@ -249,20 +294,9 @@ impl GeeseSystem for GameRenderer {
         let device = graphics_sys.device();
         let queue = graphics_sys.queue();
 
-        let viewport_rect = { ctx.get::<Camera>().get_viewport_rect() };
-        let viewport_rect = IVec4::new(
-            viewport_rect.position.x,
-            viewport_rect.position.y,
-            viewport_rect.size.x,
-            viewport_rect.size.y,
-        )
-        .as_vec4();
+        let view = ctx.get::<Camera>().render_view();
         let surface_size = graphics_sys.get_surface_resolution();
-
-        let display_params = DisplayParams {
-            viewport_rect,
-            surface_size: Vec2::new(surface_size.width as f32, surface_size.height as f32),
-        };
+        let display_params = Self::params(view);
         let mut display_params_bytes = [0u8; size_of::<DisplayParams>()];
         let display_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("GameRenderer display Params buffer"),
@@ -271,7 +305,9 @@ impl GeeseSystem for GameRenderer {
             mapped_at_creation: false,
         });
         let mut writer = UniformBuffer::new(&mut display_params_bytes);
-        let _ = writer.write(&display_params);
+        writer
+            .write(&display_params)
+            .expect("display uniform layout");
         queue.write_buffer(&display_params_buffer, 0, &display_params_bytes);
 
         let (params_bgl, params_bg) = BindGroupBuilder::new()
@@ -288,11 +324,10 @@ impl GeeseSystem for GameRenderer {
             .build("GameRenderer params buffer", device);
         let params_bind_group = (params_bg, params_bgl);
 
+        let bound_game_texture = graphics_sys.get_game_render_target();
         let (tex_bgl, tex_bg) = {
             let asset_sys = ctx.get::<AssetSystem>();
-            let game_tex = asset_sys
-                .get(&graphics_sys.get_game_render_target())
-                .unwrap();
+            let game_tex = asset_sys.get(&bound_game_texture).unwrap();
             BindGroupBuilder::new()
                 .add_binding_with_resource(
                     0,
@@ -369,6 +404,7 @@ impl GeeseSystem for GameRenderer {
             display_pipeline,
             params_bind_group,
             game_tex_bind_group,
+            bound_game_texture,
             display_params,
             display_params_bytes,
             display_params_buffer,

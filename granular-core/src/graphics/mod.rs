@@ -20,7 +20,15 @@ mod camera;
 pub use camera::Camera;
 
 mod batchrenderer;
-pub use batchrenderer::{BatchRenderer, DrawSpace};
+pub use batchrenderer::BatchRenderer;
+mod draw_space;
+pub use draw_space::DrawSpace;
+mod quad_geometry;
+pub mod view_mapping;
+pub use view_mapping::{
+    Camera2D, CameraMotion, GamePixelPos, Presentation, RenderView, ScalingMode, SurfacePos, UiPos,
+    WorldPos,
+};
 
 mod game_renderer;
 pub(crate) use game_renderer::GameRenderer;

@@ -9,7 +9,6 @@ use granular::{
     simulation::prelude::*,
 };
 use winit::{
-    dpi::LogicalSize,
     keyboard::{KeyCode, ModifiersState},
 };
 
@@ -27,7 +26,7 @@ pub fn run_wasm() -> Result<(), wasm_bindgen::JsValue> {
 
 pub fn run() {
     set_up_logging();
-    let engine = GranularEngine::<Game>::new(LogicalSize::new(640, 480));
+    let engine = GranularEngine::<Game>::new(UVec2::new(640, 480));
     engine.run();
 }
 
@@ -100,7 +99,9 @@ impl Game {
     fn init(&mut self, _event: &events::Initialized) {
         {
             let mut camera = self.ctx.get_mut::<Camera>();
-            camera.set_bottomleft_position(IVec2::new(0, 0));
+            camera.set_bottomleft_position(Vec2::ZERO);
+            camera.set_motion(CameraMotion::SmoothPixel);
+            camera.set_scaling_mode(ScalingMode::Integer);
             drop(camera);
 
             let mut shaders = self.load_shaders();
@@ -180,32 +181,32 @@ impl Game {
 
     fn on_update(&mut self, _: &events::timing::FixedTick<16>) {
         let input = self.ctx.get::<InputSystem>();
-        let vector = input.get_input_vector("cam_left", "cam_right", "cam_up", "cam_down");
+        let vector = input.world_input_direction("cam_left", "cam_right", "cam_up", "cam_down");
         drop(input);
         let mut camera = self.ctx.get_mut::<Camera>();
-        camera.translate(vector * 10);
+        camera.translate(vector * 10.0);
         drop(camera);
     }
 
     fn on_draw(&mut self, _: &granular::graphics::events::RecordGameRenderingCommands) {
         let mut renderer = self.ctx.get_mut::<BatchRenderer>();
         renderer.draw_quad_with_center(
-            IVec2::new(100, 250),
-            IVec2::new(50, 50),
+            Vec2::new(100.0, 250.0),
+            Vec2::new(50.0, 50.0),
             f32::to_radians(-45.0),
             palette::named::WHITE,
             Some(self.texture_handle.clone()),
             -2,
-            DrawSpace::Game,
+            DrawSpace::World,
         );
         renderer.draw_quad_with_center(
-            IVec2::new(50, 300),
-            IVec2::new(50, 50),
+            Vec2::new(50.0, 300.0),
+            Vec2::new(50.0, 50.0),
             0.0,
             palette::named::WHITE,
             Some(self.texture2_handle.clone()),
             0,
-            DrawSpace::Game,
+            DrawSpace::World,
         );
         drop(renderer);
 
