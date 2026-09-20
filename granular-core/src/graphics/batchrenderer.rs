@@ -129,7 +129,7 @@ pub struct BatchRenderer {
 }
 #[profiling::all_functions]
 impl BatchRenderer {
-    const MAX_QUAD_COUNT: usize = 1000;
+    const MAX_QUAD_COUNT: usize = 10000;
     const MAX_VERTEX_COUNT: usize = BatchRenderer::MAX_QUAD_COUNT * 4;
     const MAX_INDEX_COUNT: usize = BatchRenderer::MAX_QUAD_COUNT * 6;
     const DEFAULT_TEXATLAS_WIDTH: u32 = 2048;
@@ -258,6 +258,7 @@ impl BatchRenderer {
             let mut context = graphics_sys.render_context();
 
             // Write the data from vertices to the vertex buffer
+            // if this panics, increase MAX_QUAD_COUNT
             context.queue.write_buffer(
                 &self.vertex_buffer,
                 0,
@@ -681,8 +682,8 @@ impl BatchRenderer {
     }
 
     /// Creates an array of indices, following the typical quad indexing method (0-1-2, 2-3-0)
-    fn create_indices() -> [u16; BatchRenderer::MAX_INDEX_COUNT] {
-        let mut indices: [u16; BatchRenderer::MAX_INDEX_COUNT] =
+    fn create_indices() -> [u32; BatchRenderer::MAX_INDEX_COUNT] {
+        let mut indices: [u32; BatchRenderer::MAX_INDEX_COUNT] =
             [0; BatchRenderer::MAX_INDEX_COUNT];
         let mut offset = 0;
         (0..BatchRenderer::MAX_INDEX_COUNT)
@@ -843,7 +844,7 @@ impl GeeseSystem for BatchRenderer {
 
             vertex_buffer,
             index_buffer,
-            index_format: wgpu::IndexFormat::Uint16,
+            index_format: wgpu::IndexFormat::Uint32,
 
             quads_to_draw: BinaryHeap::new(),
             changed_asset_ids: HashSet::default(),
