@@ -350,20 +350,22 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
     }
 
     fn on_display_game_render(&mut self, _: &graphics::events::RecordUiRenderingCommands) {
-        {
-            for (rb_handle, _rb_idx) in &self.rapier_rb_to_sim_rb {
-                let pose = self.physics.get_rigidbody_pose(*rb_handle);
-                let pos = pose.0 * self.display_scale;
-                self.ctx.get_mut::<DebugDraw>().draw_rect_center(
-                    pos,
-                    vec2(20.0, 20.0),
-                    pose.1,
-                    vec4(1.0, 0.0, 0.0, 1.0),
-                    2.0,
-                    0,
-                    DrawSpace::World,
-                );
-            }
+        let disp_scale = self.display_scale;
+        let mut debug = self.ctx.get_mut::<DebugDraw>();
+
+        for &handle in self.rapier_rb_to_sim_rb.keys() {
+            self.physics
+                .for_each_collider_voxel(handle, |center, size, angle| {
+                    debug.draw_rect_center(
+                        center * disp_scale,
+                        size * disp_scale,
+                        angle,
+                        vec4(0.0, 1.0, 0.2, 0.8),
+                        0.2 * disp_scale,
+                        100,
+                        DrawSpace::World,
+                    );
+                });
         }
     }
 
@@ -458,8 +460,8 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
             let pix_local_pos_in_rb = ivec2(x as i32 - img_center.x, img_center.y - y as i32);
 
             let matname: N = inner_cell.material_name().into();
-            if matname.has_collision() {
-                collider_pixels.push(pix_local_pos_in_rb.as_vec2());
+            if a != 0 && matname.has_collision() {
+                collider_pixels.push(pix_local_pos_in_rb);
             }
 
             self.rb_cells_cpu[idx] = RBCell {
@@ -475,14 +477,14 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         let rb_handle = self.physics.create_rigidbody(
             RigidBodyBuilder::dynamic(),
             position,
-            (45.0f32).to_radians(),
+            (0.0f32).to_radians(),
             &collider_pixels,
         );
 
         self.rapier_rb_to_sim_rb.insert(rb_handle, 0);
         let mut center_of_mass = Vec2::ZERO;
         for pt in &collider_pixels {
-            center_of_mass += pt;
+            center_of_mass += pt.as_vec2();
         }
         center_of_mass /= collider_pixels.len() as f32;
 

@@ -8,9 +8,7 @@ use granular::{
     prelude::*,
     simulation::prelude::*,
 };
-use winit::{
-    keyboard::{KeyCode, ModifiersState},
-};
+use winit::keyboard::{KeyCode, ModifiersState};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -101,7 +99,7 @@ impl Game {
             let mut camera = self.ctx.get_mut::<Camera>();
             camera.set_bottomleft_position(Vec2::ZERO);
             camera.set_motion(CameraMotion::SmoothPixel);
-            camera.set_scaling_mode(ScalingMode::Integer);
+            camera.set_scaling_mode(ScalingMode::KeepAspect);
             drop(camera);
 
             let mut shaders = self.load_shaders();

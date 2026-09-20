@@ -90,7 +90,6 @@ impl SimPhysics {
 
     pub(super) fn step(&mut self) {
         let gravity = vec2(0.0, -9.81);
-        // let gravity = Vec2::ZERO;
         self.physics_pipeline.step(
             gravity,
             &self.integration_params,
@@ -134,19 +133,19 @@ impl SimPhysics {
         rb_builder: RigidBodyBuilder,
         pixel_position: Vec2,
         angle: f32,
-        collider_pixels: &[Vec2],
+        collider_pixels: &[IVec2],
     ) -> RigidBodyHandle {
-        let colshape =
-            ColliderBuilder::voxels_from_points(self.pixvec_to_phys(Vec2::ONE), collider_pixels)
-                .build();
+        let collider =
+            ColliderBuilder::voxels(self.pixvec_to_phys(Vec2::ONE), collider_pixels).build();
 
         let mut pose = Pose2::from_translation(self.pixvec_to_phys(pixel_position));
         pose.rotation = Rot2::from_angle(angle);
-        let rigid_body = rb_builder.pose(pose).build();
 
-        let rb_handle = self.rb_set.insert(rigid_body);
+        let rb_handle = self.rb_set.insert(rb_builder.pose(pose).build());
+
         self.collider_set
-            .insert_with_parent(colshape, rb_handle, &mut self.rb_set);
+            .insert_with_parent(collider, rb_handle, &mut self.rb_set);
+
         rb_handle
     }
 
@@ -154,5 +153,36 @@ impl SimPhysics {
     pub(super) fn get_rigidbody_pose(&self, rb_handle: RigidBodyHandle) -> (Vec2, f32) {
         let rb = &self.rb_set[rb_handle];
         (self.physvec_to_pix(rb.translation()), rb.rotation().angle())
+    }
+
+    pub(super) fn for_each_collider_voxel(
+        &self,
+        rb_handle: RigidBodyHandle,
+        mut visit: impl FnMut(Vec2, Vec2, f32),
+    ) {
+        let rb = &self.rb_set[rb_handle];
+
+        for &handle in rb.colliders() {
+            let collider = &self.collider_set[handle];
+            let Some(voxels) = collider.shape().as_voxels() else {
+                continue;
+            };
+
+            let pose = *rb.position()
+                * *collider
+                    .position_wrt_parent()
+                    .expect("attached collider has a local pose");
+
+            let size_pixels = self.physvec_to_pix(voxels.voxel_size());
+
+            for voxel in voxels.voxels() {
+                if voxel.state.is_empty() {
+                    continue;
+                }
+
+                let center_pixels = self.physvec_to_pix(pose.transform_point(voxel.center));
+                visit(center_pixels, size_pixels, pose.rotation.angle());
+            }
+        }
     }
 }
