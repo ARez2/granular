@@ -28,11 +28,21 @@ use super::{
     Camera, RenderContext, Texture2D, TextureBundle, TextureHandle,
     graphics_system::GraphicsSystem, texture_atlas::DynamicTextureAtlas, vertex::*,
 };
-use crate::graphics::{self, IntoGpuColor};
+use crate::graphics::{self, IntoGpuColor, TextureBundleLoadSettings};
 use crate::{
     assets::{AssetHandle, AssetSystem},
     utils::*,
 };
+
+/// Specifies how to draw the quad.
+pub enum QuadTex {
+    /// Just draws a colored quad
+    None,
+    /// Draws the quad using this texture, tinted by color
+    Texture(TextureHandle),
+    /// Draws a colored circle
+    Circle,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 struct Quad {
@@ -41,7 +51,7 @@ struct Quad {
     pub angle: f32,
     /// If there is a texture set, this tints the texture, otherwise the quad will have this color
     pub color: [f32; 4],
-    pub texture: Option<TextureHandle>,
+    pub texture: TextureHandle,
 }
 
 /// A simple wrapper that stores a quad and a corresponding layer
@@ -122,6 +132,7 @@ pub struct BatchRenderer {
     clear_color: Color,
 
     white_pixel_handle: TextureHandle,
+    circle_tex_handle: TextureHandle,
 
     atlas_bind_group_layout: BindGroupLayout,
     atlasses_dirty: bool,
@@ -186,10 +197,7 @@ impl BatchRenderer {
             let center = quad.topleft - top_left_offset(quad.size, current_draw_space);
             let quad_pts = quad_corners(center, quad.size, quad.angle, current_draw_space);
 
-            let quad_tex = quad
-                .texture
-                .clone()
-                .unwrap_or(self.white_pixel_handle.clone());
+            let quad_tex = quad.texture;
             if self.changed_asset_ids.contains(quad_tex.id()) {
                 let mut prev_atlas = &mut self.texture_atlasses[current_atlas_index].0;
                 // remove the tex from the atlas it is currently in
@@ -424,34 +432,44 @@ impl BatchRenderer {
         size: Vec2,
         angle: f32,
         color: C,
-        texture: Option<AssetHandle<TextureBundle>>,
+        texture: QuadTex,
         layer: i32,
         draw_space: DrawSpace,
     ) {
         assert!(topleft.is_finite() && size.is_finite() && angle.is_finite());
         assert!(size.x >= 0.0 && size.y >= 0.0);
         let mut used_texture_atlas_idx = 0;
-        if let Some(handle) = &texture {
-            let mut has_texture = false;
-            for (idx, (atlas, _)) in self.texture_atlasses.iter().enumerate() {
-                if atlas.contains_texture(handle) {
-                    has_texture = true;
-                    used_texture_atlas_idx = idx;
-                    break;
+        let mut quad_texture;
+        match texture {
+            // the white pixel/ circle is always in the first atlas since we add in in the new() function
+            QuadTex::None => {
+                used_texture_atlas_idx = 0;
+                quad_texture = self.white_pixel_handle.clone();
+            }
+            QuadTex::Circle => {
+                used_texture_atlas_idx = 0;
+                quad_texture = self.circle_tex_handle.clone();
+            }
+            QuadTex::Texture(handle) => {
+                let mut has_texture = false;
+                for (idx, (atlas, _)) in self.texture_atlasses.iter().enumerate() {
+                    if atlas.contains_texture(&handle) {
+                        has_texture = true;
+                        used_texture_atlas_idx = idx;
+                        break;
+                    }
                 }
+                if !has_texture {
+                    self.atlasses_dirty = true;
+                    let texture_size = {
+                        let asset_sys = self.ctx.get::<AssetSystem>();
+                        let tex = asset_sys.get(&handle).unwrap().texture();
+                        UVec2::new(tex.size().width, tex.size().height)
+                    };
+                    self.insert_texture_into_atlas(&handle);
+                }
+                quad_texture = handle;
             }
-            if !has_texture {
-                self.atlasses_dirty = true;
-                let texture_size = {
-                    let asset_sys = self.ctx.get::<AssetSystem>();
-                    let tex = asset_sys.get(handle).unwrap().texture();
-                    UVec2::new(tex.size().width, tex.size().height)
-                };
-                self.insert_texture_into_atlas(handle);
-            }
-        } else {
-            // the white pixel is always in the first atlas since we add in in the new() function
-            used_texture_atlas_idx = 0;
         }
 
         let rgba: [f32; 4] = color.into_gpu_color();
@@ -464,7 +482,7 @@ impl BatchRenderer {
                 size,
                 angle,
                 color: rgba,
-                texture,
+                texture: quad_texture,
             },
         }));
     }
@@ -476,7 +494,7 @@ impl BatchRenderer {
         size: Vec2,
         angle: f32,
         color: C,
-        texture: Option<AssetHandle<TextureBundle>>,
+        texture: QuadTex,
         layer: i32,
         draw_space: DrawSpace,
     ) {
@@ -491,7 +509,7 @@ impl BatchRenderer {
         size: Vec2,
         angle: f32,
         color: C,
-        texture: Option<AssetHandle<TextureBundle>>,
+        texture: QuadTex,
         layer: i32,
         draw_space: DrawSpace,
     ) {
@@ -724,6 +742,19 @@ impl GeeseSystem for BatchRenderer {
         .with(Self::on_ui_render_done);
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
+        let circle_tex_handle = {
+            let mut asset_sys = ctx.get_mut::<AssetSystem>();
+            asset_sys
+                .load::<TextureBundle>(
+                    asset_source!("../assets/circle.png"),
+                    TextureBundleLoadSettings {
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+        };
+
         let graphics_sys = ctx.get::<GraphicsSystem>();
         let device = graphics_sys.device();
 
@@ -820,11 +851,14 @@ impl GeeseSystem for BatchRenderer {
         let white_pixel_handle = {
             let mut asset_sys = ctx.get_mut::<AssetSystem>();
             let white_pixel_handle = asset_sys.register(white_pixel);
-            texture_atlasses[0]
-                .0
-                .add_texture(white_pixel_handle.clone(), UVec2::new(1, 1));
             white_pixel_handle
         };
+        texture_atlasses[0]
+            .0
+            .add_texture(white_pixel_handle.clone(), UVec2::new(1, 1));
+        texture_atlasses[0]
+            .0
+            .add_texture(circle_tex_handle.clone(), UVec2::new(512, 512));
 
         let shader_handle = ctx
             .get_mut::<AssetSystem>()
@@ -862,6 +896,7 @@ impl GeeseSystem for BatchRenderer {
             clear_color: Color::BLACK,
 
             white_pixel_handle,
+            circle_tex_handle,
 
             atlas_bind_group_layout: atlas_bgl,
             atlasses_dirty: false,

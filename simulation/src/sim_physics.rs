@@ -155,33 +155,50 @@ impl SimPhysics {
         (self.physvec_to_pix(rb.translation()), rb.rotation().angle())
     }
 
-    pub(super) fn for_each_collider_voxel(
+    pub(super) fn draw_each_collider<T>(
         &self,
-        rb_handle: RigidBodyHandle,
-        mut visit: impl FnMut(Vec2, Vec2, f32),
+        target: &mut T,
+        mut draw_quad_center: impl FnMut(&mut T, Vec2, Vec2, f32),
+        mut draw_circle: impl FnMut(&mut T, Vec2, f32),
+        mut draw_polyline: impl FnMut(&mut T, &[Vec2]),
     ) {
-        let rb = &self.rb_set[rb_handle];
+        for (_, collider) in self.collider_set.iter() {
+            let pose = collider.position();
+            let center_pixels = self.physvec_to_pix(pose.translation);
+            let angle = pose.rotation.angle();
 
-        for &handle in rb.colliders() {
-            let collider = &self.collider_set[handle];
-            let Some(voxels) = collider.shape().as_voxels() else {
-                continue;
-            };
+            if let Some(voxels) = collider.shape().as_voxels() {
+                let size_pixels = self.physvec_to_pix(voxels.voxel_size());
 
-            let pose = *rb.position()
-                * *collider
-                    .position_wrt_parent()
-                    .expect("attached collider has a local pose");
+                for voxel in voxels.voxels() {
+                    if voxel.state.is_empty() {
+                        continue;
+                    }
 
-            let size_pixels = self.physvec_to_pix(voxels.voxel_size());
+                    let voxel_center_pixels =
+                        self.physvec_to_pix(pose.transform_point(voxel.center));
 
-            for voxel in voxels.voxels() {
-                if voxel.state.is_empty() {
-                    continue;
+                    draw_quad_center(target, voxel_center_pixels, size_pixels, angle);
                 }
+            } else if let Some(ball) = collider.shape().as_ball() {
+                draw_circle(target, center_pixels, self.phys_to_pix(ball.radius));
+            } else if let Some(cube) = collider.shape().as_cuboid() {
+                draw_quad_center(
+                    target,
+                    center_pixels,
+                    self.physvec_to_pix(cube.half_extents * 2.0),
+                    angle,
+                );
+            } else if let Some(polyline) = collider.shape().as_polyline() {
+                for segment in polyline.indices() {
+                    let points = segment.map(|index| {
+                        self.physvec_to_pix(
+                            pose.transform_point(polyline.vertices()[index as usize]),
+                        )
+                    });
 
-                let center_pixels = self.physvec_to_pix(pose.transform_point(voxel.center));
-                visit(center_pixels, size_pixels, pose.rotation.angle());
+                    draw_polyline(target, &points);
+                }
             }
         }
     }

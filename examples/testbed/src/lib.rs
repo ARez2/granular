@@ -193,7 +193,7 @@ impl Game {
             Vec2::new(50.0, 50.0),
             f32::to_radians(-45.0),
             palette::named::WHITE,
-            Some(self.texture_handle.clone()),
+            QuadTex::Texture(self.texture_handle.clone()),
             -2,
             DrawSpace::World,
         );
@@ -202,7 +202,7 @@ impl Game {
             Vec2::new(50.0, 50.0),
             0.0,
             palette::named::WHITE,
-            Some(self.texture2_handle.clone()),
+            QuadTex::Texture(self.texture2_handle.clone()),
             0,
             DrawSpace::World,
         );

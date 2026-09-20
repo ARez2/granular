@@ -332,7 +332,7 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
                 size,
                 0.0,
                 palette::named::WHITE,
-                Some(self.display_tex_handle.clone()),
+                QuadTex::Texture(self.display_tex_handle.clone()),
                 -10,
                 DrawSpace::World,
             );
@@ -342,10 +342,11 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
                 size,
                 0.0,
                 palette::named::WHITE,
-                Some(self.debug_tex_handle.clone()),
+                QuadTex::Texture(self.debug_tex_handle.clone()),
                 -9,
                 DrawSpace::World,
             );
+            renderer.mark_quad_texture_dirty(self.debug_tex_handle.clone());
         }
     }
 
@@ -353,20 +354,39 @@ impl<N: MatName, M: MaterialShaderStruct, C: CellStruct> Simulation<N, M, C> {
         let disp_scale = self.display_scale;
         let mut debug = self.ctx.get_mut::<DebugDraw>();
 
-        for &handle in self.rapier_rb_to_sim_rb.keys() {
-            self.physics
-                .for_each_collider_voxel(handle, |center, size, angle| {
-                    debug.draw_rect_center(
-                        center * disp_scale,
-                        size * disp_scale,
-                        angle,
-                        vec4(0.0, 1.0, 0.2, 0.8),
-                        0.2 * disp_scale,
-                        100,
-                        DrawSpace::World,
-                    );
-                });
-        }
+        let color = vec4(0.0, 1.0, 0.2, 0.8);
+        let thickness = 0.2 * disp_scale;
+        let layer = 100;
+        let draw_space = DrawSpace::World;
+
+        self.physics.draw_each_collider(
+            &mut *debug,
+            |debug, center, size, angle| {
+                debug.draw_rect_center(
+                    center * disp_scale,
+                    size * disp_scale,
+                    angle,
+                    color,
+                    thickness,
+                    layer,
+                    draw_space,
+                );
+            },
+            |debug, center, radius| {
+                debug.draw_circle(
+                    center * disp_scale,
+                    radius * disp_scale,
+                    color,
+                    layer,
+                    draw_space,
+                );
+            },
+            |debug, points| {
+                let scaled: Vec<Vec2> = points.iter().map(|&point| point * disp_scale).collect();
+
+                debug.draw_polyline(&scaled, color, thickness, layer, draw_space);
+            },
+        );
     }
 
     fn fixed_step(&mut self, _: &crate::events::timing::FixedTick<16>) {

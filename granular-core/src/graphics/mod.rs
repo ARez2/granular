@@ -20,7 +20,7 @@ mod camera;
 pub use camera::Camera;
 
 mod batchrenderer;
-pub use batchrenderer::BatchRenderer;
+pub use batchrenderer::{BatchRenderer, QuadTex};
 mod draw_space;
 pub use draw_space::DrawSpace;
 mod quad_geometry;

@@ -50,6 +50,13 @@ fn enrich_naga_error(mut error: String) -> String {
         );
     }
 
+    if error.contains("condition") && error.contains("is not a boolean scalar") {
+        hints.push(
+            "A comparison operator of a vector in WGSL also returns a vector. \
+        Try 'all(a == b)' or 'select(a != b)'.",
+        )
+    }
+
     if !hints.is_empty() {
         error.push_str("\n\n");
         for hint in hints {

@@ -44,9 +44,9 @@ pub mod prelude {
         assets::{self, AssetHandle},
         events,
         graphics::{
-            self, CameraMotion, DebugDraw, DrawSpace, GamePixelPos, GraphicsSystem, RenderView,
-            ScalingMode, SurfacePos, Texture2D, TextureBundle, TextureBundleLoadSettings, UiPos,
-            WindowSystem, WorldPos,
+            self, CameraMotion, DebugDraw, DrawSpace, GamePixelPos, GraphicsSystem, QuadTex,
+            RenderView, ScalingMode, SurfacePos, Texture2D, TextureBundle,
+            TextureBundleLoadSettings, UiPos, WindowSystem, WorldPos,
         },
         input_system::*,
         rect::{PixelRect, Rect},

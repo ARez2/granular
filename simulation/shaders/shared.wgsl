@@ -129,7 +129,7 @@ fn print_value_with_font_size(
     );
     if is_digit > 0.5 {
         let output_col = mix(default_color, font_color, is_digit);
-        textureStore(debug_tex0, fragCoord, output_col);
+        textureStore(debug_tex0, simcoord_to_texel(fragCoord), output_col);
     }
 }
 

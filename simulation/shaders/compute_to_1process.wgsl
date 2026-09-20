@@ -115,12 +115,13 @@ fn compose_grid(@builtin(global_invocation_id) gid: vec3u) {
         let rbcell = &rb_cells[rbcell_idx];
 
 
-        // let rb = rbs[rbcell.rb_index];
-        // let world_pos = rb_cell_world_pos(rbcell.rb_local_pos, rb.angle_degrees, rb.position, rb.center_of_mass);
-        // let p = vec2f(rbcell.rb_local_pos) / vec2f(24.0, 32.0);
-        // textureStore(debug_tex0, vec2i(gid.xy), vec4f(p, 0.0, 1.0));
+        let rb = rbs[rbcell.rb_index];
+        let world_pos = rb_cell_world_pos(rbcell.rb_local_pos, rb.angle_degrees, rb.position, rb.center_of_mass);
+        let p = vec2f(rbcell.rb_local_pos) / vec2f(24.0, 32.0);
+        if all(vec2i(gid.xy) == vec2i(rb.position)) {
+            textureStore(debug_tex0, simcoord_to_texel(vec2i(gid.xy)), vec4f(1.0, 0.0, 0.0, 0.5));
+        }
         // print_value(vec2i(gid.xy), vec2i(0, 15), 12.0, 1, vec4f(1.0, 0.0, 0.0, 1.0));
-
         
 
         // if the RB material isnt empty, overwrite the world material with the RB material

@@ -1,7 +1,7 @@
 use super::quad_geometry::{quad_corners, top_left_offset};
 use crate::{
     BatchRenderer,
-    graphics::{DrawSpace, IntoGpuColor},
+    graphics::{DrawSpace, IntoGpuColor, QuadTex},
     utils::*,
 };
 use glam::prelude::*;
@@ -13,6 +13,13 @@ enum DebugDrawCommand {
         to: Vec2,
         color: [f32; 4],
         thickness: f32,
+        layer: i32,
+        draw_space: DrawSpace,
+    },
+    Circle {
+        center: Vec2,
+        radius: f32,
+        color: [f32; 4],
         layer: i32,
         draw_space: DrawSpace,
     },
@@ -125,6 +132,23 @@ impl DebugDraw {
         });
     }
 
+    pub fn draw_circle<C: IntoGpuColor>(
+        &mut self,
+        center: Vec2,
+        radius: f32,
+        color: C,
+        layer: i32,
+        draw_space: DrawSpace,
+    ) {
+        self.commands.push(DebugDrawCommand::Circle {
+            center,
+            radius,
+            color: color.into_gpu_color(),
+            layer,
+            draw_space,
+        });
+    }
+
     fn on_record(&mut self, _: &crate::graphics::events::RecordInternalUiRenderingCommands) {
         let mut batch_renderer = self.ctx.get_mut::<BatchRenderer>();
 
@@ -158,7 +182,24 @@ impl DebugDraw {
                         size,
                         angle,
                         *color,
-                        None,
+                        QuadTex::None,
+                        *layer,
+                        *draw_space,
+                    );
+                }
+                DebugDrawCommand::Circle {
+                    center,
+                    radius,
+                    color,
+                    layer,
+                    draw_space,
+                } => {
+                    batch_renderer.draw_quad_with_center(
+                        *center,
+                        vec2(*radius, *radius),
+                        0.0,
+                        *color,
+                        QuadTex::Circle,
                         *layer,
                         *draw_space,
                     );
