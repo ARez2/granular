@@ -168,7 +168,7 @@ impl SimPhysics {
         let bounds_size = bounds_max - bounds_min;
 
         // How much to grow the collider on each side
-        const GROW_BY_SIM_PIXELS: f32 = 1.0;
+        const GROW_BY_SIM_PIXELS: f32 = 0.0;
 
         let required_scale = (bounds_size + Vec2::splat(2.0 * GROW_BY_SIM_PIXELS)) / bounds_size;
         let scale = Vec2::splat(required_scale.max_element());

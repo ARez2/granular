@@ -32,10 +32,6 @@ fn user_init_cell(cpu_cell: Cell, cell_has_pixelscene_color: bool, cell_pos: vec
         color = material.color;
     }
 
-    if cell_pos.x >= 65 && cell_pos.x <= 70 && cell_pos.y == 50 && cpu_cell.material == MAT_SAND {
-        color = vec4f(1.0, 0.0, 0.0, 1.0);
-    }
-
     return Cell(cpu_cell.material, cpu_cell.velocity, 0.1234, color);
 }
 

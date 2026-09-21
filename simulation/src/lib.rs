@@ -9,7 +9,7 @@ use rapier2d::dynamics::{RigidBodyBuilder, RigidBodyHandle};
 use rustc_hash::FxHashMap as HashMap;
 #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
 use std::path::PathBuf;
-use std::{borrow::Cow, fmt::Display};
+use std::{borrow::Cow, fmt::Display, ops::Range};
 use web_time::{Duration, Instant};
 use wgpu::{Buffer, util::DeviceExt};
 use wgsl_preprocessor::include_file;
@@ -187,6 +187,7 @@ pub struct Simulation<N: MatName, M: MaterialStruct, C: CellStruct> {
     rb_cells_cpu: Box<[RBCell<C>]>,
     /// GPU storage for the RBCell's
     rb_cells_buffer: wgpu::Buffer,
+    rb_cells_dirty_range: Range<usize>,
     /// CPU side storage of the GPU representation of Rigidbodies
     rbs: Vec<RB>,
     /// GPU storage for the RB's
@@ -309,15 +310,20 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
                     .write(&self.rbs)
                     .expect("encase serialization failed");
             }
-            {
-                // Write RBCell buffer to the sim buffer
+            if !self.rb_cells_dirty_range.is_empty() {
+                let dirty = &self.rb_cells_cpu[self.rb_cells_dirty_range.clone()];
+                let offset_bytes = self.rb_cells_cpu[0..self.rb_cells_dirty_range.start].size();
+                let size_bytes = dirty.size();
+
                 let mut staging = context
                     .queue
-                    .write_buffer_with(&self.rb_cells_buffer, 0, self.rb_cells_cpu.size())
+                    .write_buffer_with(&self.rb_cells_buffer, offset_bytes.get(), size_bytes)
                     .expect("Invalid buffer write");
+
                 encase::StorageBuffer::new(EncaseStaging(&mut staging))
-                    .write(&self.rb_cells_cpu)
+                    .write(dirty)
                     .expect("encase serialization failed");
+                self.rb_cells_dirty_range = Range::default();
             }
         }
 
@@ -462,6 +468,8 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
         let mut last_idx = 0;
         let mut collider_pixels = vec![];
 
+        let start_index = self.rbs.last().map_or(0, |v| v.rbcells_end);
+
         let img_center = ivec2(image.width() as i32 / 2, image.height() as i32 / 2);
 
         for (idx, (x, y, pixel)) in image.enumerate_pixels().enumerate() {
@@ -482,13 +490,13 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
                 collider_pixels.push((pix_local_pos_in_rb, density));
             }
 
-            self.rb_cells_cpu[idx] = RBCell {
+            self.rb_cells_cpu[start_index as usize + idx] = RBCell {
                 inner_cell,
                 rb_local_pos: pix_local_pos_in_rb,
                 rb_index: 0,
                 flags,
             };
-            last_idx = idx;
+            last_idx = start_index as usize + idx;
         }
 
         let position = vec2(50.0, 30.0);
@@ -504,9 +512,14 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
         self.rbs.push(RB {
             position,
             angle_degrees: 0.0,
-            rbcells_start: 0,
+            rbcells_start: start_index,
             rbcells_end: last_idx as u32,
         });
+        if self.rb_cells_dirty_range.is_empty() {
+            self.rb_cells_dirty_range = (start_index as usize)..last_idx;
+        } else {
+            self.rb_cells_dirty_range.end = std::cmp::max(self.rb_cells_dirty_range.end, last_idx);
+        }
 
         Ok(())
     }
@@ -1372,6 +1385,7 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> GeeseSystem for Simulation<N,
             physics: SimPhysics::new(50),
             rb_cells_cpu,
             rb_cells_buffer,
+            rb_cells_dirty_range: Range::default(),
             rbs,
             rbs_buffer,
             rapier_rb_to_sim_rb: HashMap::default(),

@@ -34,6 +34,7 @@ cargo run-testbed-trace
 - Write some usage information (simulation setup + requirements)
 - Maybe provide a working webpage with the testbed running?
 - What about camera zoom < 0?
+- Is Rigidbody collision shape enlargement neccessary?
 
 **Low priority:**
 - Dynamically remove textures from `BatchRenderer` texture atlasses
