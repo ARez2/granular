@@ -353,6 +353,15 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
         }
     }
 
+    pub fn update_rb_force(&mut self, delta: Vec2) {
+        if self.rbs.is_empty() {
+            return;
+        }
+        self.physics
+            .get_rigidbody(*self.rapier_rb_to_sim_rb.keys().nth(0).unwrap())
+            .set_linvel(delta, true);
+    }
+
     fn on_display_game_render(&mut self, _: &graphics::events::RecordUiRenderingCommands) {
         let disp_scale = self.display_scale;
         let mut debug = self.ctx.get_mut::<DebugDraw>();

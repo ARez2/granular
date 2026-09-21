@@ -183,8 +183,10 @@ impl Game {
         let vector = input.world_input_direction("cam_left", "cam_right", "cam_up", "cam_down");
         drop(input);
         let mut camera = self.ctx.get_mut::<Camera>();
-        camera.translate(vector * 10.0);
+        // camera.translate(vector * 10.0);
         drop(camera);
+        let mut sim = self.ctx.get_mut::<MySimulation>();
+        sim.update_rb_force(vector * 0.5);
     }
 
     fn on_draw(&mut self, _: &granular::graphics::events::RecordGameRenderingCommands) {

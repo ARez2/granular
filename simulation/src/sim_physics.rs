@@ -184,7 +184,8 @@ impl SimPhysics {
         let mut pose = Pose2::from_translation(self.pixvec_to_phys(pixel_position));
         pose.rotation = Rot2::from_angle(angle);
 
-        let rb_handle = self.rb_set.insert(rb_builder.pose(pose).build());
+        let rb = rb_builder.pose(pose).build();
+        let rb_handle = self.rb_set.insert(rb);
 
         self.collider_set
             .insert_with_parent(collider, rb_handle, &mut self.rb_set);
@@ -196,6 +197,10 @@ impl SimPhysics {
     pub(super) fn get_rigidbody_pose(&self, rb_handle: RigidBodyHandle) -> (Vec2, f32) {
         let rb = &self.rb_set[rb_handle];
         (self.physvec_to_pix(rb.translation()), rb.rotation().angle())
+    }
+
+    pub(super) fn get_rigidbody(&mut self, handle: RigidBodyHandle) -> &mut RigidBody {
+        &mut self.rb_set[handle]
     }
 
     pub(super) fn draw_each_collider<T>(

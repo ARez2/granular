@@ -35,6 +35,7 @@ cargo run-testbed-trace
 - Maybe provide a working webpage with the testbed running?
 - What about camera zoom < 0?
 - Is Rigidbody collision shape enlargement neccessary?
+- Create Rigidbodies from data images (with different materials). Maybe have a HashMap of pixel color -> MatName, or just use the pixel color value as index into matname
 
 **Low priority:**
 - Dynamically remove textures from `BatchRenderer` texture atlasses
