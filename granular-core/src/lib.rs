@@ -46,7 +46,7 @@ pub mod prelude {
         graphics::{
             self, CameraMotion, DebugDraw, DrawSpace, GamePixelPos, GraphicsSystem, QuadTex,
             RenderView, ScalingMode, SurfacePos, Texture2D, TextureBundle,
-            TextureBundleLoadSettings, UiPos, WindowSystem, WorldPos,
+            TextureBundleLoadSettings, UiPos, WindowSystem, WorldPos, validate_wgsl,
         },
         input_system::*,
         rect::{PixelRect, Rect},

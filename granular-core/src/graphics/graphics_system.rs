@@ -24,7 +24,7 @@ use winit::{
 use super::WindowSystem;
 use crate::{
     AssetSystem, CustomWinitEvent,
-    graphics::{Texture2D, TextureBundle, TextureHandle},
+    graphics::{Texture2D, TextureBundle, TextureHandle, validate_wgsl},
     utils::*,
 };
 
@@ -212,18 +212,17 @@ impl GraphicsSystem {
             let mut asset_sys = self.ctx.get_mut::<AssetSystem>();
             // the generic here is technically optional but its clearer this way
             asset_sys.add_loader::<wgpu::ShaderModule>(move |bytes, _settings| {
-                let scope = dev.push_error_scope(wgpu::ErrorFilter::Validation);
+                let source = String::from_utf8(bytes)?;
+
+                if let Err(e) = validate_wgsl(&source) {
+                    error!("Error while loading shader module: {}", e);
+                    return Err(anyhow::anyhow!(e));
+                }
 
                 let module = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: None,
-                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(String::from_utf8(
-                        bytes,
-                    )?)),
+                    source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(source)),
                 });
-
-                if pollster::block_on(scope.pop()).is_some() {
-                    return Err(anyhow::anyhow!("Error while reloading asset!"));
-                }
 
                 Ok(module)
             });

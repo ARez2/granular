@@ -31,7 +31,6 @@ strum.workspace = true
 num_enum.workspace = true
 # Profiling
 profiling.workspace = true
-naga = { version = "30.0.1", features = ["wgsl-in"] }
 rapier2d = "0.35.3"
 
 

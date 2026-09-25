@@ -1143,9 +1143,9 @@ dependencies = [
  "guillotiere",
  "image 0.24.9",
  "log",
+ "naga",
  "notify",
  "palette",
- "pollster",
  "proc_macros",
  "profiling",
  "rayon",
@@ -2417,12 +2417,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pollster"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22686f4785f02a4fcc856d3b3bb19bf6c8160d103f7a99cc258bddd0251dc7f2"
-
-[[package]]
 name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3059,7 +3053,6 @@ dependencies = [
  "glam 0.33.7",
  "granular-core",
  "image 0.25.10",
- "naga",
  "num_enum",
  "palette",
  "proc_macros",

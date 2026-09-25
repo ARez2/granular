@@ -15,7 +15,6 @@ trace = [
 
 [dependencies]
 proc_macros.workspace = true
-pollster = "0.3.0"
 anyhow.workspace = true
 geese.workspace = true
 wgpu.workspace = true
@@ -33,6 +32,7 @@ guillotiere = "0.7.0"
 encase.workspace = true
 # Profiling
 profiling.workspace = true
+naga = { version = "30.0.1", features = ["wgsl-in"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 notify = "6.1.1"
