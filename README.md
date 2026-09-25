@@ -98,6 +98,15 @@ impl Game {
             2,
             DrawSpace::World,
         );
+
+        debug_draw.draw_circle(
+            vec2(-125.0, 50.0),
+            125.0,
+            9.0,
+            palette::named::BLUEVIOLET,
+            2,
+            DrawSpace::World,
+        );
     }
 }
 impl GeeseSystem for Game {

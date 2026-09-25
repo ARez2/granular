@@ -388,6 +388,7 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
                 debug.draw_circle(
                     center * disp_scale,
                     radius * disp_scale,
+                    thickness,
                     color,
                     layer,
                     draw_space,

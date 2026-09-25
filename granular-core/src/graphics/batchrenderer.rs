@@ -6,8 +6,7 @@ use super::{
     quad_geometry::{quad_corners, top_left_offset},
 };
 use bytemuck_derive::{Pod, Zeroable};
-use glam::f32::Mat4;
-use glam::{UVec2, Vec2};
+use glam::prelude::*;
 use palette::Srgba;
 use palette::cast::ComponentsInto;
 use rustc_hash::FxHashMap as HashMap;
@@ -25,8 +24,8 @@ use wgpu::{
 use winit::dpi::PhysicalSize;
 
 use super::{
-    Camera, RenderContext, Texture2D, TextureBundle, TextureHandle,
-    graphics_system::GraphicsSystem, texture_atlas::DynamicTextureAtlas, vertex::*,
+    Camera, RenderContext, Texture2D, TextureBundle, TextureHandle, batchquadvertex::*,
+    graphics_system::GraphicsSystem, texture_atlas::DynamicTextureAtlas,
 };
 use crate::graphics::{self, IntoGpuColor, TextureBundleLoadSettings};
 use crate::{
@@ -35,23 +34,32 @@ use crate::{
 };
 
 /// Specifies how to draw the quad.
+#[derive(Debug, Clone, PartialEq)]
 pub enum QuadTex {
     /// Just draws a colored quad
     None,
     /// Draws the quad using this texture, tinted by color
     Texture(TextureHandle),
+}
+/// Specifies how to draw the quad.
+#[derive(Debug, Clone, PartialEq)]
+enum InternalQuadTex {
+    /// Uses the single white pixel texture
+    None(TextureHandle),
+    /// Draws the quad using this texture, tinted by color
+    Texture(TextureHandle),
     /// Draws a colored circle
-    Circle,
+    Circle { normalized_thickness: f32 },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct Quad {
-    pub topleft: Vec2,
-    pub size: Vec2,
-    pub angle: f32,
+    topleft: Vec2,
+    size: Vec2,
+    angle: f32,
     /// If there is a texture set, this tints the texture, otherwise the quad will have this color
-    pub color: [f32; 4],
-    pub texture: TextureHandle,
+    color: [f32; 4],
+    texture: InternalQuadTex,
 }
 
 /// A simple wrapper that stores a quad and a corresponding layer
@@ -119,7 +127,7 @@ pub struct BatchRenderer {
     /// This is cleared inside of `end_frame`
     changed_asset_ids: HashSet<u64>,
     batches: Vec<Batch>,
-    vertices_to_draw: Vec<Vertex>,
+    vertices_to_draw: Vec<QuadVertex>,
 
     globals_bind_group_layout: BindGroupLayout,
     world_game_bind_group: BindGroup,
@@ -132,7 +140,6 @@ pub struct BatchRenderer {
     clear_color: Color,
 
     white_pixel_handle: TextureHandle,
-    circle_tex_handle: TextureHandle,
 
     atlas_bind_group_layout: BindGroupLayout,
     atlasses_dirty: bool,
@@ -198,43 +205,64 @@ impl BatchRenderer {
             let center = quad.topleft - top_left_offset(quad.size, current_draw_space);
             let quad_pts = quad_corners(center, quad.size, quad.angle, current_draw_space);
 
-            let quad_tex = quad.texture;
-            if self.changed_asset_ids.contains(quad_tex.id()) {
-                let mut prev_atlas = &mut self.texture_atlasses[current_atlas_index].0;
-                // remove the tex from the atlas it is currently in
-                prev_atlas.remove_texture(quad_tex.clone());
-                // and find a new atlas which has enough space to fit the texture (since texture size could have changed, this might not be the same atlas)
-                current_atlas_index = self.insert_texture_into_atlas(&quad_tex);
-            }
-            let (atlas_tex_coords_start, atlas_tex_coords_end) = self.texture_atlasses
-                [current_atlas_index]
-                .0
-                .get_texture_coords(&quad_tex)
-                .expect("Texture coords should exist for each quad");
-
             // Add the vertices of the quad to vertices, respecting size and attributes
             self.vertices_to_draw.reserve(4);
-            // Top left
-            self.vertices_to_draw.push(Vertex::new(
-                quad_pts[0],
-                quad.color,
-                atlas_tex_coords_start,
-            ));
-            // Bottom left
-            self.vertices_to_draw.push(Vertex::new(
-                quad_pts[1],
-                quad.color,
-                Vec2::new(atlas_tex_coords_start.x, atlas_tex_coords_end.y),
-            ));
-            // Bottom right
-            self.vertices_to_draw
-                .push(Vertex::new(quad_pts[2], quad.color, atlas_tex_coords_end));
-            // Top right
-            self.vertices_to_draw.push(Vertex::new(
-                quad_pts[3],
-                quad.color,
-                Vec2::new(atlas_tex_coords_end.x, atlas_tex_coords_start.y),
-            ));
+            #[allow(clippy::needless_range_loop)]
+            for v in 0..4 {
+                let vertex_pos = quad_pts[v];
+                let mut vertex_tex_coords = Vec2::ZERO;
+
+                let quad_shape = match &quad.texture {
+                    InternalQuadTex::None(handle) | InternalQuadTex::Texture(handle) => {
+                        if self.changed_asset_ids.contains(handle.id()) {
+                            let mut prev_atlas = &mut self.texture_atlasses[current_atlas_index].0;
+                            // remove the tex from the atlas it is currently in
+                            prev_atlas.remove_texture(handle.clone());
+                            // and find a new atlas which has enough space to fit the texture (since texture size could have changed, this might not be the same atlas)
+                            current_atlas_index = self.insert_texture_into_atlas(handle);
+                        }
+                        let (atlas_tex_coords_start, atlas_tex_coords_end) = self.texture_atlasses
+                            [current_atlas_index]
+                            .0
+                            .get_texture_coords(handle)
+                            .expect("Texture coords should exist for each quad");
+
+                        vertex_tex_coords = match v {
+                            // Top left
+                            0 => atlas_tex_coords_start,
+                            // Bottom left
+                            1 => Vec2::new(atlas_tex_coords_start.x, atlas_tex_coords_end.y),
+                            // Bottom right
+                            2 => atlas_tex_coords_end,
+                            // Top right
+                            3 => Vec2::new(atlas_tex_coords_end.x, atlas_tex_coords_start.y),
+                            _ => unreachable!(),
+                        };
+
+                        VertexShape::Textured {}
+                    }
+                    InternalQuadTex::Circle {
+                        normalized_thickness,
+                    } => {
+                        vertex_tex_coords = quad_corners(
+                            Vec2::ZERO,
+                            Vec2::ONE * 2.0,
+                            0.0,
+                            DrawSpace::SurfacePixels,
+                        )[v];
+                        VertexShape::Circle {
+                            thickness: *normalized_thickness,
+                        }
+                    }
+                };
+
+                self.vertices_to_draw.push(QuadVertex::new(
+                    vertex_pos,
+                    quad.color,
+                    vertex_tex_coords,
+                    quad_shape,
+                ));
+            }
 
             first_iteration = false;
             previous_layer = current_layer;
@@ -440,16 +468,11 @@ impl BatchRenderer {
         assert!(topleft.is_finite() && size.is_finite() && angle.is_finite());
         assert!(size.x >= 0.0 && size.y >= 0.0);
         let mut used_texture_atlas_idx = 0;
-        let mut quad_texture;
-        match texture {
+        let mut internal_tex = match texture {
             // the white pixel/ circle is always in the first atlas since we add in in the new() function
             QuadTex::None => {
                 used_texture_atlas_idx = 0;
-                quad_texture = self.white_pixel_handle.clone();
-            }
-            QuadTex::Circle => {
-                used_texture_atlas_idx = 0;
-                quad_texture = self.circle_tex_handle.clone();
+                InternalQuadTex::None(self.white_pixel_handle.clone())
             }
             QuadTex::Texture(handle) => {
                 let mut has_texture = false;
@@ -469,9 +492,9 @@ impl BatchRenderer {
                     };
                     self.insert_texture_into_atlas(&handle);
                 }
-                quad_texture = handle;
+                InternalQuadTex::Texture(handle)
             }
-        }
+        };
 
         let rgba: [f32; 4] = color.into_gpu_color();
         self.quads_to_draw.push(std::cmp::Reverse(BatchQuadEntry {
@@ -483,7 +506,7 @@ impl BatchRenderer {
                 size,
                 angle,
                 color: rgba,
-                texture: quad_texture,
+                texture: internal_tex,
             },
         }));
     }
@@ -527,6 +550,42 @@ impl BatchRenderer {
                 break;
             }
         }
+    }
+
+    /// Records a new circle that needs to be drawn this frame
+    pub fn draw_circle<C: IntoGpuColor>(
+        &mut self,
+        center: Vec2,
+        radius: f32,
+        thickness_px: f32,
+        color: C,
+        layer: i32,
+        draw_space: DrawSpace,
+    ) {
+        let size = vec2(radius, radius);
+        let topleft = center + top_left_offset(size, draw_space);
+
+        let normalized_thickness = if radius == 0.0 {
+            0.0
+        } else {
+            thickness_px / radius
+        };
+
+        let rgba: [f32; 4] = color.into_gpu_color();
+        self.quads_to_draw.push(std::cmp::Reverse(BatchQuadEntry {
+            layer,
+            draw_space,
+            used_texture_atlas_idx: 0,
+            quad: Quad {
+                topleft,
+                size,
+                angle: 0.0,
+                color: rgba,
+                texture: InternalQuadTex::Circle {
+                    normalized_thickness,
+                },
+            },
+        }));
     }
 
     fn insert_texture_into_atlas(&mut self, handle: &TextureHandle) -> usize {
@@ -743,25 +802,12 @@ impl GeeseSystem for BatchRenderer {
         .with(Self::on_ui_render_done);
 
     fn new(mut ctx: geese::GeeseContextHandle<Self>) -> Self {
-        let circle_tex_handle = {
-            let mut asset_sys = ctx.get_mut::<AssetSystem>();
-            asset_sys
-                .load::<TextureBundle>(
-                    asset_source!("../assets/circle.png"),
-                    TextureBundleLoadSettings {
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-        };
-
         let graphics_sys = ctx.get::<GraphicsSystem>();
         let device = graphics_sys.device();
 
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("BatchRenderer vertex buffer"),
-            size: (BatchRenderer::MAX_VERTEX_COUNT * size_of::<Vertex>()) as u64,
+            size: (BatchRenderer::MAX_VERTEX_COUNT * size_of::<QuadVertex>()) as u64,
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -856,9 +902,6 @@ impl GeeseSystem for BatchRenderer {
         texture_atlasses[0]
             .0
             .add_texture(white_pixel_handle.clone(), UVec2::new(1, 1));
-        texture_atlasses[0]
-            .0
-            .add_texture(circle_tex_handle.clone(), UVec2::new(512, 512));
 
         let shader_handle = ctx
             .get_mut::<AssetSystem>()
@@ -896,7 +939,6 @@ impl GeeseSystem for BatchRenderer {
             clear_color: Color::BLACK,
 
             white_pixel_handle,
-            circle_tex_handle,
 
             atlas_bind_group_layout: atlas_bgl,
             atlasses_dirty: false,

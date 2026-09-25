@@ -12,13 +12,14 @@ enum DebugDrawCommand {
         from: Vec2,
         to: Vec2,
         color: [f32; 4],
-        thickness: f32,
+        thickness_px: f32,
         layer: i32,
         draw_space: DrawSpace,
     },
     Circle {
         center: Vec2,
         radius: f32,
+        thickness_px: f32,
         color: [f32; 4],
         layer: i32,
         draw_space: DrawSpace,
@@ -36,7 +37,7 @@ impl DebugDraw {
         from: Vec2,
         to: Vec2,
         color: C,
-        thickness: f32,
+        thickness_px: f32,
         layer: i32,
         draw_space: DrawSpace,
     ) {
@@ -44,7 +45,7 @@ impl DebugDraw {
             from,
             to,
             color: color.into_gpu_color(),
-            thickness,
+            thickness_px,
             layer,
             draw_space,
         });
@@ -55,7 +56,7 @@ impl DebugDraw {
         &mut self,
         points: &[Vec2],
         color: C,
-        thickness: f32,
+        thickness_px: f32,
         layer: i32,
         draw_space: DrawSpace,
     ) {
@@ -64,7 +65,7 @@ impl DebugDraw {
                 from: pts[0],
                 to: pts[1],
                 color: color.clone().into_gpu_color(),
-                thickness,
+                thickness_px,
                 layer,
                 draw_space,
             });
@@ -78,12 +79,20 @@ impl DebugDraw {
         size: Vec2,
         angle_rad: f32,
         color: C,
-        thickness: f32,
+        thickness_px: f32,
         layer: i32,
         draw_space: DrawSpace,
     ) {
         let center = topleft - top_left_offset(size, draw_space);
-        self.draw_rect_center(center, size, angle_rad, color, thickness, layer, draw_space);
+        self.draw_rect_center(
+            center,
+            size,
+            angle_rad,
+            color,
+            thickness_px,
+            layer,
+            draw_space,
+        );
     }
 
     #[allow(unused, clippy::too_many_arguments)]
@@ -93,7 +102,7 @@ impl DebugDraw {
         size: Vec2,
         angle_rad: f32,
         color: C,
-        thickness: f32,
+        thickness_px: f32,
         layer: i32,
         draw_space: DrawSpace,
     ) {
@@ -102,7 +111,7 @@ impl DebugDraw {
             from: quad_pts[0],
             to: quad_pts[1],
             color: color.clone().into_gpu_color(),
-            thickness,
+            thickness_px,
             layer,
             draw_space,
         });
@@ -110,7 +119,7 @@ impl DebugDraw {
             from: quad_pts[0],
             to: quad_pts[3],
             color: color.clone().into_gpu_color(),
-            thickness,
+            thickness_px,
             layer,
             draw_space,
         });
@@ -118,7 +127,7 @@ impl DebugDraw {
             from: quad_pts[1],
             to: quad_pts[2],
             color: color.clone().into_gpu_color(),
-            thickness,
+            thickness_px,
             layer,
             draw_space,
         });
@@ -126,7 +135,7 @@ impl DebugDraw {
             from: quad_pts[2],
             to: quad_pts[3],
             color: color.into_gpu_color(),
-            thickness,
+            thickness_px,
             layer,
             draw_space,
         });
@@ -136,6 +145,7 @@ impl DebugDraw {
         &mut self,
         center: Vec2,
         radius: f32,
+        thickness_px: f32,
         color: C,
         layer: i32,
         draw_space: DrawSpace,
@@ -143,6 +153,7 @@ impl DebugDraw {
         self.commands.push(DebugDrawCommand::Circle {
             center,
             radius,
+            thickness_px,
             color: color.into_gpu_color(),
             layer,
             draw_space,
@@ -158,7 +169,7 @@ impl DebugDraw {
                     from,
                     to,
                     color,
-                    thickness,
+                    thickness_px,
                     layer,
                     draw_space,
                 } => {
@@ -168,14 +179,14 @@ impl DebugDraw {
                     let direction = to - from;
                     let length = direction.length();
 
-                    if length <= f32::EPSILON || *thickness <= 0.0 {
+                    if length <= f32::EPSILON || *thickness_px <= 0.0 {
                         continue;
                     }
 
                     let center = (from + to) * 0.5;
                     let angle = direction.to_angle();
 
-                    let size = vec2(length, *thickness);
+                    let size = vec2(length, *thickness_px);
 
                     batch_renderer.draw_quad_with_center(
                         center,
@@ -190,16 +201,16 @@ impl DebugDraw {
                 DebugDrawCommand::Circle {
                     center,
                     radius,
+                    thickness_px,
                     color,
                     layer,
                     draw_space,
                 } => {
-                    batch_renderer.draw_quad_with_center(
+                    batch_renderer.draw_circle(
                         *center,
-                        vec2(*radius, *radius),
-                        0.0,
+                        *radius,
+                        *thickness_px,
                         *color,
-                        QuadTex::Circle,
                         *layer,
                         *draw_space,
                     );

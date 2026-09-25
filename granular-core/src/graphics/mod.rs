@@ -8,7 +8,7 @@ pub use graphics_helpers::*;
 mod texture2d;
 pub use texture2d::Texture2D;
 
-mod vertex;
+mod batchquadvertex;
 
 mod texture_bundle;
 pub use texture_bundle::{TextureBundle, TextureBundleLoadSettings};
