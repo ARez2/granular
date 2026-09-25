@@ -3067,6 +3067,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "encase",
+ "futures-channel",
  "glam 0.33.7",
  "granular-core",
  "image 0.25.10",

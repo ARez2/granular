@@ -148,7 +148,7 @@ pub struct BatchRenderer {
 #[allow(clippy::too_many_arguments)]
 #[profiling::all_functions]
 impl BatchRenderer {
-    const MAX_QUAD_COUNT: usize = 10000;
+    const MAX_QUAD_COUNT: usize = 20000;
     const MAX_VERTEX_COUNT: usize = BatchRenderer::MAX_QUAD_COUNT * 4;
     const MAX_INDEX_COUNT: usize = BatchRenderer::MAX_QUAD_COUNT * 6;
     const DEFAULT_TEXATLAS_WIDTH: u32 = 2048;

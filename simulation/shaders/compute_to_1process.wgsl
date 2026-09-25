@@ -20,7 +20,7 @@ fn prepare(@builtin(global_invocation_id) gid: vec3u) {
 
     atomicStore(&rb_metadata[source_idx].owner, NO_BODY_CELL);
     // clear debug texture
-    textureStore(debug_tex0, gid.xy, vec4f(0.0));
+    write_debug_tex(vec2i(gid.xy), vec4f(0.0));
 }
 
 
@@ -68,9 +68,14 @@ fn rb_cell_world_pos(
 }
 
 // "Stamps" the Rigidbodies into the grid (but uses the rb_metadata grid to do atomic claims)
-@compute @workgroup_size(256, 1, 1)
+@compute @workgroup_size(WORKGROUP_SIZE_X, WORKGROUP_SIZE_Y, 1)
 fn insert_bodies(@builtin(global_invocation_id) gid: vec3u) {
-    let rbcell_idx = gid.x;
+    let idx_res = pos_to_idx(vec2i(gid.xy));
+    let source_idx = idx_res.index;
+    if !idx_res.valid {
+        return;
+    }
+    let rbcell_idx = source_idx;
     if rbcell_idx >= arrayLength(&rb_cells) {
         return;
     }

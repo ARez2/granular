@@ -1,4 +1,4 @@
-use crate::CellStruct;
+use crate::{CellStruct, NUM_COLLISION_INTEGERS};
 use encase::ShaderType;
 use glam::prelude::*;
 
@@ -57,4 +57,18 @@ pub(super) struct RB {
 #[derive(Debug, Clone, Copy, encase::ShaderType, Default)]
 pub(super) struct RBWorldMetadata {
     pub(super) owner: u32,
+}
+
+#[derive(Debug, Clone, Copy, encase::ShaderType)]
+pub(super) struct CollisionData {
+    pub(super) world_collision: [u32; NUM_COLLISION_INTEGERS as usize],
+    pub(super) rb_collision: [u32; NUM_COLLISION_INTEGERS as usize],
+}
+impl Default for CollisionData {
+    fn default() -> Self {
+        Self {
+            world_collision: [0u32; NUM_COLLISION_INTEGERS as usize],
+            rb_collision: [0u32; NUM_COLLISION_INTEGERS as usize],
+        }
+    }
 }

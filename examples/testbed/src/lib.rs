@@ -111,35 +111,35 @@ impl Game {
                 self.materials_bg.take().unwrap(),
             );
 
-            let half_w = granular::simulation::GRID_WIDTH / 2;
-            let quart_w = granular::simulation::GRID_WIDTH / 4;
-            let third_h = granular::simulation::GRID_HEIGHT / 3;
-            let fith_h = granular::simulation::GRID_HEIGHT / 5;
-            for y in (third_h - fith_h)..(third_h + fith_h) {
-                for x in (half_w - quart_w)..(half_w + quart_w) {
-                    simulation.set_cell(
-                        ivec2(x as i32, y as i32),
-                        shader_types::Cell::new(
-                            shader_types::MaterialName::Sand,
-                            Vec2::ZERO,
-                            Vec4::ONE,
-                        ),
-                    );
-                }
-            }
+            // let half_w = granular::simulation::GRID_WIDTH / 2;
+            // let quart_w = granular::simulation::GRID_WIDTH / 4;
+            // let third_h = granular::simulation::GRID_HEIGHT / 3;
+            // let fith_h = granular::simulation::GRID_HEIGHT / 5;
+            // for y in (third_h - fith_h)..(third_h + fith_h) {
+            //     for x in (half_w - quart_w)..(half_w + quart_w) {
+            //         simulation.set_cell(
+            //             ivec2(x as i32, y as i32),
+            //             shader_types::Cell::new(
+            //                 shader_types::MaterialName::Sand,
+            //                 Vec2::ZERO,
+            //                 Vec4::ONE,
+            //             ),
+            //         );
+            //     }
+            // }
 
-            for y in 40..47 {
-                for x in 0..half_w {
-                    simulation.set_cell(
-                        ivec2(x as i32, y),
-                        shader_types::Cell::new(
-                            shader_types::MaterialName::Rock,
-                            Vec2::ZERO,
-                            Vec4::ONE,
-                        ),
-                    );
-                }
-            }
+            // for y in 40..47 {
+            //     for x in 0..half_w {
+            //         simulation.set_cell(
+            //             ivec2(x as i32, y),
+            //             shader_types::Cell::new(
+            //                 shader_types::MaterialName::Rock,
+            //                 Vec2::ZERO,
+            //                 Vec4::ONE,
+            //             ),
+            //         );
+            //     }
+            // }
 
             for y in 0..3 {
                 for x in 0..granular::simulation::GRID_WIDTH {

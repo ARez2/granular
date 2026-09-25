@@ -2,6 +2,8 @@ use glam::prelude::*;
 use granular_core::utils::*;
 use rapier2d::prelude::*;
 
+use super::{GRID_HEIGHT, GRID_WIDTH};
+
 /// The 2D simulation (running via Rapier2D).
 /// Internally uses a conversion between pixels and physics units
 pub(super) struct SimPhysics {
@@ -22,6 +24,8 @@ pub(super) struct SimPhysics {
     ///
     /// Is basically "one physics meter is `scaling_factor`-many pixels"
     scaling_factor: f32,
+
+    world_collider: ColliderHandle,
 }
 impl SimPhysics {
     #[allow(unused)]
@@ -48,6 +52,10 @@ impl SimPhysics {
         pixels / self.scaling_factor
     }
 
+    fn voxel_size(scaling_factor: f32) -> Vec2 {
+        Vec2::ONE / scaling_factor
+    }
+
     pub(super) fn new(one_physics_meter_is_pixels: u32) -> Self {
         let scaling_factor = one_physics_meter_is_pixels as f32;
 
@@ -55,10 +63,10 @@ impl SimPhysics {
         let mut collider_set = ColliderSet::new();
 
         /* Create the ground. */
-        let collider = ColliderBuilder::cuboid(100.0, 0.1)
-            .translation(vec2(100.0 / scaling_factor, 0.0 / scaling_factor))
+        let collider = ColliderBuilder::voxels(Self::voxel_size(scaling_factor), &[])
+            // .translation(vec2(100.0 / scaling_factor, 0.0 / scaling_factor))
             .build();
-        collider_set.insert(collider);
+        let world_collider = collider_set.insert(collider);
 
         let integration_params = IntegrationParameters::default();
         let physics_pipeline = PhysicsPipeline::new();
@@ -84,7 +92,10 @@ impl SimPhysics {
             ccd_solver,
             physics_hooks,
             event_handler,
+
             scaling_factor,
+
+            world_collider,
         }
     }
 
@@ -140,9 +151,46 @@ impl SimPhysics {
             })
             .sum();
 
-        assert!(properties.mass() > 0.0, "dynamic body needs positive mass",);
-
         properties
+    }
+
+    fn build_voxel_collider(&self, cells: &[(IVec2, f32)]) -> Collider {
+        debug!(
+            "build_voxel_collider {:?}",
+            cells.iter().map(|c| c.0).collect::<Vec<IVec2>>()
+        );
+        let (scale, offset_pixels) = if !cells.is_empty() {
+            // Calculate bounding box of collider pixels
+            let mut min = cells[0].0;
+            let mut max = cells[0].0;
+            for &pix in cells {
+                min = min.min(pix.0);
+                max = max.max(pix.0);
+            }
+
+            let bounds_min = min.as_vec2();
+            let bounds_max = max.as_vec2() + Vec2::ONE;
+            let bounds_center = (bounds_min + bounds_max) * 0.5;
+            let bounds_size = bounds_max - bounds_min;
+
+            // How much to grow the collider on each side
+            const GROW_BY_SIM_PIXELS: f32 = 0.0;
+
+            let required_scale =
+                (bounds_size + Vec2::splat(2.0 * GROW_BY_SIM_PIXELS)) / bounds_size;
+            let scale = Vec2::splat(required_scale.max_element());
+            let offset_pixels = bounds_center * (Vec2::ONE - scale);
+            (scale, offset_pixels)
+        } else {
+            (Vec2::ONE, Vec2::ZERO)
+        };
+
+        let props = self.mass_properties_from_cells(cells);
+        let voxels: Vec<IVec2> = cells.iter().map(|v| v.0).collect();
+        ColliderBuilder::voxels(self.pixvec_to_phys(Vec2::ONE) * scale, &voxels)
+            .translation(self.pixvec_to_phys(offset_pixels))
+            .mass_properties(props)
+            .build()
     }
 
     /// Translation/ Rotation/ Pose will get overwritten by `position`/ `angle` on the RigidBodyBuilder
@@ -154,38 +202,12 @@ impl SimPhysics {
         angle: f32,
         collider_pixels: &[(IVec2, f32)],
     ) -> RigidBodyHandle {
-        // Calculate bounding box of collider pixels
-        let mut min = collider_pixels[0].0;
-        let mut max = collider_pixels[0].0;
-        for &pix in collider_pixels {
-            min = min.min(pix.0);
-            max = max.max(pix.0);
-        }
-
-        let bounds_min = min.as_vec2();
-        let bounds_max = max.as_vec2() + Vec2::ONE;
-        let bounds_center = (bounds_min + bounds_max) * 0.5;
-        let bounds_size = bounds_max - bounds_min;
-
-        // How much to grow the collider on each side
-        const GROW_BY_SIM_PIXELS: f32 = 0.0;
-
-        let required_scale = (bounds_size + Vec2::splat(2.0 * GROW_BY_SIM_PIXELS)) / bounds_size;
-        let scale = Vec2::splat(required_scale.max_element());
-        let offset_pixels = bounds_center * (Vec2::ONE - scale);
-
-        let props = self.mass_properties_from_cells(collider_pixels);
-        let voxels: Vec<IVec2> = collider_pixels.iter().map(|v| v.0).collect();
-        let collider = ColliderBuilder::voxels(self.pixvec_to_phys(Vec2::ONE) * scale, &voxels)
-            .translation(self.pixvec_to_phys(offset_pixels))
-            .mass_properties(props)
-            .build();
-
         let mut pose = Pose2::from_translation(self.pixvec_to_phys(pixel_position));
         pose.rotation = Rot2::from_angle(angle);
 
         let rb = rb_builder.pose(pose).build();
         let rb_handle = self.rb_set.insert(rb);
+        let collider = self.build_voxel_collider(collider_pixels);
 
         self.collider_set
             .insert_with_parent(collider, rb_handle, &mut self.rb_set);
@@ -201,6 +223,54 @@ impl SimPhysics {
 
     pub(super) fn get_rigidbody(&mut self, handle: RigidBodyHandle) -> &mut RigidBody {
         &mut self.rb_set[handle]
+    }
+
+    pub(super) fn update_world_collider(&mut self, world_voxels: Vec<IVec2>) {
+        let collider = self.collider_set.get_mut(self.world_collider).unwrap();
+        let voxels = collider.shape_mut().as_voxels_mut().unwrap();
+        *voxels = Voxels::new(Self::voxel_size(self.scaling_factor), &world_voxels);
+    }
+
+    pub(super) fn remove_rigidbody(&mut self, rb_handle: RigidBodyHandle) {
+        self.rb_set.remove(
+            rb_handle,
+            &mut self.island_manager,
+            &mut self.collider_set,
+            &mut self.impulse_joint_set,
+            &mut self.multibody_joint_set,
+            true,
+        );
+    }
+
+    pub(super) fn update_rb_collider(
+        &mut self,
+        rb_handle: RigidBodyHandle,
+        rb_voxels: &[(IVec2, f32)],
+    ) -> anyhow::Result<()> {
+        let new_collider = self.build_voxel_collider(rb_voxels);
+        let rb = self
+            .rb_set
+            .get(rb_handle)
+            .ok_or(anyhow::anyhow!("Cant find the RB in the RB set!"))?;
+
+        if rb.colliders().is_empty() {
+            self.collider_set
+                .insert_with_parent(new_collider, rb_handle, &mut self.rb_set);
+            return Ok(());
+        } else if rb.colliders().len() > 1 {
+            warn!("RB has more than 1 collider. Just updating the first one!");
+        }
+
+        let collider = self.collider_set.get_mut(rb.colliders()[0]).unwrap();
+        collider.set_shape(new_collider.shared_shape().clone());
+        collider.set_mass_properties(new_collider.mass_properties());
+        collider.set_position_wrt_parent(*new_collider.position());
+
+        let rb = self.rb_set.get_mut(rb_handle).unwrap();
+        rb.recompute_mass_properties_from_colliders(&self.collider_set);
+        rb.wake_up(true);
+
+        Ok(())
     }
 
     pub(super) fn draw_each_collider<T>(

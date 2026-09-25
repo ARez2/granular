@@ -96,6 +96,14 @@ struct RBWorldMetadata {
 var<storage, read_write> rb_metadata: array<RBWorldMetadata>;
 
 
+struct CollisionData {
+    world_collision: array<u32, {{NUM_COLLISION_INTEGERS}}>,
+    rb_collision: array<u32, {{NUM_COLLISION_INTEGERS}}>,
+}
+@group(0) @binding(12)
+var<storage, read_write> collision_data: CollisionData;
+
+
 
 @group(1) @binding(0)
 var display_texture : texture_storage_2d<rgba8unorm, write>;
@@ -106,6 +114,10 @@ var<storage, read_write> materials: array<Material>;
 
 @group(4) @binding(0)
 var debug_tex0: texture_storage_2d<rgba8unorm, write>;
+
+fn write_debug_tex(sim_coord: vec2i, color: vec4f) {
+    textureStore(debug_tex0, simcoord_to_texel(sim_coord), color);
+}
 
 fn print_value_with_font_size(
     fragCoord: vec2i,
@@ -127,7 +139,7 @@ fn print_value_with_font_size(
     );
     if is_digit > 0.5 {
         let output_col = mix(default_color, font_color, is_digit);
-        textureStore(debug_tex0, simcoord_to_texel(fragCoord), output_col);
+        write_debug_tex(fragCoord, output_col);
     }
 }
 
@@ -263,6 +275,10 @@ fn idx_from_offset(idx: u32, offset: vec2i) -> IndexResult {
 
 fn idx_to_pos(idx: u32) -> vec2i {
     return vec2i(i32(idx % GRID_WIDTH), i32(idx / GRID_WIDTH));
+}
+
+fn pos_valid(pos: vec2i) -> bool {
+    return all(pos >= vec2i(0, 0)) && all(pos < vec2i(i32(GRID_WIDTH), i32(GRID_HEIGHT)));
 }
 
 

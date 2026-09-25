@@ -14,6 +14,36 @@ fn display(@builtin(global_invocation_id) gid: vec3u) {
 }
 
 
+@compute @workgroup_size(64, 1, 1)
+fn create_collision(@builtin(global_invocation_id) gid: vec3u) {
+    let word_idx = gid.x;
+
+    var world_bits = 0u;
+    var rb_bits = 0u;
+    for (var bit = 0u; bit < 32u; bit++) {
+        let cell_idx = word_idx * 32u + bit;
+        if cell_idx >= (GRID_WIDTH * GRID_HEIGHT) {
+            break;
+        }
+
+        let has_collision = matname_has_collision(next_cells[cell_idx].material);
+        let rbcell_idx = atomicLoad(&rb_metadata[cell_idx].owner);
+        if has_collision {
+            if rbcell_idx == NO_BODY_CELL {
+                write_debug_tex(idx_to_pos(cell_idx), vec4f(0.0, 0.0, 1.0, 1.0));
+                world_bits |= 1u << bit;
+            } else {
+                write_debug_tex(idx_to_pos(cell_idx), vec4f(0.0, 1.0, 0.0, 1.0));
+                rb_bits |= 1u << bit;
+            }
+        }
+    }
+
+    collision_data.world_collision[word_idx] = world_bits;
+    collision_data.rb_collision[word_idx] = rb_bits;
+}
+
+
 @compute @workgroup_size(WORKGROUP_SIZE_X, WORKGROUP_SIZE_Y, 1)
 fn extract_bodies(@builtin(global_invocation_id) gid: vec3u) {
     var idx_res = pos_to_idx(vec2i(gid.xy));
