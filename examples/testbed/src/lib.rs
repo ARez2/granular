@@ -558,6 +558,7 @@ fn set_up_logging() {
         // `info!(target="special_target", "This log message is about special_target");`
         .level_for("wgpu", log::LevelFilter::Error)
         .level_for("simulation", log::LevelFilter::Trace)
+        .level_for("preprocessor", log::LevelFilter::Trace)
         .level_for("granular_core", log::LevelFilter::Trace)
         .level_for(
             "granular_core::graphics::batchrenderer",
