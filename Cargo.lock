@@ -1280,7 +1280,7 @@ checksum = "6e44b0a4eaa4c82f441d50a963f2d5f05a787240aeee097597033e72accfd22f"
 [[package]]
 name = "include_file_macro"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ARez2/wgsl_preprocessor.git#c7e777bd246a6b205647e1e625097b6d9972c727"
+source = "git+ssh://git@github.com/ARez2/wgsl_preprocessor.git#f564756b73419b69f1124124a07a770ffdde2003"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -1549,9 +1549,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.33"
+version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
+checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "loom"
@@ -2449,11 +2449,12 @@ dependencies = [
 [[package]]
 name = "preprocessor"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ARez2/wgsl_preprocessor.git#c7e777bd246a6b205647e1e625097b6d9972c727"
+source = "git+ssh://git@github.com/ARez2/wgsl_preprocessor.git#f564756b73419b69f1124124a07a770ffdde2003"
 dependencies = [
  "duplicate",
- "glam 0.33.7",
+ "glam 0.31.1",
  "include_file_macro",
+ "log",
  "shared_preprocessor_stuff",
 ]
 
@@ -2992,7 +2993,7 @@ dependencies = [
 [[package]]
 name = "shared_preprocessor_stuff"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ARez2/wgsl_preprocessor.git#c7e777bd246a6b205647e1e625097b6d9972c727"
+source = "git+ssh://git@github.com/ARez2/wgsl_preprocessor.git#f564756b73419b69f1124124a07a770ffdde2003"
 
 [[package]]
 name = "shlex"
@@ -3973,7 +3974,7 @@ dependencies = [
 [[package]]
 name = "wgsl_preprocessor"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ARez2/wgsl_preprocessor.git#c7e777bd246a6b205647e1e625097b6d9972c727"
+source = "git+ssh://git@github.com/ARez2/wgsl_preprocessor.git#f564756b73419b69f1124124a07a770ffdde2003"
 dependencies = [
  "include_file_macro",
  "preprocessor",
