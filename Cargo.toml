@@ -5,9 +5,7 @@ edition = "2024"
 
 [workspace]
 members = ["granular-core", "proc_macros", "examples/*", "simulation"]
-# exclude = [
-#     "examples/*"
-# ]
+
 
 [profile.trace]
 inherits = "release"

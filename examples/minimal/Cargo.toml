@@ -1,0 +1,28 @@
+[package]
+name = "minimal"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+granular = { path = "../.." }
+
+log.workspace = true
+geese.workspace = true
+palette.workspace = true
+# web-time.workspace = true
+winit.workspace = true
+
+fern = { version = "0.7.1", features = ["colored"] }
+time = { version = "0.3.55", features = ["local-offset"] }
+
+[features]
+trace = ["granular/trace"]
+
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_log = "1.0"
+wasm-bindgen = "0.2.127"
+console_error_panic_hook = "0.1.5"

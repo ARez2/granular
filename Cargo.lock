@@ -1620,6 +1620,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "minimal"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "console_log",
+ "fern",
+ "geese",
+ "granular",
+ "log",
+ "palette",
+ "time",
+ "wasm-bindgen",
+ "winit",
+]
+
+[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
