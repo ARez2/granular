@@ -107,33 +107,45 @@ impl DebugDraw {
         draw_space: DrawSpace,
     ) {
         let quad_pts = quad_corners(center, size, angle_rad, draw_space);
+        let top = draw_space.top_sign();
+        // If we would not add the extra offset, the lines produce weird corners like this:
+        //   ______
+        //   |
+        // | x_|___
+        // |   |
+        // |   |
+        let extra = thickness_px / 2.0;
+        // TL <-> BL
         self.commands.push(DebugDrawCommand::Line {
-            from: quad_pts[0],
-            to: quad_pts[1],
+            from: quad_pts[0] + vec2(0.0, top * extra),
+            to: quad_pts[1] + vec2(0.0, -top * extra),
             color: color.clone().into_gpu_color(),
             thickness_px,
             layer,
             draw_space,
         });
+        // TL <-> TR
         self.commands.push(DebugDrawCommand::Line {
-            from: quad_pts[0],
-            to: quad_pts[3],
+            from: quad_pts[0] - vec2(extra, 0.0),
+            to: quad_pts[3] + vec2(extra, 0.0),
             color: color.clone().into_gpu_color(),
             thickness_px,
             layer,
             draw_space,
         });
+        // BL <-> BR
         self.commands.push(DebugDrawCommand::Line {
-            from: quad_pts[1],
-            to: quad_pts[2],
+            from: quad_pts[1] - vec2(extra, 0.0),
+            to: quad_pts[2] + vec2(extra, 0.0),
             color: color.clone().into_gpu_color(),
             thickness_px,
             layer,
             draw_space,
         });
+        // BR <-> TR
         self.commands.push(DebugDrawCommand::Line {
-            from: quad_pts[2],
-            to: quad_pts[3],
+            from: quad_pts[2] + vec2(0.0, -top * extra),
+            to: quad_pts[3] + vec2(0.0, top * extra),
             color: color.into_gpu_color(),
             thickness_px,
             layer,
