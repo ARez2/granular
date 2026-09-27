@@ -178,19 +178,17 @@ impl Game {
         }
     }
 
-    fn on_update(&mut self, _: &events::timing::FixedTick<16>) {
+    fn on_update(&mut self, _: &events::timing::PhysicsTick) {
         let input = self.ctx.get::<InputSystem>();
-        let vector = input.world_input_direction("cam_left", "cam_right", "cam_up", "cam_down");
+        let cam_vector = input.world_input_direction("cam_left", "cam_right", "cam_up", "cam_down");
+        let other_vector = input.world_input_direction("left", "right", "up", "down");
         let toggle_debugdraw = input.is_action_just_pressed("toggle_debugdraw");
-        if toggle_debugdraw {
-            debug!("DEBUG?! {}", toggle_debugdraw);
-        }
         drop(input);
         let mut camera = self.ctx.get_mut::<Camera>();
-        // camera.translate(vector * 10.0);
+        camera.translate(cam_vector * 5.0);
         drop(camera);
         let mut sim = self.ctx.get_mut::<MySimulation>();
-        sim.update_rb_force(vector * vec2(8.0, 15.0));
+        sim.update_rb_force(other_vector * vec2(8.0, 15.0));
         if toggle_debugdraw {
             sim.toggle_debugdraw_colliders();
         }
@@ -429,6 +427,22 @@ impl GeeseSystem for Game {
             input.add_action(
                 "cam_down",
                 InputActionTrigger::new_key(KeyCode::ArrowDown, ModifiersState::empty()),
+            );
+            input.add_action(
+                "up",
+                InputActionTrigger::new_key(KeyCode::KeyW, ModifiersState::empty()),
+            );
+            input.add_action(
+                "left",
+                InputActionTrigger::new_key(KeyCode::KeyA, ModifiersState::empty()),
+            );
+            input.add_action(
+                "down",
+                InputActionTrigger::new_key(KeyCode::KeyS, ModifiersState::empty()),
+            );
+            input.add_action(
+                "right",
+                InputActionTrigger::new_key(KeyCode::KeyD, ModifiersState::empty()),
             );
             input.add_action(
                 "toggle_debugdraw",

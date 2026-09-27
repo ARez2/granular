@@ -40,7 +40,7 @@ impl Game {
         }
     }
 
-    fn on_update(&mut self, _: &events::timing::FixedTick<16>) {
+    fn on_update(&mut self, _: &events::timing::PhysicsTick) {
         let input = self.ctx.get::<InputSystem>();
         // Gets a 2D vector where the x component is -1 if the cam_left action is pressed, 1 if cam_right is pressed and 0 otherwise. Same for y component
         let vector = input.world_input_direction("cam_left", "cam_right", "cam_up", "cam_down");

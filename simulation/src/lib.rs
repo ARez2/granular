@@ -1,4 +1,4 @@
-use encase::{ShaderSize, ShaderType, UniformBuffer};
+use encase::{ShaderType, UniformBuffer};
 use glam::prelude::*;
 use granular_core::{
     filewatcher::{self, FileWatcher},
@@ -10,7 +10,6 @@ use rustc_hash::FxHashMap as HashMap;
 #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
 use std::path::PathBuf;
 use std::{borrow::Cow, fmt::Display, ops::Range};
-use web_time::{Duration, Instant};
 use wgpu::{Buffer, util::DeviceExt};
 use wgsl_preprocessor::include_file;
 
@@ -28,6 +27,7 @@ pub mod __macro_support {
     pub use strum;
 }
 
+const DEFAULT_SIM_TICKRATE: u32 = 30;
 pub const GRID_WIDTH: u32 = 128;
 pub const GRID_HEIGHT: u32 = 128;
 // Each cell gets one bit inside these integers
@@ -133,9 +133,10 @@ impl SimulationPass {
 pub struct Simulation<N: MatName, M: MaterialStruct, C: CellStruct> {
     ctx: GeeseContextHandle<Self>,
     pub frame: u64,
-    pub tickrate: Duration,
-    last_tick: Instant,
-    accumulator: Duration,
+    stepper: FixedStepper,
+    // How many times the simulation stepped a nonzero amount of times in the update function
+    num_times_stepped: u32,
+    is_initialized: bool,
 
     /// One simulation pixel will be `display_scale`-many pixels on screen
     display_scale: f32,
@@ -211,21 +212,27 @@ pub struct Simulation<N: MatName, M: MaterialStruct, C: CellStruct> {
 }
 impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
     fn update(&mut self, _: &granular_core::graphics::events::RunSimulation) {
-        if self.simulation_passes.is_empty() {
+        if !self.is_initialized {
             return;
         }
         let mut graphics_sys = self.ctx.get_mut::<GraphicsSystem>();
         let context = graphics_sys.render_context();
 
-        let now = Instant::now();
-        let dt = now - self.last_tick;
-        self.accumulator += dt;
+        let steps = self.stepper.advance();
+        if steps == 0 {
+            return;
+        }
 
-        while self.accumulator >= self.tickrate {
+        for _ in 0..steps {
             #[cfg(feature = "trace")]
-            profiling::scope!("accumulator");
+            profiling::scope!("simulation step");
 
-            self.params.tick = self.frame as u32;
+            let mut sim_encoder =
+                context
+                    .device
+                    .create_command_encoder(&wgpu::wgt::CommandEncoderDescriptor {
+                        label: Some("simulation step encoder"),
+                    });
 
             for pass in &self.simulation_passes {
                 #[cfg(feature = "trace")]
@@ -235,12 +242,10 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
                 let mut compute_pass = profiler_scope.scoped_compute_pass(pass.name);
                 #[cfg(not(feature = "trace"))]
                 let mut compute_pass =
-                    context
-                        .encoder
-                        .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                            label: Some(&pass.name),
-                            timestamp_writes: None,
-                        });
+                    sim_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some(&pass.name),
+                        timestamp_writes: None,
+                    });
                 compute_pass.set_pipeline(&pass.pipeline);
                 if self.frame.is_multiple_of(2) {
                     compute_pass.set_bind_group(0, &self.sim_bind_group1_a, &[]);
@@ -258,20 +263,20 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
                     pass.dispatch_size.2,
                 );
             }
-            self.accumulator -= self.tickrate;
+
+            self.params.tick = self.frame as u32;
+            let mut writer = UniformBuffer::new(&mut self.params_bytes);
+            let _ = writer.write(&self.params);
+            context
+                .queue
+                .write_buffer(&self.params_buffer, 0, &self.params_bytes);
+
+            context.queue.submit(Some(sim_encoder.finish()));
+
             self.frame += 1;
         }
 
-        let mut writer = UniformBuffer::new(&mut self.params_bytes);
-        let _ = writer.write(&self.params);
-        context
-            .queue
-            .write_buffer(&self.params_buffer, 0, &self.params_bytes);
-        if !dt.is_zero() {
-            self.last_tick = Instant::now();
-        }
-
-        if !self.collision_readback_running && self.frame > 0 {
+        if !self.collision_readback_running && self.num_times_stepped > 0 {
             context.encoder.copy_buffer_to_buffer(
                 &self.collision_data_buffer,
                 0,
@@ -280,12 +285,9 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
                 self.collision_readback_buffer.size(),
             );
         }
-
         drop(graphics_sys);
-    }
 
-    fn after_simulation(&mut self, _: &granular_core::graphics::events::AfterSimulation) {
-        if !self.collision_readback_running && self.frame > 0 {
+        if !self.collision_readback_running && self.num_times_stepped > 0 {
             let mut future_exec = self.ctx.get_mut::<FutureExecutor>();
             let staging = self.collision_readback_buffer.clone();
             let rbs_snapshot = self.rbs.clone();
@@ -306,6 +308,8 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
             drop(future_exec);
             self.collision_readback_running = true;
         }
+
+        self.num_times_stepped += 1;
     }
 
     fn on_game_render(&mut self, _: &graphics::events::RecordGameRenderingCommands) {
@@ -459,7 +463,10 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
         );
     }
 
-    fn fixed_step(&mut self, _: &crate::events::timing::FixedTick<16>) {
+    fn fixed_step(&mut self, _: &crate::events::timing::PhysicsTick) {
+        if !self.is_initialized {
+            return;
+        }
         self.physics.step();
 
         for (rb_handle, rb_idx) in &self.rapier_rb_to_sim_rb {
@@ -485,6 +492,8 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
         self.user_display_shader = Some(display_shader);
         self.user_bind_group = Some(bindgroup);
         self.rebuild_pipelines();
+        self.stepper.reset();
+        self.is_initialized = true;
     }
 
     pub fn update_user_shaders(
@@ -973,12 +982,6 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
             let pix_local_pos_in_rb = ivec2(x as i32 - img_center.x, img_center.y - y as i32);
 
             let matname: N = inner_cell.material_name().into();
-            if x == 7 && y == 1 {
-                debug!(
-                    "pix_local_pos_in_rb: {pix_local_pos_in_rb}, col: {:?}",
-                    matname.has_collision()
-                );
-            }
             if matname.has_collision() {
                 let mat_idx = self.material_names[&matname];
                 let density = self.materials[mat_idx].as_ref().ok_or(anyhow::anyhow!("Did not find a material for the provided material name! Make sure to register the material before via `add_material`."))?.density();
@@ -1026,8 +1029,11 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
         &mut self,
         event: &crate::future_executor::events::FutureReady<CollisionReadback>,
     ) {
+        if !self.is_initialized {
+            return;
+        }
         if let Err(e) = &event.0.result {
-            error!("Error while mapping collision readbakc buffer: {}", e);
+            error!("Error while mapping collision readback buffer: {}", e);
             self.collision_readback_buffer.unmap();
             self.collision_readback_running = false;
             return;
@@ -1132,9 +1138,10 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
                 let rb_handle = self.sim_rb_to_rapier_rb[&idx];
                 if voxels.is_empty() {
                     trace!(
-                        "RB {idx} had zero colliders after simulation updated his colliders. Removing from simulation..."
+                        "Frame: {}, RB {idx} had zero colliders after simulation updated his colliders. Removing from simulation...",
+                        self.frame
                     );
-                    self.remove_rigidbody(rb_handle);
+                    // self.remove_rigidbody(rb_handle);
                 } else {
                     // let _ = self.physics.update_rb_collider(rb_handle, &voxels);
                 }
@@ -1164,7 +1171,6 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> GeeseSystem for Simulation<N,
     #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::update)
-        .with(Self::after_simulation)
         .with(Self::on_game_render)
         .with(Self::on_display_game_render)
         .with(Self::fixed_step)
@@ -1173,7 +1179,6 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> GeeseSystem for Simulation<N,
     #[cfg(any(target_arch = "wasm32", not(debug_assertions)))]
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::update)
-        .with(Self::after_simulation)
         .with(Self::on_game_render)
         .with(Self::on_display_game_render)
         .with(Self::on_collision_buffer_map)
@@ -1602,9 +1607,9 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> GeeseSystem for Simulation<N,
         Self {
             ctx,
             frame: 0,
-            tickrate: Duration::from_millis(16 * 2),
-            last_tick: Instant::now() + Duration::from_secs_f32(0.5), // small delay before sim starts
-            accumulator: Duration::ZERO,
+            stepper: FixedStepper::new(DEFAULT_SIM_TICKRATE, 8),
+            num_times_stepped: 0,
+            is_initialized: false,
 
             display_scale: 3.5,
 

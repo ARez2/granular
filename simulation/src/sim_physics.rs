@@ -2,8 +2,6 @@ use glam::prelude::*;
 use granular_core::utils::*;
 use rapier2d::prelude::*;
 
-use super::{GRID_HEIGHT, GRID_WIDTH};
-
 /// The 2D simulation (running via Rapier2D).
 /// Internally uses a conversion between pixels and physics units
 pub(super) struct SimPhysics {

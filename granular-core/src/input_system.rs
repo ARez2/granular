@@ -2,7 +2,7 @@
 
 use crate::graphics::SurfacePos;
 use glam::Vec2;
-use rustc_hash::FxHashMap as HashMap;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use winit::{
     dpi::PhysicalPosition,
     event::{ElementState, KeyEvent, Modifiers, MouseButton},
@@ -56,7 +56,6 @@ pub struct InputAction {
     triggers: Vec<InputActionTrigger>,
 
     pressed: bool,
-    just_pressed: bool,
 }
 impl InputAction {
     /// Creates a new input action with just a name
@@ -65,7 +64,6 @@ impl InputAction {
             name: String::from(name),
             triggers: vec![],
             pressed: false,
-            just_pressed: false,
         }
     }
 
@@ -75,7 +73,6 @@ impl InputAction {
             name: String::from(name),
             triggers: vec![trigger],
             pressed: false,
-            just_pressed: false,
         }
     }
 
@@ -101,13 +98,64 @@ impl InputAction {
     }
 }
 
+/// This stores if an action just_pressed and/or released between two snapshots.
+/// Both can be true (like a quick tap between two long ticks)
+#[derive(Clone, Copy, Default)]
+struct InputActionChanges {
+    just_pressed: bool,
+    just_released: bool,
+}
+
+#[derive(Default)]
+struct InputSnapshot {
+    pending: HashMap<String, InputActionChanges>,
+    current: HashMap<String, InputActionChanges>,
+    last_mouse_position: Vec2,
+    mouse_delta: Vec2,
+}
+
+impl InputSnapshot {
+    fn record(&mut self, name: &str, pressed: bool) {
+        let changes = self.pending.entry(name.to_owned()).or_default();
+        if pressed {
+            changes.just_pressed = true;
+        } else {
+            changes.just_released = true;
+        }
+    }
+
+    fn begin(&mut self, mouse_position: Vec2) {
+        std::mem::swap(&mut self.current, &mut self.pending);
+        self.pending.clear();
+        self.mouse_delta = mouse_position - self.last_mouse_position;
+        self.last_mouse_position = mouse_position;
+    }
+}
+
+/// Each update clock receives its own copy of action changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum InputClock {
+    Frame,
+    Physics,
+    Fixed(u64),
+}
+
 pub struct InputSystem {
     ctx: GeeseContextHandle<Self>,
+    /// Stores the mapping of action name to actual action data
     actions: HashMap<String, InputAction>,
+    /// Stores which modifiers are currently active
     current_modifiers: ModifiersState,
+    /// This is just the current mouse position. Nothing more.
     mouse_position: Vec2,
-    last_frame_mouse_position: Vec2,
-    mouse_delta: Vec2,
+    held_keys: HashSet<KeyCode>,
+    held_mouse_buttons: HashSet<MouseButton>,
+    /// For each kind of tick, we store a InputClock. And for each one, we need to store a separate snapshot
+    /// of inputs which happened between the last and current occurence of that tick.
+    snapshots: HashMap<InputClock, InputSnapshot>,
+    /// We store which clock is currently active, so when someone asks "was this key pressed?",
+    /// we can give a different answer based on what tick we are on currently
+    active_clock: Option<InputClock>,
 }
 impl InputSystem {
     /// Registers a new InputAction
@@ -135,35 +183,76 @@ impl InputSystem {
         }
     }
 
-    /// Returns true when at least one of the triggers of an InputAction
-    /// have been pressed down **this frame**
+    /// Returns `true` if the action was pressed between the last tick and this one
+    ///
+    /// Note this does not exclude `is_action_just_released() == true`! Depending on the interval
+    /// of the tick, an action can be pressed and released between two ticks!
     pub fn is_action_just_pressed(&self, name: &str) -> bool {
-        debug!("is_action_just_pressed");
-        match self.actions.get(name) {
-            Some(action) => action.just_pressed,
-            None => {
-                warn!(
-                    "is_action_just_pressed: Action '{}' does not exist. Create it by calling add_action.",
-                    name
-                );
-                false
-            }
+        self.action_changes(name).just_pressed
+    }
+
+    /// Returns `true` if the action was released between the last tick and this one.
+    ///
+    /// Note this does not exclude `is_action_just_pressed() == true`! Depending on the interval
+    /// of the tick, an action can be pressed and released between two ticks!
+    pub fn is_action_just_released(&self, name: &str) -> bool {
+        self.action_changes(name).just_released
+    }
+
+    /// Fetches what changes occured for this action between this and last tick
+    fn action_changes(&self, name: &str) -> InputActionChanges {
+        if !self.actions.contains_key(name) {
+            warn!("Input action '{}' does not exist", name);
+            return InputActionChanges::default();
         }
+        self.snapshots
+            .get(&self.active_clock.unwrap_or(InputClock::Frame))
+            // Use an then, since we dont want Option<Option<...>>
+            // this would be the same as map(...).flatten()
+            .and_then(|snapshot| snapshot.current.get(name))
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Physical surface pixels, top-left origin, +Y down.
     pub fn mouse_surface_position(&self) -> SurfacePos {
         SurfacePos(self.mouse_position)
     }
-    /// Difference between update-frame snapshots; also +Y down.
+
+    /// Movement since this clock last ran; fixed ticks and frames are independent.
     pub fn mouse_surface_delta(&self) -> Vec2 {
-        self.mouse_delta
+        self.snapshots
+            .get(&self.active_clock.unwrap_or(InputClock::Frame))
+            .map_or(Vec2::ZERO, |snapshot| snapshot.mouse_delta)
     }
 
-    pub(crate) fn begin_frame(&mut self) {
-        debug!("begin_frame");
-        self.mouse_delta = self.mouse_position - self.last_frame_mouse_position;
-        self.last_frame_mouse_position = self.mouse_position;
+    /// Starts a normal frame clock
+    pub(crate) fn begin_update(&mut self) {
+        self.begin_clock(InputClock::Frame);
+    }
+
+    /// Starts a physics clock
+    pub(crate) fn begin_physics_tick(&mut self) {
+        self.begin_clock(InputClock::Physics);
+    }
+
+    /// Starts the clock for a specific fixed-millisecond tick
+    pub(crate) fn begin_fixed_tick(&mut self, milliseconds: u64) {
+        self.begin_clock(InputClock::Fixed(milliseconds));
+    }
+
+    /// Sets the clock as active and refreshes/ sets up the snapshot
+    fn begin_clock(&mut self, clock: InputClock) {
+        self.snapshots
+            .get_mut(&clock)
+            .expect("Input clock must be registered before receiving input")
+            .begin(self.mouse_position);
+        self.active_clock = Some(clock);
+    }
+
+    /// Called only after all listeners and their queued events have completed.
+    pub(crate) fn end_update(&mut self) {
+        self.active_clock = None;
     }
 
     /// Normalized keyboard direction in world axes: up is +Y.
@@ -196,61 +285,87 @@ impl InputSystem {
         .normalize_or_zero()
     }
 
-    /// Updates keyboard input for all InputAction's
+    /// Track physical state, then aggregate all bindings for each action.
     pub(crate) fn handle_keyevent(&mut self, event: &KeyEvent) {
-        debug!("handle_keyevent");
-        self.actions.iter_mut().for_each(|(key, action)| {
-            action.triggers.iter().for_each(|trigger| {
-                if let InputActionTriggerReason::Key(trigger_key) = trigger.reason
-                    && event.physical_key == trigger_key
-                    && self.current_modifiers == trigger.modifiers
-                {
-                    action.just_pressed = event.state == ElementState::Pressed && !event.repeat;
-                    action.pressed = event.state == ElementState::Pressed;
-                };
-            });
-        });
+        if let PhysicalKey::Code(key) = event.physical_key {
+            match event.state {
+                ElementState::Pressed => {
+                    self.held_keys.insert(key);
+                }
+                ElementState::Released => {
+                    self.held_keys.remove(&key);
+                }
+            }
+            // Repeated key-down events do not create a new action transition.
+            self.refresh_actions();
+        }
     }
 
-    /// Updates mouse input for all InputAction's
     pub(crate) fn handle_mouse_input(&mut self, button: MouseButton, state: ElementState) {
-        self.actions.values_mut().for_each(|action| {
-            action.triggers.iter().for_each(|trigger| {
-                if let InputActionTriggerReason::Mouse(trigger_button) = trigger.reason
-                    && button == trigger_button
-                    && self.current_modifiers == trigger.modifiers
-                {
-                    action.just_pressed = state == ElementState::Pressed;
-                    action.pressed = state == ElementState::Pressed;
-                };
-            });
-        });
+        match state {
+            ElementState::Pressed => {
+                self.held_mouse_buttons.insert(button);
+            }
+            ElementState::Released => {
+                self.held_mouse_buttons.remove(&button);
+            }
+        }
+        self.refresh_actions();
     }
 
-    /// Preserve fractional physical coordinates; no axis conversion at input.
+    /// Uses the collected input state to update the state of the InputActions
+    fn refresh_actions(&mut self) {
+        for action in self.actions.values_mut() {
+            let pressed = action.triggers.iter().any(|trigger| {
+                self.current_modifiers == trigger.modifiers
+                    && match trigger.reason {
+                        InputActionTriggerReason::Key(key) => self.held_keys.contains(&key),
+                        InputActionTriggerReason::Mouse(button) => {
+                            self.held_mouse_buttons.contains(&button)
+                        }
+                    }
+            });
+            if pressed != action.pressed {
+                action.pressed = pressed;
+                for snapshot in self.snapshots.values_mut() {
+                    snapshot.record(&action.name, pressed);
+                }
+            }
+        }
+    }
+
     pub(crate) fn handle_cursor_movement(&mut self, p: PhysicalPosition<f64>) {
         self.mouse_position = Vec2::new(p.x as f32, p.y as f32);
     }
 
     pub(crate) fn update_modifiers(&mut self, modifiers: &Modifiers) {
         self.current_modifiers = modifiers.state();
+        self.refresh_actions();
     }
 
-    /// Sets the `just_pressed` property of all InputAction's to `false`
-    pub(crate) fn reset_just_pressed(&mut self) {
-        self.actions.values_mut().for_each(|action| {
-            action.just_pressed = false;
-        });
+    pub(crate) fn release_all(&mut self) {
+        self.held_keys.clear();
+        self.held_mouse_buttons.clear();
+        self.current_modifiers = ModifiersState::empty();
+        self.refresh_actions();
     }
 }
 impl GeeseSystem for InputSystem {
     fn new(ctx: geese::GeeseContextHandle<Self>) -> Self {
+        let mut snapshots = HashMap::default();
+        snapshots.insert(InputClock::Frame, InputSnapshot::default());
+        snapshots.insert(InputClock::Physics, InputSnapshot::default());
+        for milliseconds in crate::events::timing::FIXED_TICKS {
+            snapshots.insert(InputClock::Fixed(milliseconds), InputSnapshot::default());
+        }
         Self {
             ctx,
             actions: HashMap::default(),
             mouse_position: Vec2::ZERO,
-            last_frame_mouse_position: Vec2::ZERO,
-            mouse_delta: Vec2::ZERO,
+            held_keys: HashSet::default(),
+            held_mouse_buttons: HashSet::default(),
+            snapshots,
+            active_clock: None,
             current_modifiers: ModifiersState::empty(),
         }
     }

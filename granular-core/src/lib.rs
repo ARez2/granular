@@ -15,6 +15,9 @@ use winit::{
 
 pub mod future_executor;
 
+mod fixed_stepper;
+pub use fixed_stepper::FixedStepper;
+
 mod rect;
 pub use rect::{PixelRect, Rect};
 
@@ -40,7 +43,7 @@ pub use input_system::{InputAction, InputActionTrigger, InputSystem};
 
 pub mod prelude {
     pub use super::{
-        AssetSystem, BatchRenderer, Camera, GranularEngine,
+        AssetSystem, BatchRenderer, Camera, FixedStepper, GranularEngine,
         assets::{self, AssetHandle},
         events,
         graphics::{
@@ -66,7 +69,13 @@ pub mod events {
 
         /// Gets sent out every T milliseconds
         pub struct FixedTick<const N: u64>;
-        pub const FIXED_TICKS: [u64; 5] = [5000, 2500, 1000, 16, 1];
+        pub const FIXED_TICKS: [u64; 4] = [5000, 2500, 1000, 1];
+
+        /// A tick that ticks with the physics tickrate configured in the engine
+        pub struct PhysicsTick {
+            pub delta: f32,
+        }
+
         // Emitted every frame and used to let things tick without the outer application seeing it
         pub(crate) struct InternalTick;
     }
@@ -75,6 +84,9 @@ pub mod events {
         pub new_size: PhysicalSize<u32>,
     }
 }
+
+const DEFAULT_PHYSICS_HZ: u32 = 60;
+const DEFAULT_PHYSICS_MAX_STEPS: u32 = 8;
 
 enum CustomWinitEvent {
     GraphicsSystemInitialized { state: graphics::GraphicsState },
@@ -113,6 +125,8 @@ pub struct GranularEngine<AppSystem: GeeseSystem + std::fmt::Debug> {
     last_ticks: HashMap<Duration, Instant>,
     application: PhantomData<AppSystem>,
     last_handled_resize: Option<PhysicalSize<u32>>,
+
+    physics_stepper: FixedStepper,
 }
 #[profiling::all_functions]
 impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
@@ -150,6 +164,8 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
             last_ticks,
             application: PhantomData,
             last_handled_resize: None,
+
+            physics_stepper: FixedStepper::new(DEFAULT_PHYSICS_HZ, DEFAULT_PHYSICS_MAX_STEPS),
         }
     }
 
@@ -181,23 +197,9 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
 
     /// Responsible for emitting the right `events::timing::Tick` or `events::timing::FixedTick`
     pub fn handle_scheduling(&mut self) {
+        self.ctx.get_mut::<InputSystem>().begin_update();
+
         let mut buffer = geese::EventBuffer::default().with(events::timing::Tick::<1>);
-
-        let now = Instant::now();
-        for (tickrate, last) in &mut self.last_ticks {
-            if *last + *tickrate < now {
-                *last = now;
-
-                match tickrate.as_millis() as u64 {
-                    1 => buffer = buffer.with(events::timing::FixedTick::<1>),
-                    16 => buffer = buffer.with(events::timing::FixedTick::<16>),
-                    1000 => buffer = buffer.with(events::timing::FixedTick::<1000>),
-                    2500 => buffer = buffer.with(events::timing::FixedTick::<2500>),
-                    5000 => buffer = buffer.with(events::timing::FixedTick::<5000>),
-                    _ => {}
-                }
-            }
-        }
 
         if self.frame.is_multiple_of(60) {
             buffer = buffer.with(events::timing::Tick::<60>);
@@ -213,7 +215,53 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
         };
         // 1 Frame tick is already handled at the very top
 
+        // Frame snapshot was activated in new_events. Fully dispatch it before
+        // changing the input clock; batching frame and fixed events mixes clocks.
         self.ctx.flush().with_buffer(buffer);
+        self.ctx.get_mut::<InputSystem>().end_update();
+
+        let now = Instant::now();
+        let steps = self.physics_stepper.advance();
+        let phyiscs_delta = self.physics_stepper.delta();
+        for _ in 0..steps {
+            self.ctx.get_mut::<InputSystem>().begin_physics_tick();
+            self.ctx.flush().with(events::timing::PhysicsTick {
+                delta: phyiscs_delta,
+            });
+            self.ctx.get_mut::<InputSystem>().end_update();
+        }
+
+        for milliseconds in events::timing::FIXED_TICKS {
+            let tickrate = Duration::from_millis(milliseconds);
+            let last = self.last_ticks.get_mut(&tickrate).unwrap();
+            if now.duration_since(*last) < tickrate {
+                continue;
+            }
+            *last = now;
+
+            self.ctx
+                .get_mut::<InputSystem>()
+                .begin_fixed_tick(milliseconds);
+            match milliseconds {
+                1 => {
+                    self.ctx.flush().with(events::timing::FixedTick::<1>);
+                }
+                16 => {
+                    self.ctx.flush().with(events::timing::FixedTick::<16>);
+                }
+                1000 => {
+                    self.ctx.flush().with(events::timing::FixedTick::<1000>);
+                }
+                2500 => {
+                    self.ctx.flush().with(events::timing::FixedTick::<2500>);
+                }
+                5000 => {
+                    self.ctx.flush().with(events::timing::FixedTick::<5000>);
+                }
+                _ => unreachable!("Unsupported fixed tick interval"),
+            }
+            self.ctx.get_mut::<InputSystem>().end_update();
+        }
     }
 
     /// Resizes the surface with the new_size
@@ -232,6 +280,14 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
         }
         self.last_handled_resize = Some(new_size);
         self.ctx.flush().with(events::Resized { new_size });
+    }
+
+    pub fn set_physics_tickrate(&mut self, hz: u32) {
+        self.physics_stepper.set_hz(hz);
+    }
+
+    pub fn physics_tickrate(&self) -> u32 {
+        self.physics_stepper.hz()
     }
 }
 #[profiling::all_functions]
@@ -292,6 +348,7 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
             CustomWinitEvent::InitDone => {
                 if self.state == EngineState::PreparingBeforeRun {
                     self.ctx.flush().with(events::Initialized {});
+                    self.physics_stepper.reset();
                     self.state = EngineState::Running;
                 }
             }
@@ -322,13 +379,8 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
             return;
         }
 
-        {
-            let mut input = self.ctx.get_mut::<InputSystem>();
-            input.begin_frame();
-            input.reset_just_pressed();
-        }
-        self.update();
         self.handle_scheduling();
+        self.update();
         self.ctx.get_mut::<TimeSystem>().mark_frame();
         self.frame += 1;
     }
@@ -374,6 +426,12 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
                 let mut input = self.ctx.get_mut::<InputSystem>();
                 input.handle_mouse_input(button, state);
             }
+            WindowEvent::Focused(focused) => {
+                if !focused {
+                    self.ctx.get_mut::<InputSystem>().release_all();
+                }
+                self.ctx.flush().with(WindowEvent::Focused(focused));
+            }
             WindowEvent::MouseWheel {
                 device_id: _,
                 delta: _,
@@ -400,7 +458,6 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> ApplicationHandler<CustomWinitEve
             | WindowEvent::Ime(_)
             | WindowEvent::ActivationTokenDone { .. }
             | WindowEvent::Occluded(_)
-            | WindowEvent::Focused(_)
             | WindowEvent::ScaleFactorChanged { .. }
             | WindowEvent::ThemeChanged(_) => {
                 self.ctx.flush().with(event);
