@@ -1,5 +1,6 @@
 const GRID_WIDTH = {{GRID_WIDTH}};
 const GRID_HEIGHT = {{GRID_HEIGHT}};
+const NUM_COLLISION_INTEGERS = {{NUM_COLLISION_INTEGERS}};
 
 const WORKGROUP_SIZE_X: u32 = 8;
 const WORKGROUP_SIZE_Y: u32 = 8;
@@ -97,8 +98,8 @@ var<storage, read_write> rb_metadata: array<RBWorldMetadata>;
 
 
 struct CollisionData {
-    world_collision: array<u32, {{NUM_COLLISION_INTEGERS}}>,
-    rb_collision: array<u32, {{NUM_COLLISION_INTEGERS}}>,
+    world_collision: array<u32, NUM_COLLISION_INTEGERS>,
+    rb_collision: array<u32, NUM_COLLISION_INTEGERS>,
 }
 @group(0) @binding(12)
 var<storage, read_write> collision_data: CollisionData;

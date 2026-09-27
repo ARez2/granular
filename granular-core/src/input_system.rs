@@ -138,6 +138,7 @@ impl InputSystem {
     /// Returns true when at least one of the triggers of an InputAction
     /// have been pressed down **this frame**
     pub fn is_action_just_pressed(&self, name: &str) -> bool {
+        debug!("is_action_just_pressed");
         match self.actions.get(name) {
             Some(action) => action.just_pressed,
             None => {
@@ -160,6 +161,7 @@ impl InputSystem {
     }
 
     pub(crate) fn begin_frame(&mut self) {
+        debug!("begin_frame");
         self.mouse_delta = self.mouse_position - self.last_frame_mouse_position;
         self.last_frame_mouse_position = self.mouse_position;
     }
@@ -196,6 +198,7 @@ impl InputSystem {
 
     /// Updates keyboard input for all InputAction's
     pub(crate) fn handle_keyevent(&mut self, event: &KeyEvent) {
+        debug!("handle_keyevent");
         self.actions.iter_mut().for_each(|(key, action)| {
             action.triggers.iter().for_each(|trigger| {
                 if let InputActionTriggerReason::Key(trigger_key) = trigger.reason

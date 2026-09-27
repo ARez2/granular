@@ -111,35 +111,35 @@ impl Game {
                 self.materials_bg.take().unwrap(),
             );
 
-            // let half_w = granular::simulation::GRID_WIDTH / 2;
-            // let quart_w = granular::simulation::GRID_WIDTH / 4;
-            // let third_h = granular::simulation::GRID_HEIGHT / 3;
-            // let fith_h = granular::simulation::GRID_HEIGHT / 5;
-            // for y in (third_h - fith_h)..(third_h + fith_h) {
-            //     for x in (half_w - quart_w)..(half_w + quart_w) {
-            //         simulation.set_cell(
-            //             ivec2(x as i32, y as i32),
-            //             shader_types::Cell::new(
-            //                 shader_types::MaterialName::Sand,
-            //                 Vec2::ZERO,
-            //                 Vec4::ONE,
-            //             ),
-            //         );
-            //     }
-            // }
+            let half_w = granular::simulation::GRID_WIDTH / 2;
+            let quart_w = granular::simulation::GRID_WIDTH / 4;
+            let third_h = granular::simulation::GRID_HEIGHT / 3;
+            let fith_h = granular::simulation::GRID_HEIGHT / 5;
+            for y in (third_h - fith_h)..(third_h + fith_h) {
+                for x in (half_w - quart_w)..(half_w + quart_w) {
+                    simulation.set_cell(
+                        ivec2(x as i32, y as i32),
+                        shader_types::Cell::new(
+                            shader_types::MaterialName::Sand,
+                            Vec2::ZERO,
+                            Vec4::ONE,
+                        ),
+                    );
+                }
+            }
 
-            // for y in 40..47 {
-            //     for x in 0..half_w {
-            //         simulation.set_cell(
-            //             ivec2(x as i32, y),
-            //             shader_types::Cell::new(
-            //                 shader_types::MaterialName::Rock,
-            //                 Vec2::ZERO,
-            //                 Vec4::ONE,
-            //             ),
-            //         );
-            //     }
-            // }
+            for y in 40..47 {
+                for x in 0..half_w {
+                    simulation.set_cell(
+                        ivec2(x as i32, y),
+                        shader_types::Cell::new(
+                            shader_types::MaterialName::Rock,
+                            Vec2::ZERO,
+                            Vec4::ONE,
+                        ),
+                    );
+                }
+            }
 
             for y in 0..3 {
                 for x in 0..granular::simulation::GRID_WIDTH {
@@ -181,12 +181,19 @@ impl Game {
     fn on_update(&mut self, _: &events::timing::FixedTick<16>) {
         let input = self.ctx.get::<InputSystem>();
         let vector = input.world_input_direction("cam_left", "cam_right", "cam_up", "cam_down");
+        let toggle_debugdraw = input.is_action_just_pressed("toggle_debugdraw");
+        if toggle_debugdraw {
+            debug!("DEBUG?! {}", toggle_debugdraw);
+        }
         drop(input);
         let mut camera = self.ctx.get_mut::<Camera>();
         // camera.translate(vector * 10.0);
         drop(camera);
         let mut sim = self.ctx.get_mut::<MySimulation>();
-        sim.update_rb_force(vector * 0.5);
+        sim.update_rb_force(vector * vec2(8.0, 15.0));
+        if toggle_debugdraw {
+            sim.toggle_debugdraw_colliders();
+        }
     }
 
     fn on_draw(&mut self, _: &granular::graphics::events::RecordGameRenderingCommands) {
@@ -422,6 +429,10 @@ impl GeeseSystem for Game {
             input.add_action(
                 "cam_down",
                 InputActionTrigger::new_key(KeyCode::ArrowDown, ModifiersState::empty()),
+            );
+            input.add_action(
+                "toggle_debugdraw",
+                InputActionTrigger::new_key(KeyCode::Digit1, ModifiersState::empty()),
             );
         }
 

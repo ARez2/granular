@@ -117,12 +117,12 @@ impl SimPhysics {
         );
 
         // Iter on each rigid-bodies that moved (dynamic and kinematic).
-        // for rigid_body_handle in island_manager.active_bodies() {
-        //     let rigid_body = &rigid_body_set[rigid_body_handle];
+        // for rigid_body_handle in self.island_manager.active_bodies() {
+        //     let rigid_body = &self.rb_set[rigid_body_handle];
         //     println!(
         //         "Rigid body {:?} has a new position: {:?}",
         //         rigid_body_handle,
-        //         rigid_body.position()
+        //         self.physvec_to_pix(rigid_body.position().translation)
         //     );
         // }
 
@@ -155,10 +155,6 @@ impl SimPhysics {
     }
 
     fn build_voxel_collider(&self, cells: &[(IVec2, f32)]) -> Collider {
-        debug!(
-            "build_voxel_collider {:?}",
-            cells.iter().map(|c| c.0).collect::<Vec<IVec2>>()
-        );
         let (scale, offset_pixels) = if !cells.is_empty() {
             // Calculate bounding box of collider pixels
             let mut min = cells[0].0;
@@ -174,7 +170,7 @@ impl SimPhysics {
             let bounds_size = bounds_max - bounds_min;
 
             // How much to grow the collider on each side
-            const GROW_BY_SIM_PIXELS: f32 = 0.0;
+            const GROW_BY_SIM_PIXELS: f32 = 1.0;
 
             let required_scale =
                 (bounds_size + Vec2::splat(2.0 * GROW_BY_SIM_PIXELS)) / bounds_size;
