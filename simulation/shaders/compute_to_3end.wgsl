@@ -42,3 +42,41 @@ fn extract_bodies(@builtin(global_invocation_id) gid: vec3u) {
         );
     }
 }
+
+
+@compute @workgroup_size(64, 1, 1)
+fn create_collision(@builtin(global_invocation_id) gid: vec3u) {
+    let word_idx = gid.x;
+
+    // Both arrays currently have NUM_COLLISION_INTEGERS entries.
+    if word_idx >= NUM_COLLISION_INTEGERS {
+        return;
+    }
+
+    var world_bits = 0u;
+    var rb_bits = 0u;
+    for (var bit = 0u; bit < 32u; bit++) {
+        let cell_idx = word_idx * 32u + bit;
+
+        // World occupancy, after body extraction.
+        if cell_idx < GRID_WIDTH * GRID_HEIGHT {
+            let has_moved = !eq(input_cells[cell_idx], next_cells[cell_idx]);
+            if matname_has_collision(next_cells[cell_idx].material) && !has_moved {
+                world_bits |= 1u << bit;
+            }
+        }
+
+        // Independent index into the contiguous RB-cell pool.
+        if cell_idx < arrayLength(&rb_cells) {
+            let cell = rb_cells[cell_idx];
+            let valid = (cell.flags & RBCELL_FLAG_VALID) != 0u;
+
+            if valid && matname_has_collision(cell.inner_cell.material) {
+                rb_bits |= 1u << bit;
+            }
+        }
+    }
+
+    collision_data.world_collision[word_idx] = world_bits;
+    collision_data.rb_collision[word_idx] = rb_bits;
+}

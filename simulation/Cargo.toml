@@ -36,6 +36,7 @@ rapier2d = "0.35.3"
 
 # TODO: REMOVE THIS AGAIN AFTER RB TESTS?!
 image = "0.25.10"
+futures-channel = "0.3.34"
 
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

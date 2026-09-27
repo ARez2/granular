@@ -1,4 +1,4 @@
-use encase::{ShaderType, UniformBuffer};
+use encase::{ShaderSize, ShaderType, UniformBuffer};
 use glam::prelude::*;
 use granular_core::{
     filewatcher::{self, FileWatcher},
@@ -30,6 +30,8 @@ pub mod __macro_support {
 
 pub const GRID_WIDTH: u32 = 128;
 pub const GRID_HEIGHT: u32 = 128;
+// Each cell gets one bit inside these integers
+pub const NUM_COLLISION_INTEGERS: u32 = (GRID_WIDTH * GRID_HEIGHT).div_ceil(32);
 
 mod shader_types;
 mod sim_helpers;
@@ -37,6 +39,11 @@ use shader_types::{MaybeCell, RB, RBCell};
 use sim_helpers::*;
 mod sim_physics;
 use sim_physics::SimPhysics;
+
+struct CollisionReadback {
+    result: Result<(), wgpu::BufferAsyncError>,
+    rbs_snapshot: Vec<RB>,
+}
 
 use crate::shader_types::{
     MAYBECELL_FLAG_IS_SOME, RBCELL_FLAG_PIXELSCENE_COLOR, RBCELL_FLAG_VALID,
@@ -184,6 +191,7 @@ pub struct Simulation<N: MatName, M: MaterialStruct, C: CellStruct> {
 
     /// The wrapper around Rapier2D
     physics: SimPhysics,
+    // Size of total nr cells
     rb_cells_cpu: Box<[RBCell<C>]>,
     /// GPU storage for the RBCell's
     rb_cells_buffer: wgpu::Buffer,
@@ -194,6 +202,12 @@ pub struct Simulation<N: MatName, M: MaterialStruct, C: CellStruct> {
     rbs_buffer: wgpu::Buffer,
     /// Maps a rapier RigidBodyHandle to an index into rbs
     rapier_rb_to_sim_rb: HashMap<RigidBodyHandle, usize>,
+    /// Maps an index into rbs to a rapier RigidBodyHandle
+    sim_rb_to_rapier_rb: HashMap<usize, RigidBodyHandle>,
+    collision_data_buffer: wgpu::Buffer,
+    collision_readback_buffer: wgpu::Buffer,
+    collision_readback_running: bool,
+    debugdraw_colliders: bool,
 }
 impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
     fn update(&mut self, _: &granular_core::graphics::events::RunSimulation) {
@@ -215,7 +229,7 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
 
             for pass in &self.simulation_passes {
                 #[cfg(feature = "trace")]
-                profiling::scope!("compute pass");
+                profiling::scope!(&pass.name);
 
                 #[cfg(feature = "trace")]
                 let mut compute_pass = profiler_scope.scoped_compute_pass(pass.name);
@@ -224,7 +238,7 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
                     context
                         .encoder
                         .begin_compute_pass(&wgpu::ComputePassDescriptor {
-                            label: Some("compute pass"),
+                            label: Some(&pass.name),
                             timestamp_writes: None,
                         });
                 compute_pass.set_pipeline(&pass.pipeline);
@@ -256,7 +270,42 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
         if !dt.is_zero() {
             self.last_tick = Instant::now();
         }
+
+        if !self.collision_readback_running && self.frame > 0 {
+            context.encoder.copy_buffer_to_buffer(
+                &self.collision_data_buffer,
+                0,
+                &self.collision_readback_buffer,
+                0,
+                self.collision_readback_buffer.size(),
+            );
+        }
+
         drop(graphics_sys);
+    }
+
+    fn after_simulation(&mut self, _: &granular_core::graphics::events::AfterSimulation) {
+        if !self.collision_readback_running && self.frame > 0 {
+            let mut future_exec = self.ctx.get_mut::<FutureExecutor>();
+            let staging = self.collision_readback_buffer.clone();
+            let rbs_snapshot = self.rbs.clone();
+            future_exec.spawn(async move {
+                let (tx, rx) = futures_channel::oneshot::channel();
+                staging
+                    .slice(..)
+                    .map_async(wgpu::MapMode::Read, move |result| {
+                        let _ = tx.send(result);
+                    });
+
+                let result = rx.await.expect("Mapping callback dropped");
+                CollisionReadback {
+                    result,
+                    rbs_snapshot,
+                }
+            });
+            drop(future_exec);
+            self.collision_readback_running = true;
+        }
     }
 
     fn on_game_render(&mut self, _: &graphics::events::RecordGameRenderingCommands) {
@@ -357,12 +406,21 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
         if self.rbs.is_empty() {
             return;
         }
-        self.physics
-            .get_rigidbody(*self.rapier_rb_to_sim_rb.keys().nth(0).unwrap())
-            .set_linvel(delta, true);
+        let rb = self
+            .physics
+            .get_rigidbody(*self.rapier_rb_to_sim_rb.keys().nth(0).unwrap());
+        rb.reset_forces(false);
+        rb.add_force(delta, true);
+    }
+
+    pub fn toggle_debugdraw_colliders(&mut self) {
+        self.debugdraw_colliders = !self.debugdraw_colliders;
     }
 
     fn on_display_game_render(&mut self, _: &graphics::events::RecordUiRenderingCommands) {
+        if !self.debugdraw_colliders {
+            return;
+        }
         let disp_scale = self.display_scale;
         let mut debug = self.ctx.get_mut::<DebugDraw>();
 
@@ -458,80 +516,6 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
             i
         };
         self.material_names.insert(material_name, index);
-    }
-
-    pub fn add_rigidbody(&mut self, rb_image_bytes: &[u8], filler_cell: C) -> anyhow::Result<()> {
-        let mut image =
-            image::load_from_memory(rb_image_bytes).expect("failed to decode embedded image");
-        image
-            .set_color_space(image::metadata::Cicp::SRGB)
-            .expect("failed to set srgb color space");
-        image
-            .convert_color_space(
-                image::metadata::Cicp::SRGB_LINEAR,
-                image::ConvertColorOptions::default(),
-                image::ColorType::Rgba32F,
-            )
-            .expect("failed to convert image to linear sRGB");
-        let image = image.to_rgba8();
-
-        let mut last_idx = 0;
-        let mut collider_pixels = vec![];
-
-        let start_index = self.rbs.last().map_or(0, |v| v.rbcells_end);
-
-        let img_center = ivec2(image.width() as i32 / 2, image.height() as i32 / 2);
-
-        for (idx, (x, y, pixel)) in image.enumerate_pixels().enumerate() {
-            #[allow(unused)]
-            let [r, g, b, a] = pixel.0;
-
-            let flags = RBCELL_FLAG_VALID | RBCELL_FLAG_PIXELSCENE_COLOR;
-
-            let mut inner_cell = if a == 0 { C::default() } else { filler_cell };
-            inner_cell.set_color(vec4(r as f32, g as f32, b as f32, a as f32) / 255.0);
-
-            let pix_local_pos_in_rb = ivec2(x as i32 - img_center.x, img_center.y - y as i32);
-
-            let matname: N = inner_cell.material_name().into();
-            if a != 0 && matname.has_collision() {
-                let mat_idx = self.material_names[&matname];
-                let density = self.materials[mat_idx].as_ref().ok_or(anyhow::anyhow!("Did not find a material for the provided material name! Make sure to register the material before via `add_material`."))?.density();
-                collider_pixels.push((pix_local_pos_in_rb, density));
-            }
-
-            self.rb_cells_cpu[start_index as usize + idx] = RBCell {
-                inner_cell,
-                rb_local_pos: pix_local_pos_in_rb,
-                rb_index: 0,
-                flags,
-            };
-            last_idx = start_index as usize + idx;
-        }
-
-        let position = vec2(50.0, 30.0);
-        let rb_handle = self.physics.create_rigidbody(
-            RigidBodyBuilder::dynamic(),
-            position,
-            (0.0f32).to_radians(),
-            &collider_pixels,
-        );
-
-        self.rapier_rb_to_sim_rb.insert(rb_handle, 0);
-
-        self.rbs.push(RB {
-            position,
-            angle_degrees: 0.0,
-            rbcells_start: start_index,
-            rbcells_end: last_idx as u32,
-        });
-        if self.rb_cells_dirty_range.is_empty() {
-            self.rb_cells_dirty_range = (start_index as usize)..last_idx;
-        } else {
-            self.rb_cells_dirty_range.end = std::cmp::max(self.rb_cells_dirty_range.end, last_idx);
-        }
-
-        Ok(())
     }
 
     #[inline(always)]
@@ -691,6 +675,8 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
         compute_to_process_preprocessor.define_value("GRID_WIDTH", GRID_WIDTH);
         compute_to_process_preprocessor.define_value("GRID_HEIGHT", GRID_HEIGHT);
         compute_to_process_preprocessor
+            .define_value("NUM_COLLISION_INTEGERS", NUM_COLLISION_INTEGERS);
+        compute_to_process_preprocessor
             .define_value("USER_DEFINITIONS_SHADER", definitions_shader.source);
         compute_to_process_preprocessor
             .define_value("USER_CELL_PROCESS_SHADER", process_shader.source);
@@ -817,9 +803,7 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
         compute_shader: &wgpu::ShaderModule,
     ) -> Vec<SimulationPass> {
         let full_grid_dispatch = (GRID_WIDTH.div_ceil(8), GRID_HEIGHT.div_ceil(8), 1);
-        let num_rbcells = Self::total_nr_cells();
-        let num_rbcell_workgroups = num_rbcells.div_ceil(256);
-        let rbcell_dispatch = (num_rbcell_workgroups as u32, 1, 1);
+        let collision_dispatch = (NUM_COLLISION_INTEGERS.div_ceil(64), 1, 1);
 
         vec![
             SimulationPass::new(
@@ -844,7 +828,7 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
                     compilation_options: Default::default(),
                     cache: None,
                 }),
-                rbcell_dispatch,
+                full_grid_dispatch,
             ),
             SimulationPass::new(
                 "compose grid compute pass",
@@ -918,6 +902,18 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
                 }),
                 full_grid_dispatch,
             ),
+            SimulationPass::new(
+                "create collision compute pass",
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("create collision compute pipeline"),
+                    layout: Some(layout),
+                    module: compute_shader,
+                    entry_point: Some("create_collision"),
+                    compilation_options: Default::default(),
+                    cache: None,
+                }),
+                collision_dispatch,
+            ),
         ]
     }
 
@@ -937,6 +933,223 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> Simulation<N, M, C> {
     const fn total_nr_cells() -> usize {
         (GRID_WIDTH * GRID_HEIGHT) as usize
     }
+
+    pub fn add_rigidbody(&mut self, rb_image_bytes: &[u8], filler_cell: C) -> anyhow::Result<()> {
+        let mut image =
+            image::load_from_memory(rb_image_bytes).expect("failed to decode embedded image");
+        image
+            .set_color_space(image::metadata::Cicp::SRGB)
+            .expect("failed to set srgb color space");
+        image
+            .convert_color_space(
+                image::metadata::Cicp::SRGB_LINEAR,
+                image::ConvertColorOptions::default(),
+                image::ColorType::Rgba32F,
+            )
+            .expect("failed to convert image to linear sRGB");
+        let image = image.to_rgba8();
+
+        let mut collider_pixels = vec![];
+
+        let new_rb_index = self.rbs.len();
+        let start_index = self.rbs.last().map_or(0, |v| v.rbcells_end);
+        let pixel_count = image.width() * image.height();
+        let end_index = start_index + pixel_count;
+
+        let img_center = ivec2(image.width() as i32 / 2, image.height() as i32 / 2);
+
+        for (idx, (x, y, pixel)) in image.enumerate_pixels().enumerate() {
+            #[allow(unused)]
+            let [r, g, b, a] = pixel.0;
+            if a == 0 {
+                continue;
+            }
+
+            let flags = RBCELL_FLAG_VALID | RBCELL_FLAG_PIXELSCENE_COLOR;
+
+            let mut inner_cell = if a == 0 { C::default() } else { filler_cell };
+            inner_cell.set_color(vec4(r as f32, g as f32, b as f32, a as f32) / 255.0);
+
+            let pix_local_pos_in_rb = ivec2(x as i32 - img_center.x, img_center.y - y as i32);
+
+            let matname: N = inner_cell.material_name().into();
+            if x == 7 && y == 1 {
+                debug!(
+                    "pix_local_pos_in_rb: {pix_local_pos_in_rb}, col: {:?}",
+                    matname.has_collision()
+                );
+            }
+            if matname.has_collision() {
+                let mat_idx = self.material_names[&matname];
+                let density = self.materials[mat_idx].as_ref().ok_or(anyhow::anyhow!("Did not find a material for the provided material name! Make sure to register the material before via `add_material`."))?.density();
+                collider_pixels.push((pix_local_pos_in_rb, density));
+            }
+
+            self.rb_cells_cpu[start_index as usize + idx] = RBCell {
+                inner_cell,
+                rb_local_pos: pix_local_pos_in_rb,
+                rb_index: new_rb_index as u32,
+                flags,
+            };
+        }
+
+        let position = vec2(50.0, 150.0);
+        let rb_handle = self.physics.create_rigidbody(
+            RigidBodyBuilder::dynamic(),
+            position,
+            (0.0f32).to_radians(),
+            &collider_pixels,
+        );
+
+        self.rapier_rb_to_sim_rb.insert(rb_handle, new_rb_index);
+        self.sim_rb_to_rapier_rb.insert(new_rb_index, rb_handle);
+
+        self.rbs.push(RB {
+            position,
+            angle_degrees: 0.0,
+            rbcells_start: start_index,
+            rbcells_end: end_index,
+        });
+
+        let added = start_index as usize..end_index as usize;
+        if self.rb_cells_dirty_range.is_empty() {
+            self.rb_cells_dirty_range = added;
+        } else {
+            self.rb_cells_dirty_range.start = self.rb_cells_dirty_range.start.min(added.start);
+            self.rb_cells_dirty_range.end = self.rb_cells_dirty_range.end.max(added.end);
+        }
+
+        Ok(())
+    }
+
+    fn on_collision_buffer_map(
+        &mut self,
+        event: &crate::future_executor::events::FutureReady<CollisionReadback>,
+    ) {
+        if let Err(e) = &event.0.result {
+            error!("Error while mapping collision readbakc buffer: {}", e);
+            self.collision_readback_buffer.unmap();
+            self.collision_readback_running = false;
+            return;
+        }
+
+        let no_rbs = event.0.rbs_snapshot.is_empty();
+        let (world_voxels, rb_voxels) = {
+            let mapped = self.collision_readback_buffer.slice(..).get_mapped_range();
+            if let Err(e) = mapped {
+                error!("Error while mapping collision readback buffer: {}", e);
+                self.collision_readback_buffer.unmap();
+                self.collision_readback_running = false;
+                return;
+            }
+            let mapped = mapped.unwrap();
+
+            let rbs = &event.0.rbs_snapshot;
+
+            let mut world_voxels: Vec<IVec2> = Vec::new();
+            let mut rb_voxels: Vec<Vec<(IVec2, f32)>> =
+                (0..rbs.len()).map(|_| Vec::new()).collect();
+
+            let mut current_rb_index = 0usize;
+            let (chunks, remainder) = mapped.as_chunks::<4>();
+            assert!(remainder.is_empty());
+
+            for (word_idx, bytes) in chunks.iter().enumerate() {
+                let mut bits = u32::from_le_bytes(*bytes);
+
+                if word_idx < NUM_COLLISION_INTEGERS as usize {
+                    // World mask: bit index -> world grid position.
+                    while bits != 0 {
+                        let bit = bits.trailing_zeros() as usize;
+                        bits &= bits - 1;
+
+                        let cell_idx = word_idx * 32 + bit;
+                        // Ignore padding bits in the final world word.
+                        if cell_idx >= Self::total_nr_cells() {
+                            break;
+                        }
+                        let x = cell_idx % GRID_WIDTH as usize;
+                        let y = cell_idx / GRID_WIDTH as usize;
+                        world_voxels.push(IVec2::new(x as i32, y as i32));
+                    }
+                } else {
+                    if no_rbs {
+                        break;
+                    }
+
+                    // RB mask: bit index -> global rb_cells index.
+                    let rb_word_idx = word_idx - NUM_COLLISION_INTEGERS as usize;
+
+                    while bits != 0 {
+                        let bit = bits.trailing_zeros() as usize;
+                        let cell_idx = rb_word_idx * 32 + bit;
+                        bits &= bits - 1;
+
+                        // Advance to the body whose range could contain this cell.
+                        while current_rb_index < rbs.len()
+                            && cell_idx >= rbs[current_rb_index].rbcells_end as usize
+                        {
+                            current_rb_index += 1;
+                        }
+
+                        if current_rb_index == rbs.len() {
+                            break;
+                        }
+
+                        let rb = &rbs[current_rb_index];
+                        // Skip gaps between allocated body ranges, if any.
+                        if cell_idx < rb.rbcells_start as usize {
+                            continue;
+                        }
+                        let pos = self.rb_cells_cpu[cell_idx].rb_local_pos;
+                        let matname: N = self.rb_cells_cpu[cell_idx]
+                            .inner_cell
+                            .material_name()
+                            .into();
+                        let mat_idx = self.material_names[&matname];
+                        let material = self.materials[mat_idx].as_ref();
+
+                        let density = if let Some(mat) = material {
+                            mat.density()
+                        } else {
+                            error!(
+                                "Did not find a material for material name {mat_idx}! Make sure to register the material before via `add_material`."
+                            );
+                            0.0
+                        };
+                        rb_voxels[current_rb_index].push((pos, density));
+                    }
+                }
+            }
+
+            (world_voxels, rb_voxels)
+        };
+        self.collision_readback_buffer.unmap();
+        self.physics.update_world_collider(world_voxels);
+
+        if !no_rbs {
+            for (idx, voxels) in rb_voxels.into_iter().enumerate() {
+                let rb_handle = self.sim_rb_to_rapier_rb[&idx];
+                if voxels.is_empty() {
+                    trace!(
+                        "RB {idx} had zero colliders after simulation updated his colliders. Removing from simulation..."
+                    );
+                    self.remove_rigidbody(rb_handle);
+                } else {
+                    // let _ = self.physics.update_rb_collider(rb_handle, &voxels);
+                }
+            }
+        }
+        self.collision_readback_running = false;
+    }
+
+    pub fn remove_rigidbody(&mut self, rb_handle: RigidBodyHandle) {
+        let idx = self.rapier_rb_to_sim_rb[&rb_handle];
+        self.rapier_rb_to_sim_rb.remove(&rb_handle);
+        self.rbs.remove(idx);
+        self.physics.remove_rigidbody(rb_handle);
+        self.sim_rb_to_rapier_rb.remove(&idx);
+    }
 }
 impl<N: MatName, M: MaterialStruct, C: CellStruct> GeeseSystem for Simulation<N, M, C> {
     const DEPENDENCIES: Dependencies = dependencies()
@@ -945,20 +1158,25 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> GeeseSystem for Simulation<N,
         .with::<Mut<DebugDraw>>()
         .with::<Camera>()
         .with::<Mut<AssetSystem>>()
+        .with::<Mut<FutureExecutor>>()
         .with::<Mut<FileWatcher>>();
 
     #[cfg(all(not(target_arch = "wasm32"), debug_assertions))]
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::update)
+        .with(Self::after_simulation)
         .with(Self::on_game_render)
         .with(Self::on_display_game_render)
         .with(Self::fixed_step)
+        .with(Self::on_collision_buffer_map)
         .with(Self::on_filechange);
     #[cfg(any(target_arch = "wasm32", not(debug_assertions)))]
     const EVENT_HANDLERS: EventHandlers<Self> = event_handlers()
         .with(Self::update)
+        .with(Self::after_simulation)
         .with(Self::on_game_render)
         .with(Self::on_display_game_render)
+        .with(Self::on_collision_buffer_map)
         .with(Self::fixed_step);
 
     fn new(mut ctx: GeeseContextHandle<Self>) -> Self {
@@ -1128,6 +1346,25 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> GeeseSystem for Simulation<N,
                 | wgpu::BufferUsages::COPY_DST,
         });
 
+        // Cast the rbcells into an encase buffer
+        let mut encase_coldata_buffer = encase::StorageBuffer::new(Vec::<u8>::new());
+        encase_coldata_buffer
+            .write(&shader_types::CollisionData::default())
+            .unwrap();
+        let collision_data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("collision_data_buffer buffer"),
+            contents: encase_coldata_buffer.as_ref(),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+        });
+        let collision_readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Collision readback"),
+            size: shader_types::CollisionData::default().size().into(),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
         let sim_bind_group1_builder = BindGroupBuilder::new()
             // input_cells
             .add_binding(
@@ -1254,6 +1491,16 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> GeeseSystem for Simulation<N,
                     min_binding_size: None,
                 },
                 rb_metadata_buffer.as_entire_binding(),
+            ) // collision data
+            .add_binding_with_resource(
+                12,
+                wgpu::ShaderStages::COMPUTE,
+                wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                collision_data_buffer.as_entire_binding(),
             );
 
         let (sim_bgl_a_b, sim_bind_group1_a) = sim_bind_group1_builder
@@ -1399,6 +1646,11 @@ impl<N: MatName, M: MaterialStruct, C: CellStruct> GeeseSystem for Simulation<N,
             rbs,
             rbs_buffer,
             rapier_rb_to_sim_rb: HashMap::default(),
+            sim_rb_to_rapier_rb: HashMap::default(),
+            collision_data_buffer,
+            collision_readback_buffer,
+            collision_readback_running: false,
+            debugdraw_colliders: false,
         }
     }
 }
