@@ -1,3 +1,9 @@
+pub(super) mod batchquadvertex;
+pub(super) mod camera_2d;
+pub(super) mod coord_mapping;
+pub(super) mod draw_space;
+pub(super) mod quad_geometry;
+
 use naga::valid::{Capabilities, ValidationFlags, Validator};
 
 pub fn bytes_per_pixel(format: wgpu::TextureFormat) -> anyhow::Result<u32> {
@@ -23,6 +29,7 @@ pub fn bytes_per_pixel(format: wgpu::TextureFormat) -> anyhow::Result<u32> {
     }
 }
 
+/// Converts an image from the `image` crate into the specified `wgpu::TextureFormat`
 pub fn convert_image(
     img: &image::DynamicImage,
     format: wgpu::TextureFormat,
@@ -66,6 +73,7 @@ pub fn convert_image(
 
 use std::collections::HashMap;
 
+/// A small helper for creating wgpu BindGroup + BindGroupLayouts for less code duplication.
 #[derive(Debug, Default, Clone)]
 pub struct BindGroupBuilder<'a> {
     entries: HashMap<

@@ -1,4 +1,4 @@
-use super::DrawSpace;
+use super::draw_space::DrawSpace;
 use glam::{Mat2, Vec2};
 
 /// Describes how to get from  the center of the quad to the topleft position (is up or down, depending on the DrawSpace)

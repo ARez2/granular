@@ -1,10 +1,6 @@
 #![allow(unused)]
 #![allow(clippy::identity_op)]
 
-use super::{
-    DrawSpace,
-    quad_geometry::{quad_corners, top_left_offset},
-};
 use bytemuck_derive::{Pod, Zeroable};
 use glam::prelude::*;
 use palette::Srgba;
@@ -23,11 +19,17 @@ use wgpu::{
 };
 use winit::dpi::PhysicalSize;
 
-use super::{
-    Camera, RenderContext, Texture2D, TextureBundle, TextureHandle, batchquadvertex::*,
-    graphics_system::GraphicsSystem, texture_atlas::DynamicTextureAtlas,
+use crate::graphics::{
+    self, Camera, DrawSpace, IntoGpuColor, RenderContext, Texture2D, TextureBundle,
+    TextureBundleLoadSettings, TextureHandle,
+    graphics_system::GraphicsSystem,
+    helpers::{
+        batchquadvertex::*,
+        coord_mapping,
+        quad_geometry::{quad_corners, top_left_offset},
+    },
+    texture_atlas::DynamicTextureAtlas,
 };
-use crate::graphics::{self, IntoGpuColor, TextureBundleLoadSettings};
 use crate::{
     assets::{AssetHandle, AssetSystem},
     utils::*,
@@ -340,7 +342,7 @@ impl BatchRenderer {
         let surface_size = view.presentation_settings.surface_size;
         let target_size = match render_target {
             BatchRenderTarget::Game => {
-                super::coord_mapping::game_target_size(view.presentation_settings.game_resolution)
+                coord_mapping::game_target_size(view.presentation_settings.game_resolution)
             }
             BatchRenderTarget::Surface => surface_size,
         };

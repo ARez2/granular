@@ -1,14 +1,12 @@
 #![allow(unused)]
 
-use std::sync::Arc;
-#[cfg(feature = "trace")]
-use std::sync::Mutex;
-
-use super::coord_mapping::game_target_size;
 use anyhow::bail;
 use bytemuck_derive::{Pod, Zeroable};
 use glam::{UVec2, Vec2};
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
+#[cfg(feature = "trace")]
+use std::sync::Mutex;
 use wgpu::{
     Adapter, CommandEncoder, CommandEncoderDescriptor, CurrentSurfaceTexture, Device, Instance,
     Queue, Surface, SurfaceConfiguration, SurfaceTexture, TextureView, TextureViewDescriptor,
@@ -21,10 +19,12 @@ use winit::{
     window::Window,
 };
 
-use super::WindowSystem;
 use crate::{
     AssetSystem, CustomWinitEvent,
-    graphics::{Texture2D, TextureBundle, TextureHandle, validate_wgsl},
+    graphics::{
+        Texture2D, TextureBundle, TextureHandle, WindowSystem,
+        helpers::coord_mapping::game_target_size, validate_wgsl,
+    },
     utils::*,
 };
 

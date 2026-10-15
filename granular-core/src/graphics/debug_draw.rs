@@ -1,4 +1,4 @@
-use super::quad_geometry::{quad_corners, top_left_offset};
+use super::helpers::quad_geometry::{quad_corners, top_left_offset};
 use crate::{
     BatchRenderer,
     graphics::{DrawSpace, IntoGpuColor, QuadTex},

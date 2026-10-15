@@ -2,13 +2,18 @@ mod graphics_system;
 pub(super) use graphics_system::GraphicsState;
 pub use graphics_system::{GraphicsSystem, RenderContext, events};
 
-mod graphics_helpers;
-pub use graphics_helpers::*;
+mod helpers;
+pub use helpers::{BindGroupBuilder, IntoGpuColor, bytes_per_pixel, convert_image, validate_wgsl};
+pub use helpers::{
+    camera_2d::CameraMotion,
+    coord_mapping::{
+        GamePixelPos, PresentationSettings, RenderView, ScalingMode, SurfacePos, UiPos, WorldPos,
+    },
+    draw_space::DrawSpace,
+};
 
 mod texture2d;
 pub use texture2d::Texture2D;
-
-mod batchquadvertex;
 
 mod texture_bundle;
 pub use texture_bundle::{TextureBundle, TextureBundleLoadSettings};
@@ -17,17 +22,10 @@ pub(super) mod window_system;
 pub use window_system::WindowSystem;
 
 mod camera;
-pub use camera::{Camera, CameraMotion};
+pub use camera::Camera;
 
 mod batchrenderer;
 pub use batchrenderer::{BatchRenderer, QuadTex};
-mod draw_space;
-pub use draw_space::DrawSpace;
-pub mod coord_mapping;
-mod quad_geometry;
-pub use coord_mapping::{
-    GamePixelPos, PresentationSettings, RenderView, ScalingMode, SurfacePos, UiPos, WorldPos,
-};
 
 mod game_renderer;
 pub(crate) use game_renderer::GameRenderer;

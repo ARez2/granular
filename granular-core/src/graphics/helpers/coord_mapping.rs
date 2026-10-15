@@ -129,7 +129,7 @@ pub struct RenderView {
 }
 impl RenderView {
     pub fn new(
-        camera: super::camera::Camera2D,
+        camera: super::camera_2d::Camera2D,
         presentation_settings: PresentationSettings,
     ) -> Self {
         assert!(camera.position.is_finite() && camera.rotation.is_finite());
@@ -149,7 +149,7 @@ impl RenderView {
             // Snap projected translation, including the half-size of odd resolutions.
             world_to_game.translation = world_to_game.translation.round();
         }
-        let presentation_offset = if camera.motion == super::camera::CameraMotion::SmoothPixel {
+        let presentation_offset = if camera.motion == super::camera_2d::CameraMotion::SmoothPixel {
             ((desired_world_to_game.translation - world_to_game.translation)
                 * game_scale_on_surface)
                 .round()
