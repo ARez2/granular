@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use std::{collections::VecDeque, path::PathBuf};
 
 use fern::colors::{Color, ColoredLevelConfig};
@@ -98,7 +100,7 @@ impl Game {
         {
             let mut camera = self.ctx.get_mut::<Camera>();
             camera.set_bottomleft_position(Vec2::ZERO);
-            camera.set_motion(CameraMotion::SmoothPixel);
+            camera.set_motion(CameraMotion::Free);
             camera.set_scaling_mode(ScalingMode::KeepAspect);
             drop(camera);
 
@@ -178,15 +180,20 @@ impl Game {
         }
     }
 
-    fn on_update(&mut self, _: &events::timing::PhysicsTick) {
+    fn on_update(&mut self, event: &events::timing::Tick) {
         let input = self.ctx.get::<InputSystem>();
         let cam_vector = input.world_input_direction("cam_left", "cam_right", "cam_up", "cam_down");
+        drop(input);
+        let mut camera = self.ctx.get_mut::<Camera>();
+        camera.translate(cam_vector * event.delta * 12.0);
+        drop(camera);
+    }
+
+    fn on_physupdate(&mut self, _: &events::timing::PhysicsTick) {
+        let input = self.ctx.get::<InputSystem>();
         let other_vector = input.world_input_direction("left", "right", "up", "down");
         let toggle_debugdraw = input.is_action_just_pressed("toggle_debugdraw");
         drop(input);
-        let mut camera = self.ctx.get_mut::<Camera>();
-        camera.translate(cam_vector * 5.0);
-        drop(camera);
         let mut sim = self.ctx.get_mut::<MySimulation>();
         sim.update_rb_force(other_vector * vec2(8.0, 15.0));
         if toggle_debugdraw {
@@ -297,6 +304,7 @@ impl Game {
 
     const EVENT_HANDLERS_SHARED: EventHandlers<Self> = event_handlers()
         .with(Self::init)
+        .with(Self::on_physupdate)
         .with(Self::on_update)
         .with(Self::on_draw);
 

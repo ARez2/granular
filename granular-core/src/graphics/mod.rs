@@ -17,17 +17,16 @@ pub(super) mod window_system;
 pub use window_system::WindowSystem;
 
 mod camera;
-pub use camera::Camera;
+pub use camera::{Camera, CameraMotion};
 
 mod batchrenderer;
 pub use batchrenderer::{BatchRenderer, QuadTex};
 mod draw_space;
 pub use draw_space::DrawSpace;
+pub mod coord_mapping;
 mod quad_geometry;
-pub mod view_mapping;
-pub use view_mapping::{
-    Camera2D, CameraMotion, GamePixelPos, Presentation, RenderView, ScalingMode, SurfacePos, UiPos,
-    WorldPos,
+pub use coord_mapping::{
+    GamePixelPos, PresentationSettings, RenderView, ScalingMode, SurfacePos, UiPos, WorldPos,
 };
 
 mod game_renderer;

@@ -4,7 +4,7 @@ use std::sync::Arc;
 #[cfg(feature = "trace")]
 use std::sync::Mutex;
 
-use super::view_mapping::game_target_size;
+use super::coord_mapping::game_target_size;
 use anyhow::bail;
 use bytemuck_derive::{Pod, Zeroable};
 use glam::{UVec2, Vec2};

@@ -65,7 +65,9 @@ pub mod events {
 
     pub mod timing {
         /// Gets sent out every N frames
-        pub struct Tick<const N: u32>;
+        pub struct Tick {
+            pub delta: f32,
+        }
 
         /// Gets sent out every T milliseconds
         pub struct FixedTick<const N: u64>;
@@ -121,8 +123,9 @@ pub struct GranularEngine<AppSystem: GeeseSystem + std::fmt::Debug> {
     waiting_for_window_event: Arc<AtomicBool>,
     /// Current frame
     frame: u64,
-    /// When each tick (in ms) last occured
-    last_ticks: HashMap<Duration, Instant>,
+    /// When each FixedTick (in ms) last occured
+    last_fixedticks: HashMap<Duration, Instant>,
+    last_tick: Instant,
     application: PhantomData<AppSystem>,
     last_handled_resize: Option<PhysicalSize<u32>>,
 
@@ -133,9 +136,9 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
     // This game resolution is the size that the game renders at (<= display/ window size)
     pub fn new(game_resolution: UVec2) -> Self {
         let now = Instant::now();
-        let mut last_ticks = HashMap::default();
+        let mut last_fixedticks = HashMap::default();
         for fixed_tick in events::timing::FIXED_TICKS {
-            last_ticks.insert(Duration::from_millis(fixed_tick), now);
+            last_fixedticks.insert(Duration::from_millis(fixed_tick), now);
         }
 
         let mut ctx = GeeseContext::default();
@@ -161,7 +164,8 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
             state: EngineState::Uninitialized,
             waiting_for_window_event: Arc::new(AtomicBool::new(false)),
             frame: 0,
-            last_ticks,
+            last_fixedticks,
+            last_tick: now,
             application: PhantomData,
             last_handled_resize: None,
 
@@ -197,30 +201,16 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
 
     /// Responsible for emitting the right `events::timing::Tick` or `events::timing::FixedTick`
     pub fn handle_scheduling(&mut self) {
-        self.ctx.get_mut::<InputSystem>().begin_update();
-
-        let mut buffer = geese::EventBuffer::default().with(events::timing::Tick::<1>);
-
-        if self.frame.is_multiple_of(60) {
-            buffer = buffer.with(events::timing::Tick::<60>);
-        };
-        if self.frame.is_multiple_of(30) {
-            buffer = buffer.with(events::timing::Tick::<30>);
-        };
-        if self.frame.is_multiple_of(10) {
-            buffer = buffer.with(events::timing::Tick::<10>);
-        };
-        if self.frame.is_multiple_of(2) {
-            buffer = buffer.with(events::timing::Tick::<2>);
-        };
-        // 1 Frame tick is already handled at the very top
-
-        // Frame snapshot was activated in new_events. Fully dispatch it before
-        // changing the input clock; batching frame and fixed events mixes clocks.
-        self.ctx.flush().with_buffer(buffer);
-        self.ctx.get_mut::<InputSystem>().end_update();
-
         let now = Instant::now();
+        // First, handle normal tick updating
+        self.ctx.get_mut::<InputSystem>().begin_update();
+        self.ctx.flush().with(events::timing::Tick {
+            delta: self.last_tick.elapsed().as_secs_f32(),
+        });
+        self.ctx.get_mut::<InputSystem>().end_update();
+        self.last_tick = now;
+
+        // Now, handle physics tick
         let steps = self.physics_stepper.advance();
         let phyiscs_delta = self.physics_stepper.delta();
         for _ in 0..steps {
@@ -231,9 +221,10 @@ impl<AppSystem: GeeseSystem + std::fmt::Debug> GranularEngine<AppSystem> {
             self.ctx.get_mut::<InputSystem>().end_update();
         }
 
+        // And finally, handle fixed ms ticks
         for milliseconds in events::timing::FIXED_TICKS {
             let tickrate = Duration::from_millis(milliseconds);
-            let last = self.last_ticks.get_mut(&tickrate).unwrap();
+            let last = self.last_fixedticks.get_mut(&tickrate).unwrap();
             if now.duration_since(*last) < tickrate {
                 continue;
             }

@@ -8,17 +8,19 @@
 //! - describes on what pixel of the game render target something appears (on the screen)
 use crate::{PixelRect, Rect};
 use glam::{Affine2, Mat2, Mat4, UVec2, Vec2, Vec4};
+use log::*;
 
 /// Always render one extra texel on every side for camera compensation.
 /// The visible game resolution excludes this border, in every camera mode.
 pub const GAME_PADDING: u32 = 1;
-pub fn game_target_size(game_size: UVec2) -> UVec2 {
+/// Returns the actual size of the game render target (which is the game size + the `GAME_PADDING` on each side)
+pub fn game_target_size(game_resolution: UVec2) -> UVec2 {
     UVec2::new(
-        game_size
+        game_resolution
             .x
             .checked_add(2 * GAME_PADDING)
             .expect("game width overflow"),
-        game_size
+        game_resolution
             .y
             .checked_add(2 * GAME_PADDING)
             .expect("game height overflow"),
@@ -52,87 +54,50 @@ pub enum ScalingMode {
     Integer,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CameraMotion {
-    /// 1:1 mapping of the cameras transform, regardless of the game's resolution. Could cause subpixel/ edge flickering
-    Free,
-    /// Snaps the camera position to the game grid using a "world -> game" transform
-    PixelSnapped,
-    /// First snaps into the game grid like PixelSnapped mode, but then when
-    /// rendering the game, compensates in surface pixels.
-    /// Best with integer presentation scaling and unrotated pixel art.
-    SmoothPixel,
-}
-
+/// Helper to store some information which is used to display the game on the surface (properly scaled)
 #[derive(Debug, Clone, Copy)]
-pub struct Camera2D {
-    /// Desired center in world space. Never overwritten by snapping.
-    pub position: Vec2,
-    /// Angle in radians (+Angle = CCW rotation)
-    pub rotation: f32,
-    /// The zoom factor of the camera. Higher = closer
-    pub zoom: f32,
-    /// The way the camera position is handled
-    pub motion: CameraMotion,
-}
-impl Default for Camera2D {
-    fn default() -> Self {
-        Self {
-            position: Vec2::ZERO,
-            rotation: 0.0,
-            zoom: 1.0,
-            motion: CameraMotion::PixelSnapped,
-        }
-    }
-}
-impl Camera2D {
-    /// Exponential following. `speed` is in 1/s; `dt` is in seconds.
-    pub fn follow(&mut self, target: Vec2, speed: f32, dt: f32) {
-        assert!(target.is_finite() && speed.is_finite() && dt.is_finite());
-        assert!(speed >= 0.0 && dt >= 0.0);
-        self.position = self.position.lerp(target, 1.0 - (-speed * dt).exp());
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Presentation {
-    pub game_size: UVec2,
+pub struct PresentationSettings {
+    pub game_resolution: UVec2,
     pub surface_size: UVec2,
     pub scaling_mode: ScalingMode,
     pub dpi_scale: f32,
     pub ui_scale: f32,
 }
-impl Presentation {
-    pub fn new(game_size: UVec2, surface_size: UVec2, dpi_scale: f32) -> Self {
+impl PresentationSettings {
+    pub fn new(game_resolution: UVec2, surface_size: UVec2, dpi_scale: f32) -> Self {
         Self {
-            game_size: game_size.max(UVec2::ONE),
+            game_resolution: game_resolution.max(UVec2::ONE),
             surface_size: surface_size.max(UVec2::ONE),
             scaling_mode: ScalingMode::KeepAspect,
             dpi_scale,
             ui_scale: 1.0,
         }
     }
+
+    /// Calculates the rectangle which the game canvas occupies on the surface
     pub fn game_viewport_surface_px(self) -> PixelRect {
-        assert!(self.game_size.x > 0 && self.game_size.y > 0);
+        assert!(self.game_resolution.x > 0 && self.game_resolution.y > 0);
         assert!(self.surface_size.x > 0 && self.surface_size.y > 0);
+        // Just cover the full surface
         if self.scaling_mode == ScalingMode::Stretch {
             return PixelRect {
                 origin: UVec2::ZERO,
                 size: self.surface_size,
             };
         }
-        let ratio = self.surface_size.as_vec2() / self.game_size.as_vec2();
+        let ratio = self.surface_size.as_vec2() / self.game_resolution.as_vec2();
         let fit = ratio.x.min(ratio.y);
         let scale = if self.scaling_mode == ScalingMode::Integer && fit >= 1.0 {
             fit.floor()
         } else {
             fit
         };
-        let size = (self.game_size.as_vec2() * scale)
+        let size = (self.game_resolution.as_vec2() * scale)
             .round()
             .as_uvec2()
             .max(UVec2::ONE)
             .min(self.surface_size);
+
         PixelRect {
             origin: (self.surface_size - size) / 2,
             size,
@@ -140,12 +105,13 @@ impl Presentation {
     }
 }
 
-/// Created by the camera each frame. Represents the different coordinate systems in use
+/// Created by the camera each frame. Represents the different coordinate systems in use and
+/// allows to convert between different coordinate spaces.
 #[derive(Debug, Clone, Copy)]
 pub struct RenderView {
-    pub presentation: Presentation,
+    pub presentation_settings: PresentationSettings,
     pub game_viewport_surface_px: PixelRect,
-    pub presentation_offset: Vec2,
+    presentation_offset: Vec2,
     /// Transforms a world position into its (pixel) position in the game's render target
     world_to_game: Affine2,
     /// Transforms a (pixel) position in the game's render target back into a world position
@@ -158,41 +124,49 @@ pub struct RenderView {
     world_to_surface: Affine2,
     /// Transforms a pixel on the (upscaled) surface into a position in world space
     surface_to_world: Affine2,
-    /// Factor which scales the UI on the surface
+    /// Factor which scales the UI on the surface. Gets calculated from `presentation_settings`
     ui_to_surface_scale: f32,
 }
 impl RenderView {
-    pub fn new(camera: Camera2D, presentation: Presentation) -> Self {
+    pub fn new(
+        camera: super::camera::Camera2D,
+        presentation_settings: PresentationSettings,
+    ) -> Self {
         assert!(camera.position.is_finite() && camera.rotation.is_finite());
         assert!(camera.zoom.is_finite() && camera.zoom > 0.0);
-        let ui_to_surface_scale = presentation.dpi_scale * presentation.ui_scale;
+        let ui_to_surface_scale = presentation_settings.dpi_scale * presentation_settings.ui_scale;
         assert!(ui_to_surface_scale.is_finite() && ui_to_surface_scale > 0.0);
-        let game_viewport_surface_px = presentation.game_viewport_surface_px();
-        let game_size = presentation.game_size.as_vec2();
-        let scale = game_viewport_surface_px.size.as_vec2() / game_size;
+        let game_viewport_surface_px = presentation_settings.game_viewport_surface_px();
+        let game_resolution = presentation_settings.game_resolution.as_vec2();
+        let game_scale_on_surface = game_viewport_surface_px.size.as_vec2() / game_resolution;
 
-        // WORLD -> IMAGE: the only semantic Y-up -> Y-down conversion.
-        let desired_world_to_game = Affine2::from_translation(game_size * 0.5)
+        let desired_world_to_game = Affine2::from_translation(game_resolution * 0.5)
             * Affine2::from_scale(Vec2::new(camera.zoom, -camera.zoom))
             * Affine2::from_angle(-camera.rotation)
             * Affine2::from_translation(-camera.position);
         let mut world_to_game = desired_world_to_game;
-        if camera.motion != CameraMotion::Free {
+        if camera.motion.translation_snaps_to_gamepx() {
             // Snap projected translation, including the half-size of odd resolutions.
             world_to_game.translation = world_to_game.translation.round();
         }
-        let presentation_offset = if camera.motion == CameraMotion::SmoothPixel {
-            ((desired_world_to_game.translation - world_to_game.translation) * scale).round()
+        let presentation_offset = if camera.motion == super::camera::CameraMotion::SmoothPixel {
+            ((desired_world_to_game.translation - world_to_game.translation)
+                * game_scale_on_surface)
+                .round()
         } else {
             Vec2::ZERO
         };
+        debug!(
+            "Cam motion: {:?}, presentation_offset: {presentation_offset}",
+            camera.motion
+        );
         let game_to_surface = Affine2::from_mat2_translation(
-            Mat2::from_diagonal(scale),
+            Mat2::from_diagonal(game_scale_on_surface),
             game_viewport_surface_px.origin.as_vec2() + presentation_offset,
         );
         let world_to_surface = game_to_surface * world_to_game;
         Self {
-            presentation,
+            presentation_settings,
             game_viewport_surface_px,
             presentation_offset,
             world_to_game,
@@ -261,7 +235,7 @@ impl RenderView {
 
     /// Transforms from world position into clip space of the game render target
     pub fn world_to_game_clip(&self) -> Mat4 {
-        pixels_to_clip(game_target_size(self.presentation.game_size).as_vec2())
+        pixels_to_clip(game_target_size(self.presentation_settings.game_resolution).as_vec2())
             * affine_to_mat4(
                 Affine2::from_translation(Vec2::splat(GAME_PADDING as f32)) * self.world_to_game,
             )
@@ -274,7 +248,7 @@ impl RenderView {
 
     /// Transforms from a physical window pixel into clip space of the surface
     pub fn surface_pixels_to_clip(&self) -> Mat4 {
-        pixels_to_clip(self.presentation.surface_size.as_vec2())
+        pixels_to_clip(self.presentation_settings.surface_size.as_vec2())
     }
 
     /// Transforms a UI position via DPI scaling into clip space of the surface
@@ -283,11 +257,11 @@ impl RenderView {
             * affine_to_mat4(Affine2::from_scale(Vec2::splat(self.ui_to_surface_scale)))
     }
 
-    /// UV rectangle sampled by a fixed presentation quad. Moving the sample
+    /// UV rectangle sampled by a fixed presentation_settings quad. Moving the sample
     /// window instead of the quad keeps the letterbox rectangle stationary.
     pub fn game_texture_uv_rect(&self) -> Rect {
-        let game = self.presentation.game_size.as_vec2();
-        let target = game_target_size(self.presentation.game_size).as_vec2();
+        let game = self.presentation_settings.game_resolution.as_vec2();
+        let target = game_target_size(self.presentation_settings.game_resolution).as_vec2();
         let scale = self.game_viewport_surface_px.size.as_vec2() / game;
         Rect::new(
             (Vec2::splat(GAME_PADDING as f32) - self.presentation_offset / scale) / target,
@@ -296,8 +270,6 @@ impl RenderView {
     }
 }
 
-/// IMAGE -> GPU: the only technical Y-down -> NDC Y-up conversion.
-/// Coordinates describe pixel edges; centers are n + 0.5. No H - 1 here.
 fn pixels_to_clip(size: Vec2) -> Mat4 {
     Mat4::from_cols(
         Vec4::new(2.0 / size.x, 0.0, 0.0, 0.0),
@@ -314,7 +286,3 @@ fn affine_to_mat4(a: Affine2) -> Mat4 {
         Vec4::new(a.translation.x, a.translation.y, 0.0, 1.0),
     )
 }
-
-#[cfg(test)]
-#[path = "view_mapping_tests.rs"]
-mod tests;

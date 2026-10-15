@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use encase::{ShaderType, UniformBuffer};
 use glam::prelude::*;
 use granular_core::{

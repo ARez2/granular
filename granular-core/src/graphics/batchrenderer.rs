@@ -337,10 +337,10 @@ impl BatchRenderer {
 
         let view = self.ctx.get::<Camera>().render_view();
         let viewport = view.game_viewport_surface_px;
-        let surface_size = view.presentation.surface_size;
+        let surface_size = view.presentation_settings.surface_size;
         let target_size = match render_target {
             BatchRenderTarget::Game => {
-                super::view_mapping::game_target_size(view.presentation.game_size)
+                super::coord_mapping::game_target_size(view.presentation_settings.game_resolution)
             }
             BatchRenderTarget::Surface => surface_size,
         };

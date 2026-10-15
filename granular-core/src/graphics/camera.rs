@@ -1,17 +1,64 @@
-use super::view_mapping::{
-    Camera2D, CameraMotion, Presentation, RenderView, ScalingMode, SurfacePos, WorldPos,
-};
+use super::coord_mapping::{PresentationSettings, RenderView, ScalingMode, SurfacePos, WorldPos};
 use super::{GraphicsSystem, WindowSystem};
 use crate::utils::*;
 use glam::{Mat4, UVec2, Vec2};
 use wgpu::{Buffer, BufferUsages, util::DeviceExt};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CameraMotion {
+    /// 1:1 mapping of the cameras transform, regardless of the game's resolution.
+    /// Could cause subpixel/ edge flickering, so its not recommended.
+    Free,
+    /// Snaps the camera position to the game grid using a "world -> game" transform
+    PixelSnapped,
+    /// First snaps into the game grid like PixelSnapped mode, but then when
+    /// rendering the game, compensates in surface pixels.
+    /// Best with integer presentation_settings scaling and unrotated pixel art.
+    SmoothPixel,
+}
+impl CameraMotion {
+    /// Returns true if this motion mode snaps the translation of the camera to the game grid when displaying
+    pub fn translation_snaps_to_gamepx(&self) -> bool {
+        matches!(self, Self::PixelSnapped | Self::SmoothPixel)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Camera2D {
+    /// Desired center in world space. Never overwritten by snapping.
+    pub position: Vec2,
+    /// Angle in radians (+Angle = CCW rotation)
+    pub rotation: f32,
+    /// The zoom factor of the camera. Higher = closer
+    pub zoom: f32,
+    /// The way the camera position is handled
+    pub motion: CameraMotion,
+}
+impl Default for Camera2D {
+    fn default() -> Self {
+        Self {
+            position: Vec2::ZERO,
+            rotation: 0.0,
+            zoom: 1.0,
+            motion: CameraMotion::PixelSnapped,
+        }
+    }
+}
+impl Camera2D {
+    /// Exponential following. `speed` is in 1/s; `dt` is in seconds.
+    pub fn follow(&mut self, target: Vec2, speed: f32, dt: f32) {
+        assert!(target.is_finite() && speed.is_finite() && dt.is_finite());
+        assert!(speed >= 0.0 && dt >= 0.0);
+        self.position = self.position.lerp(target, 1.0 - (-speed * dt).exp());
+    }
+}
 
 /// Engine integration for desired camera state and the last prepared render snapshot.
 pub struct Camera {
     ctx: GeeseContextHandle<Self>,
     state: Camera2D,
     /// Helper to determine how everything is displayed
-    presentation: Presentation,
+    presentation_settings: PresentationSettings,
     /// Allows to transform between various coordinate systems
     render_view: RenderView,
     /// Buffer which holds the matrix to transform from world position into clip space of the game render target
@@ -81,13 +128,13 @@ impl Camera {
 
     /// Configures the scaling mode for the application
     pub fn set_scaling_mode(&mut self, mode: ScalingMode) {
-        self.presentation.scaling_mode = mode;
+        self.presentation_settings.scaling_mode = mode;
     }
 
     /// Configures UI scale factor
     pub fn set_ui_scale(&mut self, scale: f32) {
         assert!(scale.is_finite() && scale > 0.0);
-        self.presentation.ui_scale = scale;
+        self.presentation_settings.ui_scale = scale;
     }
 
     /// Last prepared view; setters affect the next PrepareRender event.
@@ -130,11 +177,11 @@ impl Camera {
     fn on_prepare_render(&mut self, _: &super::events::PrepareRender) {
         let graphics = self.ctx.get::<GraphicsSystem>();
         let surface = graphics.get_surface_resolution();
-        self.presentation.game_size = graphics.get_game_resolution();
-        self.presentation.surface_size = UVec2::new(surface.width, surface.height);
+        self.presentation_settings.game_resolution = graphics.get_game_resolution();
+        self.presentation_settings.surface_size = UVec2::new(surface.width, surface.height);
         // Read per frame: DPI changes do not depend on an extra event handler.
-        self.presentation.dpi_scale = self.ctx.get::<WindowSystem>().scale_factor() as f32;
-        self.render_view = RenderView::new(self.state, self.presentation);
+        self.presentation_settings.dpi_scale = self.ctx.get::<WindowSystem>().scale_factor() as f32;
+        self.render_view = RenderView::new(self.state, self.presentation_settings);
         for (buffer, matrix) in [
             (
                 &self.world_game_buffer,
@@ -174,13 +221,13 @@ impl GeeseSystem for Camera {
     fn new(ctx: GeeseContextHandle<Self>) -> Self {
         let graphics = ctx.get::<GraphicsSystem>();
         let surface = graphics.get_surface_resolution();
-        let presentation = Presentation::new(
+        let presentation_settings = PresentationSettings::new(
             graphics.get_game_resolution(),
             UVec2::new(surface.width, surface.height),
             ctx.get::<WindowSystem>().scale_factor() as f32,
         );
         let state = Camera2D::default();
-        let render_view = RenderView::new(state, presentation);
+        let render_view = RenderView::new(state, presentation_settings);
         let device = graphics.device();
         let world_game_buffer = Self::uniform(
             device,
@@ -206,7 +253,7 @@ impl GeeseSystem for Camera {
         Self {
             ctx,
             state,
-            presentation,
+            presentation_settings,
             render_view,
             world_game_buffer,
             world_surface_buffer,
