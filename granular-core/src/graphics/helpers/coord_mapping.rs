@@ -128,7 +128,7 @@ pub struct RenderView {
     ui_to_surface_scale: f32,
 }
 impl RenderView {
-    pub fn new(
+    pub(crate) fn new(
         camera: super::camera_2d::Camera2D,
         presentation_settings: PresentationSettings,
     ) -> Self {
