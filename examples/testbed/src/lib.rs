@@ -185,7 +185,7 @@ impl Game {
         let cam_vector = input.world_input_direction("cam_left", "cam_right", "cam_up", "cam_down");
         drop(input);
         let mut camera = self.ctx.get_mut::<Camera>();
-        camera.translate(cam_vector * event.delta * 12.0);
+        camera.translate(cam_vector * event.delta * 150.0);
         drop(camera);
     }
 
