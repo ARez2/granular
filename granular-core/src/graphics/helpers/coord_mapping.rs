@@ -156,10 +156,7 @@ impl RenderView {
         } else {
             Vec2::ZERO
         };
-        debug!(
-            "Cam motion: {:?}, presentation_offset: {presentation_offset}",
-            camera.motion
-        );
+
         let game_to_surface = Affine2::from_mat2_translation(
             Mat2::from_diagonal(game_scale_on_surface),
             game_viewport_surface_px.origin.as_vec2() + presentation_offset,
