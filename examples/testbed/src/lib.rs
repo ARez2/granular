@@ -100,7 +100,7 @@ impl Game {
         {
             let mut camera = self.ctx.get_mut::<Camera>();
             camera.set_bottomleft_position(Vec2::ZERO);
-            camera.set_motion(CameraMotion::Free);
+            camera.set_motion(CameraMotion::PixelSnapped);
             camera.set_scaling_mode(ScalingMode::KeepAspect);
             drop(camera);
 

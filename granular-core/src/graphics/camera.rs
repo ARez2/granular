@@ -13,6 +13,7 @@ pub enum CameraMotion {
     PixelSnapped,
     /// First snaps into the game grid like PixelSnapped mode, but then when
     /// rendering the game, compensates in surface pixels.
+    /// Feels smoother than PixelSnapped.
     /// Best with integer presentation_settings scaling and unrotated pixel art.
     SmoothPixel,
 }
