@@ -252,7 +252,7 @@ cargo run-testbed-trace
 - Is Rigidbody collision shape enlargement neccessary?
 - Create Rigidbodies from data images (with different materials). Maybe have a HashMap of pixel color -> MatName, or just use the pixel color value as index into matname
 - Make letterbox background shader user-provided
-- GI, maybe radiance cascades or https://orionreed.github.io/radiance/moment-hrc/ ?
+- GI, maybe radiance cascades (https://radiance-cascades.com) or https://orionreed.github.io/radiance/moment-hrc/ ?
 
 **Low priority:**
 - Dynamically remove textures from `BatchRenderer` texture atlasses
